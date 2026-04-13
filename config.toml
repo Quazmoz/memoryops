@@ -1,0 +1,133 @@
+# MemoryOps Configuration
+# Secrets (API keys, passwords) are NEVER stored here.
+# Always use environment variables for secrets (see .env.example).
+
+[server]
+host = "0.0.0.0"
+port = 8080
+request_timeout_secs = 30
+
+[database]
+# Connection string read from DATABASE_URL env var.
+# These settings control the connection pool.
+max_connections = 20
+min_connections = 2
+connect_timeout_secs = 5
+
+[redis]
+# Connection string read from REDIS_URL env var.
+pool_size = 10
+
+# ── Embedding Provider ───────────────────────────────────────────────────────
+[embedding]
+# Options: "fastembed" (local, default) | "openai"
+provider = "fastembed"
+model = "BAAI/bge-small-en-v1.5"
+
+# Uncomment to use OpenAI embeddings (requires OPENAI_API_KEY env var)
+# [embedding.openai]
+# model = "text-embedding-3-small"
+
+# ── LLM Provider ─────────────────────────────────────────────────────────────
+[llm]
+# Options: "ollama" (local, default) | "openai" | "anthropic"
+provider = "ollama"
+model = "llama3"
+base_url = "http://localhost:11434"
+timeout_secs = 30
+
+# Uncomment to use OpenAI (requires OPENAI_API_KEY env var)
+# [llm.openai]
+# model = "gpt-4o-mini"
+
+# Uncomment to use Anthropic (requires ANTHROPIC_API_KEY env var)
+# [llm.anthropic]
+# model = "claude-3-haiku-20240307"
+
+# ── Processing Pipeline ──────────────────────────────────────────────────────
+[processor]
+# Fast path: max concurrency for synchronous processing
+fast_path_concurrency = 4
+
+# Slow path: number of Redis consumer workers
+slow_path_workers = 2
+
+# Max retry attempts before sending a job to the DLQ
+max_retries = 3
+
+# DLQ entry TTL in days
+dlq_ttl_days = 7
+
+# ── Promotion Pipeline ───────────────────────────────────────────────────────
+[promotion]
+# How often to run the promotion scheduler
+cadence_minutes = 15
+
+# Episodic events older than this are eligible for clustering
+clustering_window_hours = 24
+
+# Minimum mean importance score for a cluster to be promoted
+promotion_threshold = 0.65
+
+# ── Decay & Pruning ──────────────────────────────────────────────────────────
+[decay]
+# Pruning scheduler runs daily at this UTC hour
+schedule_hour_utc = 2
+
+# Batch size for pruning to avoid table locks
+batch_size = 1000
+
+[decay.semantic]
+decay_rate = 0.98
+prune_threshold = 0.10
+
+[decay.episodic]
+decay_rate = 0.95
+prune_threshold = 0.10
+
+# ── Rate Limiting ────────────────────────────────────────────────────────────
+[rate_limit]
+# Default limits per workspace per minute (configurable per workspace via API)
+retrieve_rpm = 60
+ingest_rpm = 300
+api_rpm = 120
+
+# ── Retrieval Engine ─────────────────────────────────────────────────────────
+[retrieval]
+# Cosine similarity threshold above which a candidate is considered a duplicate
+dedup_threshold = 0.92
+
+# Default token budget if not specified in request
+default_token_budget = 4096
+
+# Tokenizer: cl100k_base (GPT-4 compatible)
+tokenizer = "cl100k_base"
+
+# Default scoring weights — must sum to 1.0
+[retrieval.weights]
+semantic_similarity = 0.35
+importance = 0.25
+recency = 0.20
+source_authority = 0.10
+memory_type = 0.10
+
+# Default source authority scores
+[retrieval.source_authority]
+github = 0.9
+slack = 0.6
+jira = 0.7
+linear = 0.7
+
+# ── Observability ────────────────────────────────────────────────────────────
+[telemetry]
+# Log format: "json" (production) | "pretty" (development)
+log_format = "pretty"
+
+# OTEL exporter: "none" | "otlp" | "prometheus"
+otel_exporter = "none"
+
+# Slow span warning threshold in milliseconds
+slow_span_threshold_ms = 500
+
+# Retrieval trace retention in days
+trace_retention_days = 30
