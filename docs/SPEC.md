@@ -1,6 +1,6 @@
 # MemoryOps — Technical Specification
 
-**Version:** 0.1.0  
+**Version:** 0.2.0  
 **Status:** Draft  
 **Last Updated:** 2026-04-12
 
@@ -23,8 +23,6 @@ MemoryOps is:
 ---
 
 ## 2. Problem Statement
-
-Current AI agents suffer from:
 
 | Problem | Root Cause | Impact |
 |---------|-----------|--------|
@@ -51,59 +49,89 @@ Current AI agents suffer from:
 
 ---
 
-## 4. Core Data Model
+## 4. Design Decisions (Locked)
 
-### 4.1 RawEvent
+| # | Decision | Choice |
+|---|----------|--------|
+| 1 | Embedding model | Pluggable `EmbeddingProvider` trait; `fastembed-rs` local default |
+| 2 | LLM summarization | Pluggable `LlmProvider` trait; Ollama local default |
+| 3 | Authentication | API key per workspace (header: `X-API-Key`) |
+| 4 | Retrieval mode | Pull — agents call `POST /retrieve` |
+| 5 | Memory scope | Configurable hierarchy: workspace → agent → user → repo |
+| 6 | Webhook validation | HMAC-SHA256 for all sources via shared `WebhookValidator` trait |
 
-Immutable record of an inbound event from any source.
+---
+
+## 5. Core Data Model
+
+### 5.1 RawEvent
+
+Immutable. Written on ingestion, never mutated.
 
 ```rust
 pub struct RawEvent {
     pub id: Uuid,
     pub workspace_id: Uuid,
-    pub source: Source,           // GitHub | Slack | Jira | Linear
-    pub event_type: EventType,    // PR | Commit | Message | Review | Issue
-    pub actor: String,            // user/login who triggered it
-    pub payload: serde_json::Value,
+    pub source: Source,             // GitHub | Slack | Jira | Linear
+    pub event_type: EventType,      // PR | Commit | Message | Review | Issue
+    pub actor: String,
+    pub payload: serde_json::Value, // full raw payload preserved
     pub occurred_at: DateTime<Utc>,
     pub ingested_at: DateTime<Utc>,
 }
 ```
 
-### 4.2 MemoryUnit
+### 5.2 MemoryUnit
 
-The core product object. Created by the processor from one or more RawEvents.
+Core product object. Created by the processor from one or more RawEvents.
 
 ```rust
 pub struct MemoryUnit {
     pub id: Uuid,
     pub workspace_id: Uuid,
-    pub memory_type: MemoryType,      // Episodic | Semantic
-    pub content: String,              // distilled natural language
-    pub entities: Vec<Entity>,        // people, repos, branches, topics
-    pub importance_score: f32,        // 0.0 - 1.0
-    pub source_events: Vec<Uuid>,     // lineage to RawEvents
-    pub embedding: Option<Vec<f32>>,  // populated by async processor
+    pub scope: MemoryScope,               // see §5.4
+    pub memory_type: MemoryType,          // Episodic | Semantic
+    pub content: String,
+    pub entities: Vec<Entity>,
+    pub importance_score: f32,            // 0.0–1.0, user-overridable
+    pub source_events: Vec<Uuid>,         // lineage to RawEvents
+    pub embedding: Option<Vec<f32>>,
     pub created_at: DateTime<Utc>,
     pub last_accessed_at: Option<DateTime<Utc>>,
-    pub decay_score: f32,             // drives pruning scheduler
-    pub pinned: bool,                 // user-locked, never decays
+    pub decay_score: f32,                 // 1.0 on create; pruned at <0.1
+    pub pinned: bool,                     // exempt from decay
     pub tags: Vec<String>,
+    pub version: i32,                     // incremented on edit
 }
 ```
 
-### 4.3 Memory Types
+### 5.3 Memory Types
 
 | Type | Description | Mutability | Example |
 |------|-------------|------------|---------|
-| `Episodic` | Raw time-indexed events | Immutable | "PR #42 opened by alice at 14:32" |
-| `Semantic` | Distilled knowledge | Updateable | "Alice owns the auth module" |
+| `Episodic` | Raw time-indexed event | Immutable | "PR #42 opened by alice at 14:32" |
+| `Semantic` | Distilled knowledge | Updateable (versioned) | "Alice owns the auth module" |
 
-### 4.4 Entity
+### 5.4 Memory Scope
+
+Scope is configurable at workspace level. Operators define which scope dimensions are active.
+
+```rust
+pub struct MemoryScope {
+    pub workspace_id: Uuid,
+    pub agent_id: Option<String>,   // e.g. "code-reviewer", "deploy-bot"
+    pub user_id: Option<String>,    // e.g. GitHub login
+    pub repo: Option<String>,       // e.g. "org/repo-name"
+}
+```
+
+Retrieval is automatically scoped to the narrowest matching scope for the requesting agent.
+
+### 5.5 Entity
 
 ```rust
 pub struct Entity {
-    pub entity_type: EntityType,  // Person | Repo | Branch | Topic | File
+    pub entity_type: EntityType, // Person | Repo | Branch | Topic | File | Team
     pub value: String,
     pub confidence: f32,
 }
@@ -111,119 +139,200 @@ pub struct Entity {
 
 ---
 
-## 5. System Architecture
+## 6. Provider Traits (Pluggable AI)
 
-### 5.1 Services
+All AI integrations are abstracted behind async traits. Configuration selects the active provider.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        MemoryOps                            │
-│                                                             │
-│  ┌─────────────────┐     ┌──────────────────────────────┐   │
-│  │  Ingestion Svc  │     │       Processor Svc          │   │
-│  │                 │     │                              │   │
-│  │  POST /webhook  │────▶│  Fast Path  │  Slow Path     │   │
-│  │  /github        │     │  (sync)     │  (async/LLM)   │   │
-│  │  /slack         │     │             │                │   │
-│  └─────────────────┘     └──────────────────────────────┘   │
-│           │                        │                        │
-│           ▼                        ▼                        │
-│       Postgres                 Redis Queue                  │
-│       raw_events               processor_jobs              │
-│           │                        │                        │
-│           └───────────┬────────────┘                        │
-│                       ▼                                     │
-│              ┌─────────────────┐                            │
-│              │  Retrieval Svc  │                            │
-│              │                 │                            │
-│              │  Qdrant (vec)   │                            │
-│              │  Tantivy (BM25) │                            │
-│              │  Scorer         │                            │
-│              │  Token Packer   │                            │
-│              └─────────────────┘                            │
-│                       │                                     │
-│              ┌─────────────────┐                            │
-│              │    API Svc      │ ◀── Agent / UI requests    │
-│              │  (axum)         │                            │
-│              └─────────────────┘                            │
-└─────────────────────────────────────────────────────────────┘
+### 6.1 EmbeddingProvider
+
+```rust
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>>;
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
+    fn dimensions(&self) -> usize;
+    fn model_name(&self) -> &str;
+}
 ```
 
-### 5.2 Crate Layout
+**Implementations (v0.1):**
+- `FastEmbedProvider` — local, uses `fastembed-rs`, no network calls, default
+- `OpenAIEmbedProvider` — `text-embedding-3-small`, requires `OPENAI_API_KEY`
+
+### 6.2 LlmProvider
+
+```rust
+#[async_trait]
+pub trait LlmProvider: Send + Sync {
+    async fn complete(&self, prompt: &str) -> Result<String>;
+    async fn summarize(&self, text: &str, max_tokens: usize) -> Result<String>;
+}
+```
+
+**Implementations (v0.1):**
+- `OllamaProvider` — calls local Ollama HTTP API, model configurable (default: `llama3`)
+- `OpenAIProvider` — calls OpenAI Chat Completions API
+- `AnthropicProvider` — calls Anthropic Messages API
+
+### 6.3 Provider Config (TOML)
+
+```toml
+[embedding]
+provider = "fastembed"      # fastembed | openai
+model = "BAAI/bge-small-en-v1.5"
+
+[llm]
+provider = "ollama"         # ollama | openai | anthropic
+model = "llama3"
+base_url = "http://localhost:11434"
+```
+
+---
+
+## 7. Authentication
+
+- API key per workspace, passed as `X-API-Key` header
+- Keys are hashed (Argon2id) before storage — never stored in plaintext
+- Key creation returns plaintext once; not recoverable
+- Rate limiting enforced per workspace per endpoint (configurable)
+- Key rotation supported: create new → verify → revoke old
+
+```rust
+pub struct ApiKey {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub name: String,           // human label
+    pub key_hash: String,       // Argon2id hash
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub revoked: bool,
+}
+```
+
+---
+
+## 8. System Architecture
+
+### 8.1 Services
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                        MemoryOps                          │
+│                                                           │
+│  ┌─────────────────┐   ┌──────────────────────────────┐  │
+│  │  Ingestion Svc  │   │       Processor Svc          │  │
+│  │  POST /webhook  │──▶│  Fast Path  │  Slow Path     │  │
+│  │  /github /slack │   │  (sync)     │  (async/LLM)   │  │
+│  └─────────────────┘   └──────────────────────────────┘  │
+│           │                       │                       │
+│           ▼                       ▼                       │
+│       Postgres               Redis Queue                  │
+│       raw_events             processor_jobs               │
+│       memory_units                                        │
+│       audit_log                                           │
+│           │                       │                       │
+│           └──────────┬────────────┘                       │
+│                      ▼                                    │
+│             ┌─────────────────┐                           │
+│             │  Retrieval Svc  │                           │
+│             │  Qdrant (vec)   │                           │
+│             │  Tantivy (BM25) │                           │
+│             │  Scorer         │                           │
+│             │  Token Packer   │                           │
+│             └─────────────────┘                           │
+│                      │                                    │
+│             ┌─────────────────┐                           │
+│             │    API Svc      │◀── Agent / UI requests    │
+│             │    (axum)       │                           │
+│             └─────────────────┘                           │
+└───────────────────────────────────────────────────────────┘
+```
+
+### 8.2 Crate Layout
 
 ```
 crates/
-├── common/          # Shared: types, DB pool, config, error types
-├── ingestion/       # Webhook handlers, source-specific parsers
-├── processor/       # Fast path worker, slow path LLM worker
-├── retrieval/       # Scorer, hybrid search, token packer
-└── api/             # axum router, request/response types
+├── common/      # Types, DB pool, config, error types, provider traits
+├── ingestion/   # Webhook handlers, HMAC validation, source parsers
+├── processor/   # Fast path worker, slow path LLM worker, promotion logic
+├── retrieval/   # Scorer, hybrid search, token packer, trace builder
+└── api/         # axum router, middleware (auth, rate limit), request/response types
 ```
 
 ---
 
-## 6. Ingestion Layer
+## 9. Ingestion Layer
 
-### 6.1 GitHub Integration
+### 9.1 Webhook Validation (Shared Trait)
 
-**Webhook events handled:**
-- `pull_request` — opened, closed, merged, reviewed
-- `push` — commits with diffs
-- `issue_comment` — discussions
-- `pull_request_review` — review approvals/changes
+```rust
+pub trait WebhookValidator {
+    fn validate(&self, payload: &[u8], signature: &str) -> Result<()>;
+}
+```
 
-**Normalization:**
-Every GitHub event maps to a `RawEvent` with:
-- `source: Source::GitHub`
-- `actor` extracted from `sender.login`
-- full payload preserved in `payload: serde_json::Value`
-- `occurred_at` from event timestamp
+- `GitHubValidator` — HMAC-SHA256 of payload with `X-Hub-Signature-256` header
+- `SlackValidator` — HMAC-SHA256 of `v0:timestamp:body` with `X-Slack-Signature` header  
+  (Both reduce to the same HMAC-SHA256 primitive; Slack's prefix is handled in the adapter)
 
-### 6.2 Slack Integration
+### 9.2 GitHub Integration
 
 **Events handled:**
-- `message` in tracked channels
+- `pull_request` — opened, closed, merged, review requested
+- `pull_request_review` — submitted (approved, changes_requested, commented)
+- `push` — commits with ref and author
+- `issue_comment` — created, edited
+- `issues` — opened, closed, labeled
+
+### 9.3 Slack Integration (v0.2)
+
+**Events handled:**
+- `message` in configured channels
 - `reaction_added` on tracked messages
 - Thread replies
 
-### 6.3 Ingestion API
+### 9.4 Ingestion Endpoint Behavior
 
-```
-POST /webhooks/github     # GitHub webhook receiver
-POST /webhooks/slack      # Slack Events API receiver
-```
-
-Both endpoints:
-1. Validate HMAC signature
+1. Validate HMAC signature → `401` on failure
 2. Deserialize payload
-3. Write `RawEvent` to Postgres
-4. Enqueue job to Redis
-5. Return `202 Accepted` immediately
+3. Write `RawEvent` to Postgres (transactional)
+4. Enqueue processor job to Redis
+5. Return `202 Accepted`
+6. Write to audit log
+
+### 9.5 Integration Health
+
+Each integration tracks:
+- `last_event_at` — timestamp of most recent valid webhook
+- `error_count_24h` — validation/parse failures in last 24h
+- `status` — `active | degraded | failing`
+
+Dead letter queue (Redis list) captures failed jobs for manual inspection and retry.
 
 ---
 
-## 7. Processing Pipeline
+## 10. Processing Pipeline
 
-### 7.1 Fast Path (Synchronous, No LLM)
+### 10.1 Fast Path (Sync, No LLM)
 
-Runs inline or as a lightweight worker. Handles:
-- Entity extraction (regex + rules): people, repos, branches, file paths
-- Tag assignment: `[pr, merge, hotfix, auth-module]`
-- Importance scoring (rule-based):
-  - Merge to main → high
-  - PR review with changes requested → medium-high
-  - Push to feature branch → low
-- Write `MemoryUnit` (Episodic type, no embedding yet)
+- Entity extraction: regex + rules (people, repos, branches, file paths, teams)
+- Tag assignment based on event type + entity patterns
+- Importance scoring (rule table, configurable per workspace):
+  - Merge to default branch → `0.9`
+  - PR review: changes requested → `0.75`
+  - PR opened → `0.6`
+  - Push to feature branch → `0.3`
+- Write `MemoryUnit` (Episodic, no embedding)
 
-### 7.2 Slow Path (Async, LLM-backed)
+### 10.2 Slow Path (Async, LLM-backed)
 
-Consumed from Redis queue. Handles:
-- Summarization via LLM (e.g., OpenAI, local model)
-- Semantic clustering — group related episodic memories
-- Embedding generation → write to Qdrant
-- Promotion evaluation: should this cluster become Semantic memory?
+- Consumes jobs from Redis queue
+- Calls `LlmProvider::summarize` on raw event content
+- Calls `EmbeddingProvider::embed` on summary
+- Writes embedding to Qdrant
+- Triggers promotion evaluation
 
-### 7.3 Promotion Pipeline
+### 10.3 Promotion Pipeline
 
 ```
 RawEvents
@@ -235,28 +344,29 @@ Episodic MemoryUnits  (fast path)
 Clustering  (group by entity + topic + time window)
     │
     ▼
-Importance Threshold Check  (score > 0.65?)
+Importance Threshold Check  (workspace-configurable, default: score > 0.65)
     │
     ▼
-LLM Summarization
+LLM Summarization  (via LlmProvider)
     │
     ▼
-Semantic MemoryUnit  (stable, reusable, embedded)
+Semantic MemoryUnit  (versioned, stable, embedded)
 ```
+
+Importance threshold, clustering window, and promotion cadence are all workspace-configurable.
 
 ---
 
-## 8. Retrieval Engine
+## 11. Retrieval Engine
 
-This is the **core differentiator**. The retrieval engine does not return "top K chunks." It returns an optimized context payload under a specified token budget.
-
-### 8.1 Retrieval Request
+### 11.1 Retrieval Request
 
 ```rust
 pub struct RetrievalRequest {
     pub workspace_id: Uuid,
+    pub scope: Option<MemoryScope>,     // narrows to agent/user/repo if provided
     pub query: String,
-    pub token_budget: usize,          // e.g. 4096
+    pub token_budget: usize,
     pub filters: Option<RetrievalFilters>,
 }
 
@@ -265,15 +375,14 @@ pub struct RetrievalFilters {
     pub memory_types: Option<Vec<MemoryType>>,
     pub entities: Option<Vec<String>>,
     pub since: Option<DateTime<Utc>>,
+    pub tags: Option<Vec<String>>,
 }
 ```
 
-### 8.2 Scoring Formula
-
-Every candidate `MemoryUnit` is scored before selection:
+### 11.2 Scoring Formula
 
 ```
-final_score = 
+final_score =
     (semantic_similarity  × 0.35)
   + (importance_score     × 0.25)
   + (recency_score        × 0.20)
@@ -281,165 +390,237 @@ final_score =
   + (memory_type_weight   × 0.10)
 ```
 
-**Component definitions:**
-- `semantic_similarity` — cosine similarity from Qdrant, normalized 0–1
-- `importance_score` — assigned during processing, 0–1
-- `recency_score` — `1 / (1 + days_since_event)`, decays over time
-- `source_authority` — configurable per source; GitHub > Slack by default
-- `memory_type_weight` — Semantic > Episodic (summaries preferred over raw logs)
+Weights are workspace-configurable. Defaults shown above.
 
-### 8.3 Token Packing Algorithm
+- `recency_score` = `1 / (1 + days_since_event)`
+- `source_authority` = per-source float, workspace config (default: GitHub `0.9`, Slack `0.6`)
+- `memory_type_weight` = Semantic `1.0`, Episodic `0.5`
+
+### 11.3 Token Packing
 
 ```
-1. Candidate fetch: hybrid search (Qdrant + Tantivy), top 50 candidates
-2. Score all candidates using formula above
+1. Hybrid candidate fetch: Qdrant (semantic) + Tantivy (BM25), top 50
+2. Score all candidates
 3. Sort descending by final_score
-4. Greedy pack:
-   for each candidate (sorted):
-     if (current_tokens + candidate.token_count) <= budget:
-       include
-     else:
-       skip
-5. Deduplication: drop candidates with >0.92 cosine similarity to already-included item
-6. Return packed context + trace
+4. Greedy pack under token_budget
+5. Dedup: skip if cosine_similarity > 0.92 to any already-included item
+6. Return RetrievalResult with full trace
 ```
 
-### 8.4 Retrieval Response
+### 11.4 Retrieval Response
 
 ```rust
 pub struct RetrievalResult {
+    pub query_id: Uuid,                     // trace is persisted by this ID
     pub memories: Vec<ScoredMemory>,
     pub total_tokens: usize,
     pub trace: Vec<RetrievalTraceEntry>,
-}
-
-pub struct ScoredMemory {
-    pub memory: MemoryUnit,
-    pub final_score: f32,
-    pub token_count: usize,
+    pub retrieved_at: DateTime<Utc>,
 }
 
 pub struct RetrievalTraceEntry {
     pub memory_id: Uuid,
-    pub score_breakdown: ScoreBreakdown,
-    pub inclusion_reason: String,   // human-readable
-    pub excluded: bool,
-    pub exclusion_reason: Option<String>,
+    pub final_score: f32,
+    pub score_breakdown: ScoreBreakdown,    // per-component scores
+    pub token_count: usize,
+    pub included: bool,
+    pub exclusion_reason: Option<String>,   // "token_budget" | "dedup" | "filtered"
 }
 ```
 
+Retrieval traces are persisted for 30 days and queryable via `GET /retrieve/trace/:query_id`.
+
 ---
 
-## 9. API Surface
+## 12. API Surface
 
-### 9.1 Ingestion
+### 12.1 Ingestion
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/webhooks/github` | GitHub webhook receiver |
 | POST | `/webhooks/slack` | Slack Events API receiver |
 
-### 9.2 Memory Management
+### 12.2 Memory Management
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/memory` | List memory units (paginated, filterable) |
-| GET | `/memory/:id` | Get single memory unit |
-| PATCH | `/memory/:id` | Update (pin, tag, edit content) |
-| DELETE | `/memory/:id` | Delete memory unit |
-| POST | `/memory/:id/promote` | Manually promote episodic → semantic |
+| GET | `/memory` | List memory units (paginated, filterable by scope/type/source/tag) |
+| GET | `/memory/:id` | Get single memory unit with full entity + lineage data |
+| PATCH | `/memory/:id` | Update: pin, tag, edit content, override importance score |
+| DELETE | `/memory/:id` | Soft delete (recoverable for 30 days) |
+| POST | `/memory/:id/promote` | Force episodic → semantic promotion |
+| POST | `/memory/bulk` | Bulk pin / bulk delete by filter or ID list |
+| GET | `/memory/:id/history` | Version history for semantic memories |
+| POST | `/memory/merge` | Merge two semantic memory units |
 
-### 9.3 Retrieval
+### 12.3 Retrieval
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/retrieve` | Core retrieval endpoint |
-| GET | `/retrieve/trace/:query_id` | Get retrieval trace for a past query |
+| POST | `/retrieve` | Core retrieval — returns scored, token-packed context |
+| GET | `/retrieve/trace/:query_id` | Full trace for a past retrieval query |
 
-### 9.4 Workspace
+### 12.4 Workspace & Config
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/workspaces` | Create workspace |
 | GET | `/workspaces/:id` | Get workspace + integration status |
-| POST | `/workspaces/:id/integrations` | Add GitHub/Slack integration |
+| PATCH | `/workspaces/:id/config` | Update scoring weights, thresholds, provider config |
+| POST | `/workspaces/:id/integrations` | Register GitHub/Slack integration |
+| GET | `/workspaces/:id/integrations` | List integrations with health status |
+| DELETE | `/workspaces/:id/integrations/:source` | Remove integration |
+
+### 12.5 API Keys
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/workspaces/:id/keys` | Create API key (returns plaintext once) |
+| GET | `/workspaces/:id/keys` | List keys (hashed, with last_used_at) |
+| DELETE | `/workspaces/:id/keys/:key_id` | Revoke key |
+
+### 12.6 Audit Log
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/workspaces/:id/audit` | Paginated audit log (memory edits, deletes, key events) |
 
 ---
 
-## 10. Multi-Tenancy
+## 13. Multi-Tenancy
 
 - Every table includes `workspace_id UUID NOT NULL`
-- All queries are scoped by `workspace_id` — enforced at the DB layer via `sqlx` query params, not application logic
-- No cross-workspace data leakage possible at query level
-- Workspace-level config: source authority weights, importance thresholds, token budget defaults
+- All queries scoped by `workspace_id` at the `sqlx` param level — never application-layer filtering
+- `MemoryScope` provides sub-workspace granularity (agent / user / repo)
+- Workspace config controls active scope dimensions, scoring weights, provider selection, importance thresholds
 
 ---
 
-## 11. Decay & Pruning
+## 14. Decay & Pruning
 
-- Every `MemoryUnit` has a `decay_score: f32` (starts at 1.0)
-- A scheduled job runs daily:
-  - Decrements `decay_score` based on age + access frequency
-  - Pinned memories are excluded
-  - Semantic memories decay slower than Episodic
-- Pruning threshold: `decay_score < 0.1` → archived (soft delete)
-- Archival is recoverable via UI for 30 days
+- `decay_score` starts at `1.0`, computed daily by scheduled job
+- Formula: `new_decay = current_decay × decay_rate ^ days_since_last_access`
+- `decay_rate` is workspace-configurable (default: `0.98` Semantic, `0.95` Episodic)
+- Pinned memories: decay frozen
+- Pruning threshold: `decay_score < 0.1` → soft-deleted (archived)
+- Archived memories recoverable via UI for 30 days, then hard-deleted
 
 ---
 
-## 12. Frontend — Memory Control Center
+## 15. Frontend — Memory Control Center
 
-### 12.1 Views
+### 15.1 Views
 
 | View | Description |
 |------|-------------|
-| Memory Explorer | Searchable, filterable list of all memory units |
-| Memory Detail | Full content, entities, score, source lineage |
-| Retrieval Trace | For any past query: what was returned, why, what was excluded |
-| Lifecycle View | Timeline of episodic → semantic promotions |
-| Integration Status | Webhook health, ingestion rate, last event per source |
+| Memory Explorer | Searchable, filterable list; filter by scope/type/source/tag/entity |
+| Memory Detail | Full content, entities, score breakdown, source event lineage, version history |
+| Retrieval Trace | For any past query_id: included/excluded memories, per-component scores, exclusion reasons |
+| Lifecycle View | Timeline of episodic → semantic promotions with clustering visualization |
+| Integration Status | Per-source webhook health, ingestion rate, error count, dead letter queue |
+| Audit Log | Who edited/deleted/pinned what memory and when |
 
-### 12.2 Memory Actions
+### 15.2 Memory Actions
 
-- **Pin** — lock memory, prevent decay
-- **Delete** — remove immediately
-- **Merge** — combine two semantic memories
-- **Edit** — manually correct content
-- **Promote** — force episodic → semantic
+| Action | Description |
+|--------|-------------|
+| Pin | Lock memory; freeze decay |
+| Delete | Soft delete; recoverable 30 days |
+| Merge | Combine two semantic memories into one |
+| Edit | Manually correct content; creates new version |
+| Promote | Force episodic → semantic |
+| Override importance | Manually set importance score (0.0–1.0) |
+| Bulk pin / bulk delete | Apply action to filtered set |
+| Export | Download workspace memories as JSON or JSONL |
 
 ---
 
-## 13. Non-Goals (v0.1)
+## 16. Audit Log
+
+Every state-changing operation writes an audit entry:
+
+```rust
+pub struct AuditEntry {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub actor: AuditActor,         // ApiKey name or "system"
+    pub action: AuditAction,       // Created | Edited | Deleted | Pinned | Promoted | Merged | KeyCreated | KeyRevoked
+    pub target_id: Uuid,           // memory_id, key_id, etc.
+    pub target_type: String,
+    pub diff: Option<serde_json::Value>, // before/after for edits
+    pub occurred_at: DateTime<Utc>,
+}
+```
+
+---
+
+## 17. Rate Limiting
+
+- Enforced per workspace, per endpoint group
+- Config in `workspace.config`:
+  - `retrieve_rpm` — retrievals per minute (default: 60)
+  - `ingest_rpm` — webhook events per minute (default: 300)
+  - `api_rpm` — general API calls per minute (default: 120)
+- Exceeding limit returns `429 Too Many Requests` with `Retry-After` header
+- Implemented via Redis sliding window counter
+
+---
+
+## 18. Integration Health & Dead Letter Queue
+
+- Failed webhook jobs (parse error, DB write failure) move to Redis DLQ
+- DLQ entries include: original payload, failure reason, timestamp, retry count
+- Manual retry available via API: `POST /workspaces/:id/dlq/:job_id/retry`
+- Auto-retry: up to 3 attempts with exponential backoff before DLQ
+- Integration `status` field: `active` (0 errors) | `degraded` (>5% error rate) | `failing` (>50% error rate)
+
+---
+
+## 19. Export & Backup
+
+- `GET /workspaces/:id/export` — export all memory units as JSONL (streaming)
+- Includes: content, entities, scores, tags, scope, source lineage
+- Does not include raw event payloads (may contain PII)
+- Import endpoint planned for v0.3
+
+---
+
+## 20. Non-Goals (v0.1)
 
 - Generic "second brain" or consumer use case
-- Full agent framework or agent runtime
-- Vector DB replacement (Qdrant is used, not replaced)
-- Real-time streaming ingestion (webhook batch is sufficient for v0.1)
+- Full agent framework or runtime
+- Vector DB replacement
+- Real-time streaming ingestion
 - Custom embedding model training
+- Push-mode context injection (agent SDK — future)
+- SSO / OAuth login (future SaaS phase)
 
 ---
 
-## 14. Risks & Mitigations
+## 21. Risks & Mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| LLM cost/latency in slow path | Async-only; fast path never blocks on LLM |
-| Large context windows reducing need | Focus on lifecycle + governance, not just retrieval size |
-| Retrieval commoditization | Moat is in ingestion + lifecycle + control UI, not raw search |
-| Integration complexity | Start with GitHub only; Slack in v0.2 |
-| Crowded vector DB space | Explicitly not a vector DB — different positioning |
+| LLM cost/latency | Async-only slow path; local Ollama default eliminates cost |
+| Large context windows reducing retrieval need | Focus moat on lifecycle + governance + control UI |
+| Retrieval commoditization | Differentiator is ingestion + lifecycle + trace, not raw search |
+| Integration complexity | Ship GitHub only in v0.1; Slack in v0.2 |
+| Vector DB space crowding | Explicitly not a vector DB — use Qdrant as infra, not product |
 
 ---
 
-## 15. Milestones
+## 22. Milestones
 
 | Milestone | Deliverable | Target |
 |-----------|-------------|--------|
-| M1 | Rust workspace + GitHub ingestion + Postgres writes | Week 2 |
-| M2 | Fast path processor + episodic memory units | Week 3 |
-| M3 | Slow path worker + embeddings + Qdrant writes | Week 4 |
-| M4 | Retrieval engine (scoring + token packing) | Week 6 |
-| M5 | REST API complete + multi-tenant enforcement | Week 6 |
-| M6 | React Memory Control Center (explorer + trace) | Week 8 |
-| M7 | Slack ingestion | Week 9 |
-| M8 | Demo-ready: agent failure → memory fix → trace | Week 10 |
+| M1 | Rust workspace + Cargo.toml + docker-compose + migrations scaffold | Week 1 |
+| M2 | GitHub webhook ingestion + RawEvent writes to Postgres | Week 2 |
+| M3 | Fast path processor + episodic MemoryUnit creation | Week 3 |
+| M4 | Slow path worker + Ollama summarization + fastembed embeddings + Qdrant writes | Week 4 |
+| M5 | Promotion pipeline (cluster → semantic) | Week 5 |
+| M6 | Retrieval engine: scoring + token packing + trace | Week 6 |
+| M7 | Full REST API + auth (API keys) + rate limiting + audit log | Week 7 |
+| M8 | React Memory Control Center: explorer + detail + trace view | Week 8 |
+| M9 | Slack ingestion | Week 9 |
+| M10 | Demo: agent failure → memory fix → retrieval trace walkthrough | Week 10 |
