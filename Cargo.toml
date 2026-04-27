@@ -52,6 +52,13 @@ sqlx = { version = "0.8", features = ["chrono", "json", "migrate", "postgres", "
 # Redis Streams back processor queues and rate limiting; connection-manager gives pooled async handles.
 redis = { version = "0.29", features = ["connection-manager", "tokio-comp"] }
 
+# Webhook signatures and future API key hashing use the crypto primitives pinned for the workspace.
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+argon2 = "0.5"
+rand = "0.8"
+
 # Qdrant is the required vector search backend and is held in shared AppState.
 qdrant-client = "1.13"
 
