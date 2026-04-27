@@ -18,6 +18,7 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::from_path(config_path)?;
     let _telemetry_guard = init_telemetry(&config.telemetry)?;
     let state = build_state(config.clone()).await?;
+    processor::start_workers(state.clone()).await?;
 
     let address = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&address).await?;

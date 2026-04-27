@@ -42,6 +42,7 @@ tokio = { version = "1.44", features = ["macros", "net", "rt-multi-thread", "sig
 chrono = { version = "0.4", features = ["clock", "serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tiktoken-rs = "0.6"
 toml = "0.8"
 uuid = { version = "1.16", features = ["serde", "v7"] }
 validator = { version = "0.20", features = ["derive"] }

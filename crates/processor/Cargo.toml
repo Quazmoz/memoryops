@@ -10,4 +10,18 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+anyhow.workspace = true
+chrono.workspace = true
 common.workspace = true
+ingestion.workspace = true
+qdrant-client.workspace = true
+redis.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tiktoken-rs.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
