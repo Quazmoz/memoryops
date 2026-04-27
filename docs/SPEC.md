@@ -1,8 +1,8 @@
 # MemoryOps — Technical Specification
 
-**Version:** 0.3.0  
+**Version:** 0.4.0  
 **Status:** Active  
-**Last Updated:** 2026-04-12
+**Last Updated:** 2026-04-27
 
 ---
 
@@ -422,8 +422,8 @@ Handler
 │           ▼                                                   │
 │  ┌──────────────────────────────────────┐                     │
 │  │           Retrieval Svc              │                     │
-│  │  Qdrant (semantic) + Tantivy (BM25)  │                     │
-│  │  Scorer → Token Packer → Trace       │                     │
+│  │  Qdrant (semantic) + PG FTS (BM25)   │                     │
+│  │  RRF Fusion → Decay → Promotion      │                     │
 │  └──────────────────────────────────────┘                     │
 │           │                                                   │
 │           ▼                                                   │
@@ -457,7 +457,7 @@ memoryops/
 │   ├── ingestion/
 │   │   ├── src/
 │   │   │   ├── lib.rs
-│   │   │   ├── router.rs       # axum routes for /webhooks/*
+│   │   │   ├── router.rs       # axum routes for /v1/ingest/*
 │   │   │   ├── validator.rs    # WebhookValidator trait + impls
 │   │   │   ├── github/
 │   │   │   │   ├── mod.rs
@@ -470,41 +470,33 @@ memoryops/
 │   ├── processor/
 │   │   ├── src/
 │   │   │   ├── lib.rs
-│   │   │   ├── fast/
-│   │   │   │   ├── mod.rs
-│   │   │   │   ├── extractor.rs    # entity extraction
-│   │   │   │   ├── tagger.rs       # tag assignment
-│   │   │   │   └── scorer.rs       # importance scoring rules
-│   │   │   ├── slow/
-│   │   │   │   ├── mod.rs
-│   │   │   │   ├── worker.rs       # Redis consumer loop
-│   │   │   │   ├── summarizer.rs   # LlmProvider::summarize wrapper
-│   │   │   │   └── embedder.rs     # EmbeddingProvider + Qdrant write
-│   │   │   └── promotion/
-│   │   │       ├── mod.rs
-│   │   │       ├── clusterer.rs
-│   │   │       └── promoter.rs
+│   │   │   ├── worker.rs       # Redis consumer loop (fast + slow paths)
+│   │   │   ├── extractor.rs    # entity extraction
+│   │   │   ├── embedder.rs     # EmbeddingProvider + Qdrant write
+│   │   │   ├── scope.rs        # MemoryScope builder
+│   │   │   ├── store.rs        # DB writes for MemoryUnit
+│   │   │   ├── dlq.rs          # Dead letter queue
+│   │   │   └── pipeline/       # fast/slow path orchestration
 │   ├── retrieval/
 │   │   ├── src/
-│   │   │   ├── lib.rs
-│   │   │   ├── search.rs       # hybrid Qdrant + Tantivy
-│   │   │   ├── scorer.rs       # scoring formula
-│   │   │   ├── packer.rs       # token packing algorithm
-│   │   │   └── trace.rs        # RetrievalTrace builder + persistence
+│   │   │   ├── lib.rs          # router registration
+│   │   │   ├── dto.rs          # SearchRequest, ListQuery, UpdateMemoryRequest, DTOs
+│   │   │   ├── handlers/       # search, list, get, update handlers
+│   │   │   ├── search/         # vector, keyword, hybrid (RRF) search modules
+│   │   │   ├── promotion/      # decay + eligibility + promotion trigger
+│   │   │   ├── access.rs       # Redis access counter
+│   │   │   └── store.rs        # all retrieval DB queries
 │   └── api/
 │       ├── src/
-│       │   ├── main.rs
-│       │   ├── router.rs
+│       │   ├── main.rs         # AppState wiring, router merge, startup
 │       │   ├── middleware/
 │       │   │   ├── auth.rs
 │       │   │   └── rate_limit.rs
 │       │   └── handlers/
-│       │       ├── memory.rs
-│       │       ├── retrieve.rs
 │       │       ├── workspaces.rs
 │       │       ├── keys.rs
 │       │       └── audit.rs
-├── frontend/                   # React + TypeScript
+├── frontend/                   # React + TypeScript (M5)
 │   ├── src/
 │   │   ├── components/
 │   │   ├── pages/
@@ -514,8 +506,9 @@ memoryops/
 │   └── package.json
 ├── migrations/                 # sqlx numbered migrations
 │   ├── 0001_init.sql
-│   ├── 0002_memory_units.sql
-│   └── ...
+│   ├── 0002_ingestion_indexes.sql
+│   ├── 0003_processor.sql
+│   └── 0004_retrieval.sql      # FTS indexes, access_count column
 ├── docs/
 │   ├── SPEC.md
 │   ├── FEATURES.md
@@ -530,7 +523,7 @@ memoryops/
 
 ### 8.3 AppState
 
-All shared state is injected via `axum::Extension` — never global statics.
+All shared state is injected via axum `State<AppState>` — never global statics.
 
 ```rust
 #[derive(Clone)]
@@ -541,6 +534,7 @@ pub struct AppState {
     pub embedding_provider: Arc<dyn EmbeddingProvider>,
     pub llm_provider: Arc<dyn LlmProvider>,
     pub config: Arc<AppConfig>,
+    pub github_webhook_secret: String,
 }
 ```
 
@@ -576,7 +570,7 @@ pub enum ValidationError {
 ### 9.2 GitHub Events
 
 | Event | Actions Captured |
-|-------|------------------|
+|-------|-----------------|
 | `pull_request` | opened, closed, merged, review_requested |
 | `pull_request_review` | submitted (approved, changes_requested, commented) |
 | `push` | all refs; extract commits, author, branch |
@@ -586,7 +580,7 @@ pub enum ValidationError {
 ### 9.3 Ingestion Flow
 
 ```
-POST /webhooks/github
+POST /v1/ingest/github
   │
   ├─ 1. Validate HMAC  →  401 ValidationError on failure
   ├─ 2. Parse event type from X-GitHub-Event header
@@ -624,7 +618,7 @@ Runs in the same process as ingestion (tokio task), processes synchronously befo
 **Importance scoring rules (default):**
 
 | Event | Default Score |
-|-------|---------------|
+|-------|--------------|
 | Merge to default branch | 0.90 |
 | PR review: changes_requested | 0.75 |
 | PR opened | 0.60 |
@@ -657,154 +651,73 @@ XREADGROUP GROUP slow_workers consumer-1 COUNT 10 BLOCK 2000 STREAMS processor_j
 
 ### 10.3 Promotion Pipeline
 
-Runs as a scheduled job (every 15 minutes, configurable).
+Triggered on every retrieval access (async, non-blocking) and as a scheduled pass.
 
 ```
-1. Fetch Episodic MemoryUnits: age > clustering_window AND not promoted
-2. Cluster by (entity_overlap + topic_similarity + time_window)
-3. For each cluster:
-   a. Compute cluster importance = mean(importance_scores)
-   b. If cluster_importance >= promotion_threshold (default: 0.65):
-      i.  Call LlmProvider::summarize(joined_cluster_content)
-      ii. Call EmbeddingProvider::embed(summary)
-      iii. INSERT Semantic MemoryUnit
-      iv. Mark source Episodic units as promoted
-      v.  Write audit entry
+1. Load MemoryUnit by id
+2. Check Redis access counter (HGET memoryops:access:<id> count)
+3. If: memory_type == Episodic
+      AND importance_score >= 0.85
+      AND access_count >= 3
+      AND not deleted, not pinned
+   → UPDATE memory_type = 'semantic' (promoter)
+4. Log promotion via tracing::info!
 ```
 
-**Configurable per workspace:** `clustering_window` (default: 24h), `promotion_threshold` (default: 0.65), `promotion_cadence` (default: 15min).
+**Configurable per workspace:** `promotion_threshold` (default: 0.85), `access_count_trigger` (default: 3).
 
 ---
 
 ## 11. Retrieval Engine
 
-### 11.1 Request
+### 11.1 Search Modes
+
+The retrieval crate supports three search modes on `POST /v1/memory/search`:
+
+| Mode | Strategy | Notes |
+|------|----------|-------|
+| `vector` | Qdrant ANN search | Requires `embedding_id`; falls back to empty if provider not configured |
+| `keyword` | PostgreSQL `tsvector` FTS | `plainto_tsquery('english', query)` + GIN index |
+| `hybrid` (default) | RRF fusion of vector + keyword | `score = Σ 1/(k + rank)` where k=60; normalised 0–1 |
+
+### 11.2 RRF Fusion
 
 ```rust
-#[derive(Debug, Deserialize, Validate)]
-pub struct RetrievalRequest {
-    pub scope: Option<MemoryScope>,
-    #[validate(length(min = 1, max = 2000))]
-    pub query: String,
-    #[validate(range(min = 256, max = 32768))]
-    pub token_budget: usize,
-    pub filters: Option<RetrievalFilters>,
-}
+pub const RRF_K: f32 = 60.0;
 
-#[derive(Debug, Deserialize)]
-pub struct RetrievalFilters {
-    pub sources: Option<Vec<Source>>,
-    pub memory_types: Option<Vec<MemoryType>>,
-    pub entities: Option<Vec<String>>,
-    pub since: Option<DateTime<Utc>>,
-    pub tags: Option<Vec<String>>,
-    pub min_importance: Option<f32>,
+pub fn rrf_score(rank: u32) -> f32 {
+    1.0 / (RRF_K + rank as f32)
 }
 ```
 
-`workspace_id` is injected from the authenticated API key — never trusted from the request body.
+Candidates from both legs are fused, scores normalised to `[0, 1]` by dividing by max raw score, then re-ranked. Vector result is preferred for tie-breaking.
 
-### 11.2 Scoring Formula
-
-```
-final_score =
-    (semantic_similarity  × w1)   # default 0.35
-  + (importance_score     × w2)   # default 0.25
-  + (recency_score        × w3)   # default 0.20
-  + (source_authority     × w4)   # default 0.10
-  + (memory_type_weight   × w5)   # default 0.10
-```
-
-Weights `w1–w5` must sum to `1.0`. Validated on workspace config update.
-
-**Component formulas:**
-- `recency_score = 1.0 / (1.0 + days_since_event)`
-- `source_authority` = workspace-configured float per source (GitHub: `0.9`, Slack: `0.6`)
-- `memory_type_weight` = Semantic: `1.0`, Episodic: `0.5`
+### 11.3 Decay Scoring
 
 ```rust
-pub struct ScoringWeights {
-    pub semantic_similarity: f32,
-    pub importance: f32,
-    pub recency: f32,
-    pub source_authority: f32,
-    pub memory_type: f32,
-}
-
-impl ScoringWeights {
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        let sum = self.semantic_similarity + self.importance
-            + self.recency + self.source_authority + self.memory_type;
-        if (sum - 1.0).abs() > 1e-4 {
-            return Err(ConfigError::WeightsMustSumToOne);
-        }
-        Ok(())
-    }
+pub fn decay_score(importance_score: f32, elapsed_secs: f64, half_life_secs: f64) -> f32 {
+    // decay_score = importance_score × 0.5^(elapsed / half_life)
 }
 ```
 
-### 11.3 Token Packing Algorithm
+Default half-life: 30 days. Applied in bulk via `applydecayscoreswithhalflife` — skips pinned and importance-overridden units.
 
-```rust
-pub fn pack(
-    candidates: Vec<ScoredMemory>,
-    token_budget: usize,
-    dedup_threshold: f32,  // default 0.92
-) -> (Vec<ScoredMemory>, Vec<RetrievalTraceEntry>) {
-    // 1. Sort by final_score desc
-    // 2. Greedy inclusion under token_budget
-    // 3. Before including: check cosine similarity against
-    //    all already-included embeddings
-    //    → skip if similarity > dedup_threshold
-    // 4. Track all candidates in trace (included + excluded)
-    // 5. Return (packed, trace)
-}
-```
+### 11.4 Access Tracking & Promotion
 
-Token counting uses `tiktoken-rs` (cl100k_base tokenizer — compatible with GPT-4 and most modern models). Count is computed once per memory at embedding time and cached in `token_count` column.
+Every search result triggers:
+1. `access::record_access(redis, memory_id)` — increments Redis HINCR counter (TTL 90 days)
+2. `store::touch_last_accessed(db, id)` — async update of `last_accessed_at`
+3. `promotion::check_and_promote(state, workspace_id, result_ids)` — async promotion eligibility check
 
-### 11.4 Response
+### 11.5 List & CRUD
 
-```rust
-#[derive(Debug, Serialize)]
-pub struct RetrievalResult {
-    pub query_id: Uuid,
-    pub memories: Vec<ScoredMemory>,
-    pub total_tokens: usize,
-    pub trace: Vec<RetrievalTraceEntry>,
-    pub retrieved_at: DateTime<Utc>,
-}
+`GET /v1/memory` supports full filtering: `workspace_id`, `memory_type`, `pinned`, `min_importance`, sort by `importance_score | decay_score | updated_at | created_at`, direction `asc | desc`, `limit` (max 100), `offset`.
 
-#[derive(Debug, Serialize)]
-pub struct ScoreBreakdown {
-    pub semantic_similarity: f32,
-    pub importance: f32,
-    pub recency: f32,
-    pub source_authority: f32,
-    pub memory_type: f32,
-    pub final_score: f32,
-}
+`PATCH /v1/memory/:id` supports: `pinned`, `importance_score` (sets `importance_overridden = true`), `tags`. Validates `importance_score ∈ [0.0, 1.0]`.
 
-#[derive(Debug, Serialize)]
-pub struct RetrievalTraceEntry {
-    pub memory_id: Uuid,
-    pub breakdown: ScoreBreakdown,
-    pub token_count: usize,
-    pub included: bool,
-    pub exclusion_reason: Option<ExclusionReason>,
-}
+### 11.6 Score Breakdown (future — M6+)
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExclusionReason {
-    TokenBudget,
-    Dedup,
-    Filtered,
-    BelowMinImportance,
-}
-```
-
-Traces persisted to Postgres for 30 days. Queryable by `query_id`.
+Full per-component score breakdown (`semantic_similarity`, `importance`, `recency`, `source_authority`, `memory_type_weight`) is tracked in `RetrievalTraceEntry`. The `POST /v1/retrieve` endpoint in a future milestone will expose this via a dedicated retrieval surface. The current `POST /v1/memory/search` is the queryable read path.
 
 ---
 
@@ -813,12 +726,12 @@ Traces persisted to Postgres for 30 days. Queryable by `query_id`.
 ### 12.1 Conventions
 
 - **Versioning:** All routes prefixed `/v1/`
-- **Auth:** `X-API-Key` header required on all routes except `/webhooks/*` and `/health`
+- **Auth:** `X-API-Key` header required on all routes except `/v1/ingest/*` and `/health`
 - **Content-Type:** `application/json` for all request/response bodies
-- **Pagination:** cursor-based on all list endpoints (`?after=<cursor>&limit=<n>`, default limit 20, max 100)
+- **Pagination:** offset-based on list endpoints (`?limit=<n>&offset=<n>`, default limit 20, max 100)
 - **Errors:** unified error envelope (see §14)
 - **Idempotency:** `POST` endpoints accept optional `Idempotency-Key` header
-- **Timestamps:** all `DateTime` fields in ISO 8601 UTC (`2026-04-12T23:00:00Z`)
+- **Timestamps:** all `DateTime` fields in ISO 8601 UTC (`2026-04-27T18:00:00Z`)
 - **IDs:** all IDs are UUIDs v7 (time-ordered, sortable)
 
 ### 12.2 Error Envelope
@@ -835,67 +748,68 @@ Traces persisted to Postgres for 30 days. Queryable by `query_id`.
 
 ### 12.3 Full API Surface
 
-#### Webhooks (no auth, HMAC only)
+#### Ingestion (no auth, HMAC only)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/v1/webhooks/github` | GitHub webhook receiver |
-| POST | `/v1/webhooks/slack` | Slack Events API receiver |
+| POST | `/v1/ingest/github` | GitHub webhook receiver |
+| POST | `/v1/ingest/slack` | Slack Events API receiver |
 
-#### Memory
+#### Memory (live — M4 complete)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/v1/memory` | List (cursor paginated; filter by type/source/tag/scope/entity) |
-| GET | `/v1/memory/:id` | Get with full entity, lineage, score |
-| PATCH | `/v1/memory/:id` | Update: pin, tag, content, importance override |
-| DELETE | `/v1/memory/:id` | Soft delete |
-| POST | `/v1/memory/:id/promote` | Force episodic → semantic |
-| POST | `/v1/memory/:id/restore` | Restore soft-deleted memory |
-| POST | `/v1/memory/bulk` | Bulk pin / bulk delete (filter or ID list) |
-| GET | `/v1/memory/:id/history` | Version history |
-| POST | `/v1/memory/merge` | Merge two semantic memory units |
+| Method | Path | Status | Description |
+|--------|------|--------|-------------|
+| GET | `/v1/memory` | ✅ Live | List (filter by type/pinned/importance/tag; sort; paginated) |
+| GET | `/v1/memory/:id` | ✅ Live | Get with full entity, scope, score |
+| PATCH | `/v1/memory/:id` | ✅ Live | Update: pin, tag, importance override |
+| DELETE | `/v1/memory/:id` | 🔴 M6 | Soft delete |
+| POST | `/v1/memory/search` | ✅ Live | Hybrid/vector/keyword search with RRF fusion |
+| POST | `/v1/memory/:id/promote` | 🔴 M6 | Force episodic → semantic |
+| POST | `/v1/memory/:id/restore` | 🔴 M6 | Restore soft-deleted memory |
+| POST | `/v1/memory/bulk` | 🔴 M6 | Bulk pin / bulk delete |
+| GET | `/v1/memory/:id/history` | 🔴 M6 | Version history |
+| POST | `/v1/memory/merge` | 🔴 M6 | Merge two semantic memory units |
 
-#### Retrieval
+#### Retrieval (future)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/v1/retrieve` | Core retrieval |
-| GET | `/v1/retrieve/trace/:query_id` | Retrieval trace |
+| Method | Path | Status | Description |
+|--------|------|--------|-------------|
+| POST | `/v1/retrieve` | 🔴 M6 | Core retrieval with token packing + trace |
+| GET | `/v1/retrieve/trace/:query_id` | 🔴 M6 | Retrieval trace |
 
 #### Workspaces
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/v1/workspaces` | Create workspace |
-| GET | `/v1/workspaces/:id` | Get workspace |
-| PATCH | `/v1/workspaces/:id/config` | Update config (weights, thresholds, providers) |
-| POST | `/v1/workspaces/:id/integrations` | Add integration |
-| GET | `/v1/workspaces/:id/integrations` | List with health |
-| DELETE | `/v1/workspaces/:id/integrations/:source` | Remove integration |
+| Method | Path | Status | Description |
+|--------|------|--------|-------------|
+| POST | `/v1/workspaces` | 🔴 M6 | Create workspace |
+| GET | `/v1/workspaces/:id` | 🔴 M6 | Get workspace |
+| PATCH | `/v1/workspaces/:id/config` | 🔴 M6 | Update config |
+| POST | `/v1/workspaces/:id/integrations` | 🔴 M6 | Add integration |
+| GET | `/v1/workspaces/:id/integrations` | 🔴 M6 | List with health |
+| DELETE | `/v1/workspaces/:id/integrations/:source` | 🔴 M6 | Remove integration |
 
 #### API Keys
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/v1/workspaces/:id/keys` | Create key (plaintext returned once) |
-| GET | `/v1/workspaces/:id/keys` | List keys |
-| DELETE | `/v1/workspaces/:id/keys/:key_id` | Revoke key |
+| Method | Path | Status | Description |
+|--------|------|--------|-------------|
+| POST | `/v1/workspaces/:id/keys` | 🔴 M6 | Create key (plaintext returned once) |
+| GET | `/v1/workspaces/:id/keys` | 🔴 M6 | List keys |
+| DELETE | `/v1/workspaces/:id/keys/:key_id` | 🔴 M6 | Revoke key |
 
 #### Audit & DLQ
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/v1/workspaces/:id/audit` | Paginated audit log |
-| GET | `/v1/workspaces/:id/dlq` | List DLQ jobs |
-| POST | `/v1/workspaces/:id/dlq/:job_id/retry` | Retry DLQ job |
-| DELETE | `/v1/workspaces/:id/dlq/:job_id` | Discard DLQ job |
+| Method | Path | Status | Description |
+|--------|------|--------|-------------|
+| GET | `/v1/workspaces/:id/audit` | 🔴 M6 | Paginated audit log |
+| GET | `/v1/workspaces/:id/dlq` | 🔴 M6 | List DLQ jobs |
+| POST | `/v1/workspaces/:id/dlq/:job_id/retry` | 🔴 M6 | Retry DLQ job |
+| DELETE | `/v1/workspaces/:id/dlq/:job_id` | 🔴 M6 | Discard DLQ job |
 
 #### Export
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/v1/workspaces/:id/export` | Stream JSONL export |
+| Method | Path | Status | Description |
+|--------|------|--------|-------------|
+| GET | `/v1/workspaces/:id/export` | 🔴 M7 | Stream JSONL export |
 
 #### Health
 
@@ -930,6 +844,10 @@ CREATE INDEX idx_memory_units_workspace_type ON memory_units(workspace_id, memor
 CREATE INDEX idx_memory_units_decay ON memory_units(workspace_id, decay_score) WHERE deleted_at IS NULL;
 CREATE INDEX idx_memory_units_scope ON memory_units(workspace_id, agent_id, user_id, repo);
 CREATE INDEX idx_memory_units_tags ON memory_units USING gin(tags);
+-- M4 additions:
+CREATE INDEX idx_memory_units_fts ON memory_units USING GIN(to_tsvector('english', content));
+CREATE INDEX idx_memory_units_workspace_type_score ON memory_units(workspace_id, memory_type, importance_score DESC) WHERE deleted_at IS NULL;
+CREATE INDEX idx_memory_units_workspace_pinned ON memory_units(workspace_id, pinned, updated_at DESC) WHERE deleted_at IS NULL AND pinned = true;
 
 -- audit_log
 CREATE INDEX idx_audit_log_workspace_time ON audit_log(workspace_id, occurred_at DESC);
@@ -1014,7 +932,6 @@ impl IntoResponse for AppError {
             | AppError::Internal(_)     => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
         };
 
-        // Internal errors: log full detail, return sanitized message to client
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(error = ?self, "internal error");
         }
@@ -1057,56 +974,25 @@ impl IntoResponse for AppError {
 
 - Location: `#[cfg(test)]` module at bottom of each source file
 - Coverage targets:
-  - Scoring formula: all weight combinations
-  - Token packing: boundary conditions, dedup logic
-  - Entity extractor: regex patterns against fixture payloads
-  - Importance scorer: all rule table entries
+  - RRF fusion: rank ordering, score normalisation, tie-breaking
+  - Decay formula: half-life boundary conditions
+  - Keyword search builder: filter pushdown SQL correctness
+  - Promotion eligibility: all flag combinations
   - Webhook validator: valid HMAC, invalid HMAC, stale timestamp
   - MemoryScope specificity ordering
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_scoring_weights_must_sum_to_one() {
-        let weights = ScoringWeights {
-            semantic_similarity: 0.40,
-            importance: 0.25,
-            recency: 0.20,
-            source_authority: 0.10,
-            memory_type: 0.10,  // sum = 1.05 → should fail
-        };
-        assert!(weights.validate().is_err());
-    }
-}
-```
 
 ### 15.3 Integration Tests
 
 - Location: `tests/` directory per crate
 - Use `sqlx::test` macro for DB tests — each test gets a fresh schema
 - Use `wiremock` for mocking LLM and embedding provider HTTP calls
-- Use `testcontainers` for Qdrant and Redis in CI
-
-```rust
-#[sqlx::test]
-async fn test_ingest_github_pr_event(pool: PgPool) {
-    let state = test_state(pool).await;
-    let payload = fixture("github_pr_opened.json");
-    let response = post_webhook("/v1/webhooks/github", payload, &state).await;
-    assert_eq!(response.status(), 202);
-    let event = fetch_latest_raw_event(&state.db).await;
-    assert_eq!(event.event_type, EventType::PullRequest);
-}
-```
+- Live-service tests tagged `#[ignore]` — require `docker-compose.test.yml`
 
 ### 15.4 E2E Tests
 
 - Spin up full stack via `docker-compose.test.yml`
-- Cover: ingest → process → retrieve → verify context contains expected memory
-- Cover: agent failure scenario (no memory) vs. correct behavior (with memory)
+- Cover: ingest → process → search → verify memory appears in results
+- Cover: promotion trigger via repeated access
 - Run on every PR, block merge on failure
 
 ### 15.5 Property-Based Tests
@@ -1120,7 +1006,6 @@ async fn test_ingest_github_pr_event(pool: PgPool) {
 
 - Minimum 80% line coverage enforced in CI via `cargo-llvm-cov`
 - Coverage report uploaded as CI artifact
-- Coverage badge in README
 
 ---
 
@@ -1130,22 +1015,7 @@ async fn test_ingest_github_pr_event(pool: PgPool) {
 
 - All logs via `tracing` crate — no `println!` or `eprintln!` in application code
 - Log format: JSON in production, pretty-printed in development
-- Required fields on every request span:
-  - `request_id` (UUID v7)
-  - `workspace_id`
-  - `method`, `path`, `status_code`, `latency_ms`
-
-```rust
-// Good
-tracing::info!(
-    workspace_id = %workspace_id,
-    memory_id = %id,
-    "memory promoted to semantic"
-);
-
-// Bad
-println!("promoted memory {}", id);
-```
+- Required fields on every request span: `request_id`, `workspace_id`, `method`, `path`, `status_code`, `latency_ms`
 
 ### 16.2 Metrics (OpenTelemetry)
 
@@ -1153,36 +1023,26 @@ println!("promoted memory {}", id);
 |--------|------|--------|
 | `memoryops_ingest_events_total` | Counter | source, event_type, status |
 | `memoryops_processor_job_duration_ms` | Histogram | path (fast/slow) |
-| `memoryops_retrieval_duration_ms` | Histogram | |
-| `memoryops_retrieval_tokens_packed` | Histogram | |
+| `memoryops_retrieval_duration_ms` | Histogram | mode (vector/keyword/hybrid) |
 | `memoryops_memory_units_total` | Gauge | workspace_id, memory_type |
-| `memoryops_decay_pruned_total` | Counter | memory_type |
+| `memoryops_decay_updated_total` | Counter | workspace_id |
 | `memoryops_dlq_jobs_total` | Gauge | status (pending/failed) |
 | `memoryops_provider_latency_ms` | Histogram | provider, operation |
 
-Exported via OTEL exporter (configurable: Prometheus scrape or OTLP push).
-
-### 16.3 Tracing
-
-- Distributed traces via OTEL — spans across ingestion → processing → retrieval
-- `trace_id` propagated in `X-Trace-ID` response header
-- Slow spans (> 500ms) logged at WARN level automatically
-
-### 16.4 Health Checks
+### 16.3 Health Checks
 
 ```rust
 // GET /health/ready
 // Returns 200 only if all dependencies are healthy
-pub async fn readiness(State(state): State<AppState>) -> impl IntoResponse {
-    let db_ok = state.db.acquire().await.is_ok();
-    let redis_ok = ping_redis(&state.redis).await.is_ok();
-    let qdrant_ok = state.qdrant.health_check().await.is_ok();
-
-    if db_ok && redis_ok && qdrant_ok {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    }
+pub async fn readiness() -> impl IntoResponse {
+    let (database, redis, qdrant) = tokio::join!(
+        check_database(),
+        check_redis(),
+        check_qdrant()
+    );
+    let ready = database.is_ready() && redis.is_ready() && qdrant.is_ready();
+    let status = if ready { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+    (status, Json(json!({ "status": if ready { "ok" } else { "unavailable" }, "checks": { ... } })))
 }
 ```
 
@@ -1202,61 +1062,32 @@ jobs:
     - cargo audit
 
   test:
-    - cargo test --all
+    - cargo test --workspace
     - cargo llvm-cov --lcov --output-path lcov.info
     - Upload coverage artifact
 
   integration:
     services: [postgres, redis, qdrant]
-    - cargo test --test '*' --all
-
-  e2e:
-    - docker compose -f docker-compose.test.yml up -d
-    - cargo test --test e2e
-    - docker compose down
-
-  openapi:
-    - Validate openapi.yaml against routes (spectral lint)
-    - Diff openapi.yaml against previous — fail on breaking changes
+    - cargo test --workspace -- --ignored
 ```
 
-### 17.2 Release (`.github/workflows/release.yml`)
-
-Triggered on: tag push `v*`.
-
-```yaml
-jobs:
-  build:
-    - cargo build --release --target x86_64-unknown-linux-musl
-    - Build Docker image (multi-stage)
-    - Push to registry
-
-  migrate:
-    - Run sqlx migrate run against target environment
-
-  deploy:
-    - Rolling deploy (zero-downtime)
-```
-
-### 17.3 Branch Strategy
+### 17.2 Branch Strategy
 
 - `main` — always deployable; protected, requires PR + CI pass
 - `feature/*` — feature branches; squash-merged to main
 - `fix/*` — bug fixes
 - No long-lived branches
 
-### 17.4 Commit Convention
+### 17.3 Commit Convention
 
 Follows [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
-feat(ingestion): add GitHub push event handler
-fix(retrieval): correct token count off-by-one in packer
+feat(retrieval): add hybrid RRF search
+fix(processor): correct decay half-life formula
 chore(deps): update axum to 0.8
-docs(spec): add testing strategy section
+docs(spec): update milestones — UI moved to M5
 ```
-
-Enforced via `commitlint` in CI.
 
 ---
 
@@ -1266,7 +1097,6 @@ Enforced via `commitlint` in CI.
 - `workspace_id` is always a bind param — enforced at `sqlx` level, not application layer
 - No cross-workspace queries possible — no global list endpoints without workspace scope
 - `MemoryScope` provides sub-workspace granularity (agent / user / repo)
-- Workspace config table controls: scoring weights, thresholds, provider selection, rate limits, scope dimensions
 - Row-level isolation verified by integration tests that assert workspace A cannot access workspace B data
 
 ---
@@ -1274,20 +1104,20 @@ Enforced via `commitlint` in CI.
 ## 19. Decay & Pruning
 
 ```
-decay_score(t) = initial × (decay_rate ^ days_since_last_access)
+decay_score(t) = importance_score × 0.5^(elapsed_secs / half_life_secs)
 ```
 
-| Parameter | Default (Semantic) | Default (Episodic) | Configurable |
-|-----------|-------------------|-------------------|-------------|
-| `decay_rate` | 0.98 | 0.95 | Per workspace |
-| Pruning threshold | 0.10 | 0.10 | Per workspace |
-| Recovery window | 30 days | 30 days | Fixed |
+| Parameter | Default | Configurable |
+|-----------|---------|-------------|
+| `half_life_days` | 30 | Per workspace (future) |
+| Pruning threshold | 0.10 | Per workspace (future) |
+| Pinned memories | Skipped entirely | N/A |
+| `importance_overridden` | Skipped | N/A |
 
 **Scheduler behavior:**
-- Runs daily at 02:00 UTC (configurable)
-- Processes in batches of 1000 to avoid table locks
-- Pinned memories: skipped entirely
-- On prune: set `deleted_at = now()` (soft delete), write audit entry
+- `run_decay_pass(state, workspace_id)` exported from retrieval crate
+- Processes all non-pinned, non-overridden units in a single UPDATE
+- Runs daily at 02:00 UTC (scheduler — M6+)
 - Hard delete: separate job runs 30 days after `deleted_at`
 
 ---
@@ -1302,12 +1132,12 @@ Algorithm:   INCR + EXPIREAT per window
 ```
 
 | Endpoint Group | Default RPM | Header on Exceed |
-|----------------|-------------|------------------|
+|----------------|-------------|-----------------|
 | `retrieve` | 60 | `Retry-After: <seconds>` |
 | `ingest` | 300 | `Retry-After: <seconds>` |
 | `api` | 120 | `Retry-After: <seconds>` |
 
-All limits configurable per workspace in `workspace.config`. Exceeding returns `429 Too Many Requests`.
+All limits configurable per workspace. Exceeding returns `429 Too Many Requests`.
 
 ---
 
@@ -1316,47 +1146,31 @@ All limits configurable per workspace in `workspace.config`. Exceeding returns `
 ### 21.1 Stack
 
 | Concern | Choice | Reason |
-|---------|--------|---------|
+|---------|--------|--------|
 | Framework | React 19 + TypeScript | Stable, wide ecosystem |
 | Build | Vite | Fast HMR, ESM-native |
 | State | Zustand | Minimal, no boilerplate |
 | Data fetching | TanStack Query | Cache + stale-while-revalidate |
-| API client | Generated from `openapi.yaml` via `openapi-typescript-codegen` | Single source of truth |
-| Styling | Tailwind CSS | Utility-first, consistent |
+| Styling | Tailwind CSS v4 | Utility-first, consistent |
 | Components | shadcn/ui | Accessible, composable |
 | Tables | TanStack Table | Powerful, headless |
 | Charts | Recharts | Lightweight, declarative |
 | Testing | Vitest + React Testing Library | Fast, co-located |
 | E2E | Playwright | Cross-browser |
 
-### 21.2 API Client
+### 21.2 Views (M5 scope — targeting live endpoints)
 
-The frontend **never** hand-writes API calls. The client is generated from `docs/openapi.yaml`:
+| Route | Component | Live Endpoints Used |
+|-------|-----------|-------------------|
+| `/` | Dashboard | `GET /health/ready`, `GET /v1/memory` (counts) |
+| `/memory` | MemoryExplorer | `GET /v1/memory`, `POST /v1/memory/search`, `PATCH /v1/memory/:id` |
+| `/memory/:id` | MemoryDetail | `GET /v1/memory/:id`, `PATCH /v1/memory/:id` |
+| `/ingest` | WebhookTester | `POST /v1/ingest/github` (dev tool) |
+| `/settings` | WorkspaceSettings | config display only (M6 write) |
 
-```bash
-npx openapi-typescript-codegen \
-  --input docs/openapi.yaml \
-  --output frontend/src/api \
-  --client axios
-```
+Views for `/retrieve/trace`, `/lifecycle`, `/audit`, `/integrations` are stubbed with empty states in M5 and wired to real endpoints in M6+.
 
-Regenerated in CI on any change to `openapi.yaml`. PRs that change the API without updating `openapi.yaml` fail CI.
-
-### 21.3 Views
-
-| Route | Component | Description |
-|-------|-----------|-------------|
-| `/` | Dashboard | Workspace overview, ingestion rate, memory counts |
-| `/memory` | MemoryExplorer | Search + filter + bulk actions |
-| `/memory/:id` | MemoryDetail | Full content, entities, lineage, version history |
-| `/retrieve` | RetrievePlayground | Test retrieval queries interactively |
-| `/retrieve/trace/:id` | RetrievalTrace | Score breakdown, inclusion/exclusion reasons |
-| `/lifecycle` | LifecycleView | Episodic → semantic promotion timeline |
-| `/integrations` | IntegrationStatus | Webhook health, DLQ, ingestion rate per source |
-| `/audit` | AuditLog | All state-changing operations |
-| `/settings` | WorkspaceSettings | Config, scoring weights, provider selection, API keys |
-
-### 21.4 State Management
+### 21.3 State Management
 
 ```typescript
 // Global store — only for cross-cutting concerns
@@ -1376,11 +1190,10 @@ const { data: memories } = useQuery({
 
 **Security:** API key stored in memory (Zustand store) only. Never written to `localStorage`, `sessionStorage`, or cookies. Cleared on tab close.
 
-### 21.5 Component Rules
+### 21.4 Component Rules
 
 - No business logic in components — logic lives in custom hooks
 - All data fetching in hooks, not components
-- Components receive data as props or read from hooks — no direct API calls
 - Every interactive component has a `data-testid` attribute for testing
 - No inline styles — Tailwind only
 - Accessibility: all interactive elements have ARIA labels; keyboard-navigable
@@ -1397,28 +1210,9 @@ pub struct AuditEntry {
     pub actor: String,           // API key name or "system" or "scheduler"
     pub action: AuditAction,
     pub target_id: Uuid,
-    pub target_type: String,     // "memory" | "api_key" | "workspace" | "integration"
-    pub diff: Option<serde_json::Value>,  // {before: {...}, after: {...}} for edits
+    pub target_type: String,
+    pub diff: Option<serde_json::Value>,
     pub occurred_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, sqlx::Type)]
-#[sqlx(type_name = "audit_action", rename_all = "snake_case")]
-pub enum AuditAction {
-    MemoryCreated,
-    MemoryEdited,
-    MemoryDeleted,
-    MemoryRestored,
-    MemoryPinned,
-    MemoryUnpinned,
-    MemoryPromoted,
-    MemoryMerged,
-    ImportanceOverridden,
-    KeyCreated,
-    KeyRevoked,
-    WorkspaceConfigUpdated,
-    IntegrationAdded,
-    IntegrationRemoved,
 }
 ```
 
@@ -1439,23 +1233,13 @@ pub struct IntegrationHealth {
     pub errors_24h: i64,
     pub status: IntegrationStatus,
 }
-
-#[derive(Debug, sqlx::Type)]
-#[sqlx(type_name = "integration_status", rename_all = "lowercase")]
-pub enum IntegrationStatus {
-    Active,    // error rate < 5%
-    Degraded,  // error rate 5–50%
-    Failing,   // error rate > 50%
-}
 ```
 
 ### 23.2 Dead Letter Queue
 
 - Backend: Redis list `dlq:{workspace_id}`
-- Entry schema: `{ job_id, payload, error, retry_count, failed_at }`
 - Auto-retry: 3 attempts with exponential backoff (1s, 4s, 16s)
-- After 3 failures: written to DLQ, integration `error_count_24h` incremented
-- Manual retry via `POST /v1/workspaces/:id/dlq/:job_id/retry`
+- After 3 failures: written to DLQ
 - DLQ entries expire after 7 days
 
 ---
@@ -1464,10 +1248,7 @@ pub enum IntegrationStatus {
 
 - `GET /v1/workspaces/:id/export` — streams JSONL, one memory unit per line
 - Uses chunked transfer encoding — no in-memory buffer for large workspaces
-- Includes: `content, entities, importance_score, tags, scope, memory_type, source_events, created_at`
 - Excludes: `payload` from raw events (may contain PII), embeddings (raw vectors)
-- Response header: `Content-Disposition: attachment; filename="memoryops-export-{workspace_id}-{date}.jsonl"`
-- Import: planned for v0.3
 
 ---
 
@@ -1475,39 +1256,26 @@ pub enum IntegrationStatus {
 
 ### 25.1 Rust
 
-- **Format:** `rustfmt` with project `.rustfmt.toml`; enforced in CI
+- **Format:** `rustfmt` enforced in CI
 - **Lint:** `clippy` with `-D warnings`; all warnings treated as errors in CI
-- **No `unwrap()`/`expect()`** outside tests — use `?` or map to `AppError`
-- **No `clone()`** on large structs in hot paths — prefer `Arc<T>` for shared state
-- **Derive traits explicitly:** `Debug, Clone, Serialize, Deserialize` only where needed
-- **Dead code:** `#[allow(dead_code)]` is forbidden — remove or use the code
-- **Unsafe:** `unsafe` blocks are forbidden unless in a dedicated `unsafe.rs` with a safety comment
-- **Dependencies:** every new dep requires a comment explaining why it was chosen over alternatives
-- **MSRV:** Rust stable, pinned in `rust-toolchain.toml`
+- **No `unwrap()`/`expect()`** outside tests
+- **No `clone()`** on large structs in hot paths — prefer `Arc<T>`
+- **Dead code:** `#[allow(dead_code)]` is forbidden
+- **Unsafe:** forbidden unless in a dedicated file with safety comment
+- **MSRV:** Rust 1.88.0 stable, pinned in `rust-toolchain.toml`
 
 ### 25.2 TypeScript
 
-- **Strict mode:** `"strict": true` in `tsconfig.json` — no implicit `any`
-- **Format:** Prettier with project config; enforced in CI
+- **Strict mode:** `"strict": true` in `tsconfig.json`
+- **Format:** Prettier enforced in CI
 - **Lint:** ESLint with `@typescript-eslint` + `react-hooks` rules
-- **No `any`:** Use `unknown` + type guards instead
-- **No direct API calls in components** — all in hooks
-- **All async functions:** must handle errors — no unhandled promise rejections
+- **No `any`:** Use `unknown` + type guards
 
 ### 25.3 SQL
 
-- All queries use `sqlx::query_as!` macro for compile-time checking
-- No raw string interpolation in queries — ever
-- Explain-analyze run on all new queries before merge (added as PR comment)
+- All queries use parameterized binding — no string interpolation ever
+- Explain-analyze run on all new queries before merge
 - Migrations tested in integration suite before merge
-
-### 25.4 Git Hygiene
-
-- PR must reference an issue or milestone
-- Each PR does one thing — no bundling unrelated changes
-- PR description must include: what changed, why, how to test
-- Squash merge to main — clean linear history
-- No force-push to `main`
 
 ---
 
@@ -1516,7 +1284,7 @@ pub enum IntegrationStatus {
 - Generic "second brain" or consumer product
 - Full agent runtime or framework
 - Vector database replacement
-- Real-time streaming ingestion (webhooks are sufficient)
+- Real-time streaming ingestion
 - Custom embedding model fine-tuning
 - Push-mode context injection (agent SDK — v0.3+)
 - SSO / OAuth login (v0.3+ SaaS phase)
@@ -1528,12 +1296,12 @@ pub enum IntegrationStatus {
 ## 27. Risks & Mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
+|------|-----------|--------|-----------|
 | LLM latency blocks throughput | Medium | High | Async-only slow path; local Ollama default |
 | Large context windows reduce retrieval need | Low | Medium | Moat is lifecycle + governance, not retrieval size |
 | Retrieval commoditized by frameworks | Medium | Medium | Differentiator is ingestion + control UI + trace |
 | GitHub/Slack API changes break parsers | Low | High | Versioned event types; parser tests against fixtures |
-| Qdrant unavailability degrades retrieval | Low | High | Fallback to BM25-only (Tantivy) if Qdrant unreachable |
+| Qdrant unavailability degrades retrieval | Low | High | Fallback to keyword-only if Qdrant unreachable |
 | Webhook replay attacks | Low | Medium | Idempotency key + timestamp validation (5min window) |
 | Postgres migration failure in prod | Low | Critical | Always run migrations in staging first; rollback plan per migration |
 
@@ -1541,15 +1309,17 @@ pub enum IntegrationStatus {
 
 ## 28. Milestones
 
-| # | Deliverable | Key Acceptance Criteria | Target |
+| # | Deliverable | Key Acceptance Criteria | Status |
 |---|-------------|------------------------|--------|
-| M1 | Rust workspace + Cargo.toml + docker-compose + migrations scaffold | `cargo build` clean; `docker compose up` starts all infra | Week 1 |
-| M2 | GitHub webhook ingestion + RawEvent writes | Webhook delivers → `raw_events` row exists; idempotency key works | Week 2 |
-| M3 | Fast path processor + episodic MemoryUnit | Ingest PR → MemoryUnit with entities + importance created | Week 3 |
-| M4 | Slow path worker + embeddings + Qdrant | MemoryUnit gets `embedding_id`; Qdrant point queryable | Week 4 |
-| M5 | Promotion pipeline | Episodic cluster → Semantic MemoryUnit after threshold | Week 5 |
-| M6 | Retrieval engine | `POST /retrieve` returns scored, token-packed, traced result | Week 6 |
-| M7 | Full REST API + auth + rate limiting + audit | All endpoints passing integration tests; 401/429 enforced | Week 7 |
-| M8 | React Memory Control Center | Explorer, detail, trace views functional against real API | Week 8 |
-| M9 | Slack ingestion | Slack message → MemoryUnit via same pipeline | Week 9 |
-| M10 | Demo | Agent failure → memory fix → trace walkthrough recorded | Week 10 |
+| M1 | Rust workspace + docker-compose + migrations scaffold | `cargo build` clean; `docker compose up` starts all infra | ✅ Complete |
+| M2 | GitHub webhook ingestion + RawEvent writes | Webhook delivers → `raw_events` row exists; idempotency works | ✅ Complete |
+| M3 | Fast path processor + episodic MemoryUnit | Ingest PR → MemoryUnit with entities + importance created | ✅ Complete |
+| M4 | Retrieval crate — search, list, get, update, decay, promotion | `POST /v1/memory/search` returns ranked results; hybrid RRF works; decay pass runs; `cargo test` passes | ✅ Complete |
+| M5 | React Memory Control Center (against live API) | Explorer, detail, search views functional; webhook tester fires real ingestion | 🎯 Next |
+| M6 | Full REST API + auth + rate limiting + audit + soft delete | All endpoints passing integration tests; 401/429 enforced; `POST /v1/retrieve` live | 🔴 Planned |
+| M7 | Slow path worker + embeddings + Qdrant write | MemoryUnit gets `embedding_id`; Qdrant point queryable; vector leg of hybrid search active | 🔴 Planned |
+| M8 | Promotion pipeline (batch clustering) | Episodic cluster → Semantic MemoryUnit after threshold | 🔴 Planned |
+| M9 | Slack ingestion | Slack message → MemoryUnit via same pipeline | 🔴 Planned |
+| M10 | Demo | Agent failure → memory fix → trace walkthrough recorded | 🔴 Planned |
+
+> **Note on M7 ordering:** The slow path worker (embeddings + Qdrant) is intentionally after the UI (M5) and full REST API (M6). The vector leg of hybrid search gracefully degrades to keyword-only when `embedding_id` is null. This means the UI and API are fully testable against real data without requiring a running embedding model.
