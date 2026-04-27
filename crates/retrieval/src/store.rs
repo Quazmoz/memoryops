@@ -236,7 +236,7 @@ pub async fn soft_delete_memory_unit(
     workspace_id: Uuid,
 ) -> AppResult<Option<MemoryUnit>> {
     let sql = format!(
-        "UPDATE memory_units SET deleted_at = now(), version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+        "UPDATE memory_units SET deleted_at = now(), embedding_id = NULL, version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
     );
 
     sqlx::query_as::<_, MemoryUnit>(&sql)
@@ -253,7 +253,7 @@ pub async fn restore_memory_unit(
     workspace_id: Uuid,
 ) -> AppResult<Option<MemoryUnit>> {
     let sql = format!(
-        "UPDATE memory_units SET deleted_at = NULL, version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NOT NULL RETURNING {MEMORY_COLUMNS}"
+        "UPDATE memory_units SET deleted_at = NULL, embedding_id = NULL, version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NOT NULL RETURNING {MEMORY_COLUMNS}"
     );
 
     sqlx::query_as::<_, MemoryUnit>(&sql)

@@ -26,6 +26,8 @@ pub enum AuditAction {
     MemoryUnpinned,
     MemoryPromoted,
     MemoryMerged,
+    MemoryEmbedded,
+    MemoryHardDeleted,
     ImportanceOverridden,
     KeyCreated,
     KeyRevoked,

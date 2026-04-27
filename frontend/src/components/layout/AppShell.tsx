@@ -13,14 +13,14 @@ const primaryLinks = [
   { to: "/", label: "Dashboard", icon: Home, testId: "nav-dashboard" },
   { to: "/memory", label: "Memory", icon: Database, testId: "nav-memory" },
   { to: "/ingest", label: "Ingest", icon: Send, testId: "nav-ingest" },
+  { to: "/integrations", label: "Integrations", icon: PlugZap, testId: "nav-integrations" },
+  { to: "/audit", label: "Audit", icon: ScrollText, testId: "nav-audit" },
   { to: "/settings", label: "Settings", icon: Settings, testId: "nav-settings" },
 ];
 
 const stubLinks = [
-  { to: "/trace", label: "Traces", icon: Activity, badge: "M6", testId: "nav-trace" },
+  { to: "/trace", label: "Traces", icon: Activity, badge: "M8", testId: "nav-trace" },
   { to: "/lifecycle", label: "Lifecycle", icon: GitBranch, badge: "M8", testId: "nav-lifecycle" },
-  { to: "/integrations", label: "Integrations", icon: PlugZap, badge: "M6", testId: "nav-integrations" },
-  { to: "/audit", label: "Audit", icon: ScrollText, badge: "M6", testId: "nav-audit" },
 ];
 
 export function AppShell({ children }: AppShellProps) {

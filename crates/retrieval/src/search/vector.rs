@@ -1,12 +1,14 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use common::{
     error::{AppResult, ProviderError},
+    models::{MemoryScope, MemoryType},
+    providers::EmbeddingProvider,
     AppError, AppState,
 };
-use processor::embedder::COLLECTION_NAME;
-use qdrant_client::qdrant::{
-    point_id::PointIdOptions, Condition, Filter, ScoredPoint, SearchPointsBuilder,
+use qdrant_client::{
+    qdrant::{point_id::PointIdOptions, Condition, Filter, ScoredPoint, SearchPointsBuilder},
+    Qdrant as QdrantClient,
 };
 use uuid::Uuid;
 
@@ -18,36 +20,37 @@ use crate::{
     store,
 };
 
+const COLLECTION_NAME: &str = "memoryops_memories";
+const VECTOR_CANDIDATE_LIMIT: u64 = 50;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScoredCandidate {
+    pub memory_id: Uuid,
+    pub score: f32,
+}
+
 pub async fn vector_search(
-    state: &AppState,
-    req: &SearchRequest,
-    limit: u32,
-) -> AppResult<Vec<MemoryResult>> {
-    let embedding = match state.embedding_provider.embed(&req.query).await {
+    qdrant: &QdrantClient,
+    embedding_provider: &Arc<dyn EmbeddingProvider>,
+    workspace_id: Uuid,
+    query: &str,
+    scope: Option<&MemoryScope>,
+    limit: u64,
+) -> AppResult<Vec<ScoredCandidate>> {
+    let embedding = match embedding_provider.embed(query).await {
         Ok(embedding) => embedding,
         Err(ProviderError::NotConfigured) => {
-            tracing::debug!("embedding provider not configured; skipping vector search");
+            tracing::warn!("embedding provider not configured; skipping vector search");
             return Ok(Vec::new());
         }
         Err(error) => return Err(AppError::Provider(error)),
     };
 
-    let mut conditions = vec![Condition::matches(
-        "workspace_id",
-        req.workspace_id.to_string(),
-    )];
-    if let Some(memory_type) = req.filters.as_ref().and_then(|filters| filters.memory_type) {
-        conditions.push(Condition::matches(
-            "memory_type",
-            memory_type_as_str(memory_type).to_owned(),
-        ));
-    }
-
-    let request = SearchPointsBuilder::new(COLLECTION_NAME, embedding, u64::from(limit))
+    let request = SearchPointsBuilder::new(COLLECTION_NAME, embedding, limit)
         .score_threshold(MIN_SCORE_THRESHOLD)
-        .filter(Filter::must(conditions));
+        .filter(build_vector_filter(workspace_id, scope));
 
-    let response = match state.qdrant.search_points(request).await {
+    let response = match qdrant.search_points(request).await {
         Ok(response) => response,
         Err(error) => {
             tracing::warn!(error = ?error, "Qdrant vector search failed; returning empty results");
@@ -55,38 +58,117 @@ pub async fn vector_search(
         }
     };
 
-    let mut scored_ids = response
+    let mut candidates = response
         .result
         .into_iter()
-        .filter_map(|point| scored_point_uuid(&point).map(|id| (id, point.score.clamp(0.0, 1.0))))
+        .filter_map(|point| {
+            scored_point_uuid(&point).map(|memory_id| ScoredCandidate {
+                memory_id,
+                score: point.score.clamp(0.0, 1.0),
+            })
+        })
         .collect::<Vec<_>>();
-    scored_ids.sort_by(|left, right| right.1.total_cmp(&left.1));
+    candidates.sort_by(|left, right| right.score.total_cmp(&left.score));
 
+    Ok(candidates)
+}
+
+pub async fn vector_search_results(
+    state: &AppState,
+    req: &SearchRequest,
+    limit: u32,
+) -> AppResult<Vec<MemoryResult>> {
+    let candidates = vector_search(
+        &state.qdrant,
+        &state.embedding_provider,
+        req.workspace_id,
+        &req.query,
+        None,
+        VECTOR_CANDIDATE_LIMIT.max(u64::from(limit)),
+    )
+    .await?;
+
+    let scored_ids = candidates
+        .into_iter()
+        .map(|candidate| (candidate.memory_id, candidate.score))
+        .collect::<Vec<_>>();
     let ids = scored_ids.iter().map(|(id, _)| *id).collect::<Vec<_>>();
     let units = store::get_memory_units_by_ids(&state.db, &ids, req.workspace_id).await?;
     let mut units_by_id = units
         .into_iter()
         .map(|unit| (unit.id, unit))
         .collect::<HashMap<_, _>>();
+    let memory_type_filter = req.filters.as_ref().and_then(|filters| filters.memory_type);
 
     let mut results = Vec::with_capacity(scored_ids.len());
     for (id, score) in scored_ids {
         if let Some(unit) = units_by_id.remove(&id) {
+            if !matches_memory_type(unit.memory_type, memory_type_filter) {
+                continue;
+            }
             let rank = rank_from_index(results.len());
             results.push(MemoryResult {
                 memory: MemoryUnitDto::from(unit),
                 score,
                 rank,
             });
+            if results.len() >= limit as usize {
+                break;
+            }
         }
     }
 
     Ok(results)
 }
 
+pub fn build_vector_filter(workspace_id: Uuid, scope: Option<&MemoryScope>) -> Filter {
+    let mut conditions = vec![Condition::matches("workspace_id", workspace_id.to_string())];
+    if let Some(scope) = scope {
+        if let Some(agent_id) = &scope.agent_id {
+            conditions.push(Condition::matches("agent_id", agent_id.clone()));
+        }
+        if let Some(user_id) = &scope.user_id {
+            conditions.push(Condition::matches("user_id", user_id.clone()));
+        }
+        if let Some(repo) = &scope.repo {
+            conditions.push(Condition::matches("repo", repo.clone()));
+        }
+    }
+
+    Filter::must(conditions)
+}
+
 fn scored_point_uuid(point: &ScoredPoint) -> Option<Uuid> {
     match point.id.as_ref()?.point_id_options.as_ref()? {
         PointIdOptions::Uuid(value) => Uuid::parse_str(value).ok(),
         PointIdOptions::Num(_) => None,
+    }
+}
+
+fn matches_memory_type(memory_type: MemoryType, filter: Option<MemoryType>) -> bool {
+    filter.is_none_or(|filter| memory_type_as_str(memory_type) == memory_type_as_str(filter))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector_filter_includes_workspace_id() {
+        let workspace_id = Uuid::now_v7();
+        let scope = MemoryScope {
+            workspace_id,
+            agent_id: Some("agent".to_owned()),
+            user_id: Some("user".to_owned()),
+            repo: Some("Quazmoz/memoryops".to_owned()),
+        };
+
+        let filter = build_vector_filter(workspace_id, Some(&scope));
+        let debug = format!("{filter:?}");
+
+        assert!(debug.contains("workspace_id"));
+        assert!(debug.contains(&workspace_id.to_string()));
+        assert!(debug.contains("agent_id"));
+        assert!(debug.contains("repo"));
     }
 }

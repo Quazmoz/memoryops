@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::anyhow;
-use common::{error::AppResult, AppError, AppState};
+use common::{audit::spawn_audit_log, error::AppResult, models::AuditAction, AppError, AppState};
 use ingestion::STREAM_KEY;
 use redis::{
     aio::ConnectionManager, from_redis_value, streams::StreamId, streams::StreamReadReply, Value,
@@ -9,9 +9,19 @@ use redis::{
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
-use crate::{dlq, pipeline, store};
+use crate::{
+    dlq,
+    embedder::{Embedder, QdrantPayload},
+    pipeline,
+    pipeline::fast::count_tokens,
+    store,
+};
 
 pub const GROUP_NAME: &str = "memoryops-processor";
+pub const PROCESSOR_JOBS_STREAM: &str = "processor_jobs";
+pub const SLOW_GROUP_NAME: &str = "slow_workers";
+
+const SLOW_SUMMARY_MAX_TOKENS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedStreamMessage {
@@ -20,16 +30,24 @@ pub struct ParsedStreamMessage {
     pub workspace_id: Uuid,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessorJob {
+    pub stream_id: String,
+    pub memory_id: Uuid,
+    pub workspace_id: Uuid,
+    pub attempts: i32,
+}
+
 pub async fn run_worker(worker_id: usize, state: AppState) {
     let consumer_name = format!("processor-{worker_id}");
     let mut redis = state.redis.clone();
 
-    if let Err(error) = ensure_consumer_group(&mut redis).await {
+    if let Err(error) = ensure_consumer_group(&mut redis, STREAM_KEY, GROUP_NAME).await {
         tracing::error!(error = ?error, "failed to ensure Redis consumer group");
     }
 
     loop {
-        match read_new_messages(&mut redis, &consumer_name).await {
+        match read_new_messages(&mut redis, STREAM_KEY, GROUP_NAME, &consumer_name, 5000).await {
             Ok(messages) => {
                 if messages.is_empty() {
                     continue;
@@ -40,7 +58,9 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
                     let task_state = state.clone();
                     let mut task_redis = state.redis.clone();
                     tasks.spawn(async move {
-                        if let Err(error) = process_stream_message(task_state, &mut task_redis, message).await {
+                        if let Err(error) =
+                            process_stream_message(task_state, &mut task_redis, message).await
+                        {
                             tracing::error!(error = ?error, "failed to process Redis stream message");
                         }
                     });
@@ -60,11 +80,88 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
     }
 }
 
-async fn ensure_consumer_group(redis: &mut ConnectionManager) -> anyhow::Result<()> {
+pub async fn run_slow_worker(worker_id: usize, state: AppState) {
+    let consumer_name = format!("slow-processor-{worker_id}");
+    let mut redis = state.redis.clone();
+
+    if let Err(error) =
+        ensure_consumer_group(&mut redis, PROCESSOR_JOBS_STREAM, SLOW_GROUP_NAME).await
+    {
+        tracing::error!(error = ?error, "failed to ensure slow processor Redis consumer group");
+    }
+
+    loop {
+        match read_new_messages(
+            &mut redis,
+            PROCESSOR_JOBS_STREAM,
+            SLOW_GROUP_NAME,
+            &consumer_name,
+            2000,
+        )
+        .await
+        {
+            Ok(messages) => {
+                if messages.is_empty() {
+                    continue;
+                }
+
+                let mut tasks = JoinSet::new();
+                for message in messages {
+                    let task_state = state.clone();
+                    let mut task_redis = state.redis.clone();
+                    tasks.spawn(async move {
+                        if let Err(error) =
+                            process_slow_stream_message(task_state, &mut task_redis, message).await
+                        {
+                            tracing::error!(error = ?error, "failed to process slow processor job");
+                        }
+                    });
+                }
+
+                while let Some(result) = tasks.join_next().await {
+                    if let Err(error) = result {
+                        tracing::error!(error = ?error, "slow processor task panicked or was cancelled");
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::error!(error = ?error, "slow processor worker loop error");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
+pub async fn enqueue_slow_job(
+    redis: &mut ConnectionManager,
+    memory_id: Uuid,
+    workspace_id: Uuid,
+    attempts: i32,
+) -> AppResult<()> {
+    redis::cmd("XADD")
+        .arg(PROCESSOR_JOBS_STREAM)
+        .arg("*")
+        .arg("memory_id")
+        .arg(memory_id.to_string())
+        .arg("workspace_id")
+        .arg(workspace_id.to_string())
+        .arg("attempts")
+        .arg(attempts.max(0).to_string())
+        .query_async::<String>(&mut *redis)
+        .await
+        .map(|_| ())
+        .map_err(|error| AppError::Internal(anyhow!(error)))
+}
+
+async fn ensure_consumer_group(
+    redis: &mut ConnectionManager,
+    stream_key: &str,
+    group_name: &str,
+) -> anyhow::Result<()> {
     let result = redis::cmd("XGROUP")
         .arg("CREATE")
-        .arg(STREAM_KEY)
-        .arg(GROUP_NAME)
+        .arg(stream_key)
+        .arg(group_name)
         .arg("$")
         .arg("MKSTREAM")
         .query_async::<Value>(&mut *redis)
@@ -79,18 +176,21 @@ async fn ensure_consumer_group(redis: &mut ConnectionManager) -> anyhow::Result<
 
 async fn read_new_messages(
     redis: &mut ConnectionManager,
+    stream_key: &str,
+    group_name: &str,
     consumer_name: &str,
+    block_ms: usize,
 ) -> anyhow::Result<Vec<StreamId>> {
     let value = redis::cmd("XREADGROUP")
         .arg("GROUP")
-        .arg(GROUP_NAME)
+        .arg(group_name)
         .arg(consumer_name)
         .arg("COUNT")
         .arg(10)
         .arg("BLOCK")
-        .arg(5000)
+        .arg(block_ms)
         .arg("STREAMS")
-        .arg(STREAM_KEY)
+        .arg(stream_key)
         .arg(">")
         .query_async::<Value>(&mut *redis)
         .await?;
@@ -121,7 +221,7 @@ async fn process_stream_message(
         Some(parsed) => parsed,
         None => {
             tracing::warn!(stream_id = %message.id, "skipping unparseable stream message");
-            ack_message(redis, &message.id).await?;
+            ack_message(redis, STREAM_KEY, GROUP_NAME, &message.id).await?;
             return Ok(());
         }
     };
@@ -130,7 +230,7 @@ async fn process_stream_message(
         Some(raw_event) => raw_event,
         None => {
             tracing::warn!(event_id = %parsed.event_id, "raw event missing for stream message");
-            ack_message(redis, &parsed.stream_id).await?;
+            ack_message(redis, STREAM_KEY, GROUP_NAME, &parsed.stream_id).await?;
             return Ok(());
         }
     };
@@ -139,25 +239,34 @@ async fn process_stream_message(
         store::ProcessingStateAction::Proceed => {}
         store::ProcessingStateAction::AlreadyDone => {
             tracing::debug!(event_id = %raw_event.id, "raw event already processed");
-            ack_message(redis, &parsed.stream_id).await?;
+            ack_message(redis, STREAM_KEY, GROUP_NAME, &parsed.stream_id).await?;
             return Ok(());
         }
         store::ProcessingStateAction::AlreadyProcessing => {
             tracing::debug!(event_id = %raw_event.id, "raw event already being processed");
-            ack_message(redis, &parsed.stream_id).await?;
+            ack_message(redis, STREAM_KEY, GROUP_NAME, &parsed.stream_id).await?;
             return Ok(());
         }
         store::ProcessingStateAction::AlreadyFailed => {
             tracing::debug!(event_id = %raw_event.id, "raw event previously failed");
-            ack_message(redis, &parsed.stream_id).await?;
+            ack_message(redis, STREAM_KEY, GROUP_NAME, &parsed.stream_id).await?;
             return Ok(());
         }
     }
 
     match pipeline::process_event(&state, &raw_event).await {
         Ok(memory_unit) => {
+            if let Err(error) =
+                enqueue_slow_job(redis, memory_unit.id, memory_unit.workspace_id, 0).await
+            {
+                tracing::error!(
+                    error = ?error,
+                    memory_id = %memory_unit.id,
+                    "failed to enqueue slow processor job"
+                );
+            }
             store::mark_processing_done(&state.db, raw_event.id).await?;
-            ack_message(redis, &parsed.stream_id).await?;
+            ack_message(redis, STREAM_KEY, GROUP_NAME, &parsed.stream_id).await?;
             tracing::info!(
                 event_id = %raw_event.id,
                 memory_id = %memory_unit.id,
@@ -170,6 +279,107 @@ async fn process_stream_message(
     }
 
     Ok(())
+}
+
+async fn process_slow_stream_message(
+    state: AppState,
+    redis: &mut ConnectionManager,
+    message: StreamId,
+) -> AppResult<()> {
+    let job = match parse_processor_job(&message) {
+        Some(job) => job,
+        None => {
+            tracing::warn!(stream_id = %message.id, "skipping unparseable slow processor job");
+            if let Err(error) =
+                ack_message(redis, PROCESSOR_JOBS_STREAM, SLOW_GROUP_NAME, &message.id).await
+            {
+                tracing::error!(error = ?error, stream_id = %message.id, "failed to ack bad slow processor job");
+            }
+            return Ok(());
+        }
+    };
+
+    match process_slow(&state, job.clone()).await {
+        Ok(()) => {
+            if let Err(error) = ack_message(
+                redis,
+                PROCESSOR_JOBS_STREAM,
+                SLOW_GROUP_NAME,
+                &job.stream_id,
+            )
+            .await
+            {
+                tracing::error!(error = ?error, stream_id = %job.stream_id, "failed to ack slow processor job");
+            }
+        }
+        Err(error) => handle_slow_processing_error(&state, redis, &job, error).await?,
+    }
+
+    Ok(())
+}
+
+pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> {
+    let memory = match store::get_memory_unit_by_id(&state.db, job.memory_id, job.workspace_id)
+        .await?
+    {
+        Some(memory) => memory,
+        None => {
+            tracing::debug!(memory_id = %job.memory_id, "slow processor memory missing or deleted; skipping");
+            return Ok(());
+        }
+    };
+
+    if memory.embedding_id.is_some() {
+        tracing::debug!(memory_id = %memory.id, "memory already has embedding_id; skipping slow path");
+        return Ok(());
+    }
+
+    let content = summarize_or_content(state, memory.id, &memory.content).await;
+    let token_count = Some(count_tokens(&content)?);
+    let embedder = Embedder::from_state(state);
+    let payload = QdrantPayload::from_memory_unit(&memory);
+    let embedding_id = embedder
+        .embed_and_store(memory.id, memory.workspace_id, &content, payload)
+        .await?;
+
+    let updated = store::update_memory_embedding(
+        &state.db,
+        memory.id,
+        memory.workspace_id,
+        &content,
+        &embedding_id,
+        token_count,
+    )
+    .await?;
+
+    if let Some(updated) = updated {
+        spawn_audit_log(
+            state.db.clone(),
+            updated.workspace_id,
+            "system".to_owned(),
+            AuditAction::MemoryEmbedded,
+            updated.id,
+            "memory",
+            Some(serde_json::json!({ "embedding_id": embedding_id })),
+        );
+    }
+
+    Ok(())
+}
+
+async fn summarize_or_content(state: &AppState, memory_id: Uuid, content: &str) -> String {
+    match state
+        .llm_provider
+        .summarize(content, SLOW_SUMMARY_MAX_TOKENS)
+        .await
+    {
+        Ok(summary) if summary.trim().is_empty() => content.to_owned(),
+        Ok(summary) => summary,
+        Err(error) => {
+            tracing::warn!(error = ?error, memory_id = %memory_id, "LLM summarization failed; using original memory content");
+            content.to_owned()
+        }
+    }
 }
 
 async fn handle_processing_error(
@@ -194,7 +404,7 @@ async fn handle_processing_error(
             state.config.processor.dlq_ttl_days,
         )
         .await?;
-        ack_message(redis, stream_id).await?;
+        ack_message(redis, STREAM_KEY, GROUP_NAME, stream_id).await?;
         tracing::error!(
             event_id = %raw_event.id,
             attempts,
@@ -213,10 +423,74 @@ async fn handle_processing_error(
     Ok(())
 }
 
-async fn ack_message(redis: &mut ConnectionManager, stream_id: &str) -> AppResult<()> {
+async fn handle_slow_processing_error(
+    state: &AppState,
+    redis: &mut ConnectionManager,
+    job: &ProcessorJob,
+    error: AppError,
+) -> AppResult<()> {
+    let error_message = error.to_string();
+    let attempts = job.attempts.saturating_add(1);
+    let max_retries = i32::try_from(state.config.processor.max_retries).unwrap_or(i32::MAX);
+
+    if attempts >= max_retries {
+        dlq::send_processor_job_to_dlq(
+            redis,
+            job.workspace_id,
+            job.memory_id,
+            &error_message,
+            attempts,
+            state.config.processor.dlq_ttl_days,
+        )
+        .await?;
+        if let Err(error) = ack_message(
+            redis,
+            PROCESSOR_JOBS_STREAM,
+            SLOW_GROUP_NAME,
+            &job.stream_id,
+        )
+        .await
+        {
+            tracing::error!(error = ?error, stream_id = %job.stream_id, "failed to ack DLQ slow processor job");
+        }
+        tracing::error!(
+            memory_id = %job.memory_id,
+            attempts,
+            error = %error_message,
+            "slow processor job exceeded retries and was sent to DLQ"
+        );
+    } else {
+        enqueue_slow_job(redis, job.memory_id, job.workspace_id, attempts).await?;
+        if let Err(error) = ack_message(
+            redis,
+            PROCESSOR_JOBS_STREAM,
+            SLOW_GROUP_NAME,
+            &job.stream_id,
+        )
+        .await
+        {
+            tracing::error!(error = ?error, stream_id = %job.stream_id, "failed to ack requeued slow processor job");
+        }
+        tracing::warn!(
+            memory_id = %job.memory_id,
+            attempts,
+            error = %error_message,
+            "slow processor job failed and was requeued"
+        );
+    }
+
+    Ok(())
+}
+
+async fn ack_message(
+    redis: &mut ConnectionManager,
+    stream_key: &str,
+    group_name: &str,
+    stream_id: &str,
+) -> AppResult<()> {
     redis::cmd("XACK")
-        .arg(STREAM_KEY)
-        .arg(GROUP_NAME)
+        .arg(stream_key)
+        .arg(group_name)
         .arg(stream_id)
         .query_async::<i64>(&mut *redis)
         .await
@@ -232,6 +506,22 @@ pub fn parse_message_ids(message: &StreamId) -> Option<ParsedStreamMessage> {
         stream_id: message.id.clone(),
         event_id: Uuid::parse_str(&event_id).ok()?,
         workspace_id: Uuid::parse_str(&workspace_id).ok()?,
+    })
+}
+
+pub fn parse_processor_job(message: &StreamId) -> Option<ProcessorJob> {
+    let memory_id = message.get::<String>("memory_id")?;
+    let workspace_id = message.get::<String>("workspace_id")?;
+    let attempts = message
+        .get::<String>("attempts")
+        .and_then(|value| value.parse::<i32>().ok())
+        .unwrap_or_default();
+
+    Some(ProcessorJob {
+        stream_id: message.id.clone(),
+        memory_id: Uuid::parse_str(&memory_id).ok()?,
+        workspace_id: Uuid::parse_str(&workspace_id).ok()?,
+        attempts,
     })
 }
 
@@ -257,9 +547,28 @@ mod tests {
             "workspace_id".to_owned(),
             Value::BulkString(workspace_id.as_bytes().to_vec()),
         );
-
         StreamId {
             id: "1700000000000-0".to_owned(),
+            map,
+        }
+    }
+
+    fn processor_job(memory_id: &str, workspace_id: &str, attempts: &str) -> StreamId {
+        let mut map = HashMap::new();
+        map.insert(
+            "memory_id".to_owned(),
+            Value::BulkString(memory_id.as_bytes().to_vec()),
+        );
+        map.insert(
+            "workspace_id".to_owned(),
+            Value::BulkString(workspace_id.as_bytes().to_vec()),
+        );
+        map.insert(
+            "attempts".to_owned(),
+            Value::BulkString(attempts.as_bytes().to_vec()),
+        );
+        StreamId {
+            id: "1700000000000-1".to_owned(),
             map,
         }
     }
@@ -286,5 +595,22 @@ mod tests {
         let message = stream_message("not-a-uuid", &workspace_id.to_string());
 
         assert!(parse_message_ids(&message).is_none());
+    }
+
+    #[test]
+    fn parses_processor_job_from_stream_fields() {
+        let memory_id = Uuid::now_v7();
+        let workspace_id = Uuid::now_v7();
+        let message = processor_job(&memory_id.to_string(), &workspace_id.to_string(), "2");
+
+        let parsed = match parse_processor_job(&message) {
+            Some(parsed) => parsed,
+            None => panic!("valid processor job should parse"),
+        };
+
+        assert_eq!(parsed.stream_id, "1700000000000-1");
+        assert_eq!(parsed.memory_id, memory_id);
+        assert_eq!(parsed.workspace_id, workspace_id);
+        assert_eq!(parsed.attempts, 2);
     }
 }

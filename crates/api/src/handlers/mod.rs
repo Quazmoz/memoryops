@@ -3,6 +3,7 @@ use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use uuid::Uuid;
 
 pub mod audit;
+pub mod export;
 pub mod integrations;
 pub mod keys;
 pub mod workspaces;
@@ -17,6 +18,7 @@ pub fn bootstrap_router() -> Router<AppState> {
 pub fn protected_router() -> Router<AppState> {
     Router::new()
         .route("/v1/workspaces/{id}", get(workspaces::get_workspace))
+        .route("/v1/workspaces/{id}/export", get(export::export_workspace))
         .route(
             "/v1/workspaces/{id}/config",
             axum::routing::patch(workspaces::update_workspace_config),

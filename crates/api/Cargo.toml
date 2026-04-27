@@ -12,8 +12,10 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 argon2.workspace = true
+async-stream.workspace = true
 axum.workspace = true
 bs58.workspace = true
+bytes.workspace = true
 chrono.workspace = true
 common.workspace = true
 ingestion.workspace = true

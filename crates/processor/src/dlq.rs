@@ -54,6 +54,54 @@ pub async fn send_to_dlq(
     Ok(())
 }
 
+pub async fn send_processor_job_to_dlq(
+    redis: &mut ConnectionManager,
+    workspace_id: Uuid,
+    memory_id: Uuid,
+    error: &str,
+    retry_count: i32,
+    ttl_days: u64,
+) -> AppResult<()> {
+    let key = dlq_key(workspace_id, memory_id);
+    let list_key = dlq_list_key(workspace_id);
+    let value = json!({
+        "job_id": memory_id,
+        "memory_id": memory_id,
+        "workspace_id": workspace_id,
+        "payload": { "memory_id": memory_id },
+        "error": error,
+        "retry_count": retry_count.max(0),
+        "failed_at": Utc::now(),
+    })
+    .to_string();
+    let ttl_seconds = ttl_days.saturating_mul(86_400);
+
+    if let Err(redis_error) = redis::cmd("SETEX")
+        .arg(&key)
+        .arg(ttl_seconds)
+        .arg(&value)
+        .query_async::<redis::Value>(&mut *redis)
+        .await
+    {
+        tracing::error!(error = ?redis_error, key = %key, "failed to write slow processor DLQ entry");
+    }
+
+    if let Err(redis_error) = redis::pipe()
+        .cmd("LPUSH")
+        .arg(&list_key)
+        .arg(&value)
+        .cmd("EXPIRE")
+        .arg(&list_key)
+        .arg(ttl_seconds)
+        .query_async::<(i64, bool)>(&mut *redis)
+        .await
+    {
+        tracing::error!(error = ?redis_error, key = %list_key, "failed to write slow processor DLQ list entry");
+    }
+
+    Ok(())
+}
+
 pub fn dlq_key(workspace_id: Uuid, event_id: Uuid) -> String {
     format!("{DLQ_KEY_PREFIX}{workspace_id}:{event_id}")
 }

@@ -24,7 +24,7 @@ pub async fn handle_search(
     let auth_context = auth.as_ref().map(|extension| &extension.0);
     let workspace_id = resolve_workspace_id(auth_context, Some(req.workspace_id))?;
     let results = match req.mode {
-        SearchMode::Vector => vector::vector_search(&state, &req, limit).await?,
+        SearchMode::Vector => vector::vector_search_results(&state, &req, limit).await?,
         SearchMode::Keyword => keyword::keyword_search(&state, &req, limit).await?,
         SearchMode::Hybrid => hybrid::hybrid_search(&state, &req, limit).await?,
     };

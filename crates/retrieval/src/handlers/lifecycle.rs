@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
+use processor::{embedder::Embedder, worker::enqueue_slow_job};
+
 use crate::{
     dto::MemoryUnitDto,
     store::{self, BulkStoreAction},
@@ -70,6 +72,11 @@ pub async fn handle_delete(
             resource: format!("memory:{id}"),
         })?;
 
+    let embedder = Embedder::from_state(&state);
+    if let Err(error) = embedder.delete_point(id).await {
+        tracing::warn!(error = ?error, memory_id = %id, "failed to delete Qdrant point for soft-deleted memory");
+    }
+
     spawn_audit_log(
         state.db.clone(),
         workspace_id,
@@ -112,6 +119,11 @@ pub async fn handle_restore(
         .ok_or_else(|| AppError::NotFound {
             resource: format!("memory:{id}"),
         })?;
+
+    let mut redis = state.redis.clone();
+    if let Err(error) = enqueue_slow_job(&mut redis, restored.id, restored.workspace_id, 0).await {
+        tracing::warn!(error = ?error, memory_id = %restored.id, "failed to enqueue restored memory for re-embedding");
+    }
 
     spawn_audit_log(
         state.db.clone(),

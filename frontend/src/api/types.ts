@@ -116,3 +116,49 @@ export type ProviderDefaults = {
     baseUrl: string;
   };
 };
+
+export type CreateWorkspaceResponse = {
+  workspace_id: string;
+};
+
+export type CreateApiKeyResponse = {
+  id: string;
+  name: string;
+  prefix: string;
+  key: string;
+};
+
+export type AuditEntry = {
+  id: string;
+  workspace_id: string;
+  actor: string;
+  action: string;
+  target_id: string;
+  target_type: string;
+  diff?: JsonValue | null;
+  occurred_at: string;
+};
+
+export type AuditResponse = {
+  items: AuditEntry[];
+  limit: number;
+  offset: number;
+};
+
+export type IntegrationStatus = "active" | "degraded" | "failing" | string;
+
+export type IntegrationResponse = {
+  source: string;
+  last_event_at?: string | null;
+  events_24h: number;
+  errors_24h: number;
+  status: IntegrationStatus;
+};
+
+export type DlqEntryResponse = {
+  job_id: string;
+  payload_summary: string;
+  error: string;
+  retry_count: number;
+  failed_at?: string | null;
+};

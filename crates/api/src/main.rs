@@ -1,11 +1,14 @@
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use axum::{http::StatusCode, middleware as axum_middleware, routing::get, Json, Router};
 use common::{
-    config::AppConfig,
-    providers::{EmbeddingProvider, LlmProvider},
+    config::{AppConfig, EmbeddingProviderKind, LlmProviderKind},
+    providers::{
+        AnthropicProvider, EmbeddingProvider, FastEmbedProvider, LlmProvider, OllamaProvider,
+        OpenAIEmbedProvider, OpenAIProvider,
+    },
     telemetry::init_telemetry,
-    AppState, ProviderError,
+    AppState,
 };
 use qdrant_client::Qdrant;
 use redis::aio::ConnectionManager;
@@ -24,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
     let _telemetry_guard = init_telemetry(&config.telemetry)?;
     let state = build_state(config.clone()).await?;
     processor::start_workers(state.clone()).await?;
+    tokio::spawn(processor::scheduler::run_scheduler(Arc::new(state.clone())));
 
     let address = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&address).await?;
@@ -86,15 +90,72 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
     let redis = ConnectionManager::new(redis_client).await?;
     let qdrant = Qdrant::from_url(&qdrant_url).build()?;
 
+    let embedding_provider = build_embedding_provider(&config);
+    let llm_provider = build_llm_provider(&config);
+
     Ok(AppState {
         db,
         redis,
         qdrant,
-        embedding_provider: Arc::new(NotConfiguredEmbeddingProvider),
-        llm_provider: Arc::new(NotConfiguredLlmProvider),
+        embedding_provider,
+        llm_provider,
         config: Arc::new(config),
         github_webhook_secret,
     })
+}
+
+fn build_embedding_provider(config: &AppConfig) -> Arc<dyn EmbeddingProvider> {
+    match config.embedding.provider {
+        EmbeddingProviderKind::FastEmbed => {
+            Arc::new(FastEmbedProvider::new(&config.embedding.model))
+        }
+        EmbeddingProviderKind::Openai => {
+            let model = config
+                .embedding
+                .openai
+                .as_ref()
+                .map(|openai| openai.model.as_str())
+                .unwrap_or(&config.embedding.model);
+            Arc::new(OpenAIEmbedProvider::new(
+                model,
+                std::env::var("OPENAI_API_KEY").ok(),
+            ))
+        }
+    }
+}
+
+fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
+    match config.llm.provider {
+        LlmProviderKind::Ollama => Arc::new(OllamaProvider::new(
+            &config.llm.base_url,
+            &config.llm.model,
+            config.llm.timeout_secs,
+        )),
+        LlmProviderKind::Openai => {
+            let model = config
+                .llm
+                .openai
+                .as_ref()
+                .map(|openai| openai.model.as_str())
+                .unwrap_or(&config.llm.model);
+            Arc::new(OpenAIProvider::new(
+                model,
+                std::env::var("OPENAI_API_KEY").ok(),
+            ))
+        }
+        LlmProviderKind::Anthropic => {
+            let model = config
+                .llm
+                .anthropic
+                .as_ref()
+                .map(|anthropic| anthropic.model.as_str())
+                .unwrap_or(&config.llm.model);
+            Arc::new(AnthropicProvider::new(
+                model,
+                std::env::var("ANTHROPIC_API_KEY").ok(),
+            ))
+        }
+    }
 }
 
 async fn health() -> Json<Value> {
@@ -200,72 +261,6 @@ async fn check_qdrant() -> DependencyStatus {
     }
 }
 
-struct NotConfiguredEmbeddingProvider;
-
-impl EmbeddingProvider for NotConfiguredEmbeddingProvider {
-    fn embed<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        _text: &'life1 str,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, ProviderError>> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: Sync + 'async_trait,
-    {
-        Box::pin(async { Err(ProviderError::NotConfigured) })
-    }
-
-    fn embed_batch<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        _texts: &'life1 [&'life2 str],
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, ProviderError>> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: Sync + 'async_trait,
-    {
-        Box::pin(async { Err(ProviderError::NotConfigured) })
-    }
-
-    fn dimensions(&self) -> usize {
-        0
-    }
-
-    fn model_name(&self) -> &str {
-        "not-configured"
-    }
-}
-
-struct NotConfiguredLlmProvider;
-
-impl LlmProvider for NotConfiguredLlmProvider {
-    fn complete<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        _prompt: &'life1 str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, ProviderError>> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: Sync + 'async_trait,
-    {
-        Box::pin(async { Err(ProviderError::NotConfigured) })
-    }
-
-    fn summarize<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        _text: &'life1 str,
-        _max_tokens: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<String, ProviderError>> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: Sync + 'async_trait,
-    {
-        Box::pin(async { Err(ProviderError::NotConfigured) })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -313,8 +308,8 @@ mod tests {
             db: pool,
             redis,
             qdrant,
-            embedding_provider: Arc::new(NotConfiguredEmbeddingProvider),
-            llm_provider: Arc::new(NotConfiguredLlmProvider),
+            embedding_provider: Arc::new(FastEmbedProvider::new("test-embedding")),
+            llm_provider: Arc::new(OllamaProvider::new("http://127.0.0.1:9", "test-llm", 1)),
             config: Arc::new(config),
             github_webhook_secret: "test-secret".to_owned(),
         }

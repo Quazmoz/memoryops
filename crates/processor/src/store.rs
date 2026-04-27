@@ -7,6 +7,8 @@ use common::{
 use sqlx::PgPool;
 use uuid::Uuid;
 
+const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, deleted_at, last_accessed_at, created_at, updated_at";
+
 #[derive(Debug, Clone)]
 pub struct NewMemoryUnit {
     pub id: Uuid,
@@ -104,6 +106,46 @@ pub async fn get_raw_event(db: &PgPool, id: Uuid) -> AppResult<Option<RawEvent>>
     .fetch_optional(db)
     .await
     .map_err(AppError::Database)
+}
+
+pub async fn get_memory_unit_by_id(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+) -> AppResult<Option<MemoryUnit>> {
+    let sql = format!(
+        "SELECT {MEMORY_COLUMNS} FROM memory_units WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL"
+    );
+
+    sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(id)
+        .bind(workspace_id)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)
+}
+
+pub async fn update_memory_embedding(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+    content: &str,
+    embedding_id: &str,
+    token_count: Option<i32>,
+) -> AppResult<Option<MemoryUnit>> {
+    let sql = format!(
+        "UPDATE memory_units SET embedding_id = $3, content = $4, token_count = $5, updated_at = now() WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+    );
+
+    sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(id)
+        .bind(workspace_id)
+        .bind(embedding_id)
+        .bind(content)
+        .bind(token_count)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)
 }
 
 pub async fn insert_processing_state(

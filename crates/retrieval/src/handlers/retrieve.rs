@@ -192,7 +192,7 @@ async fn search_candidates(
     mode: SearchMode,
 ) -> AppResult<Vec<MemoryResult>> {
     match mode {
-        SearchMode::Vector => vector::vector_search(state, request, MAX_LIMIT).await,
+        SearchMode::Vector => vector::vector_search_results(state, request, MAX_LIMIT).await,
         SearchMode::Keyword => keyword::keyword_search(state, request, MAX_LIMIT).await,
         SearchMode::Hybrid => hybrid::hybrid_search(state, request, MAX_LIMIT).await,
     }

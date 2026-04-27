@@ -8,7 +8,7 @@ use crate::{
     store,
 };
 
-use super::{keyword::keyword_search, vector::vector_search};
+use super::{keyword::keyword_search, vector::vector_search_results};
 
 pub const RRF_K: f32 = 60.0;
 
@@ -26,7 +26,7 @@ pub async fn hybrid_search(
 ) -> AppResult<Vec<MemoryResult>> {
     let candidate_limit = limit.saturating_mul(2);
     let (vector_results, keyword_results) = tokio::join!(
-        vector_search(state, req, candidate_limit),
+        vector_search_results(state, req, candidate_limit),
         keyword_search(state, req, candidate_limit)
     );
 

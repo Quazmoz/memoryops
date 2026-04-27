@@ -8,14 +8,13 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    embedder, extractor, scope,
+    extractor, scope,
     store::{self, NewMemoryUnit},
 };
 
 pub async fn run_fast_path(state: &AppState, event: &RawEvent) -> AppResult<MemoryUnit> {
     let content = extractor::extract_text(event)?;
     let memory_id = Uuid::now_v7();
-    let embedding_id = embedder::embed_and_upsert(state, &memory_id, &content).await?;
     let token_count = count_tokens(&content)?;
 
     let unit = NewMemoryUnit {
@@ -27,7 +26,7 @@ pub async fn run_fast_path(state: &AppState, event: &RawEvent) -> AppResult<Memo
         entities: json!([]),
         importance_score: importance_score(state, event),
         source_events: vec![event.id],
-        embedding_id: Some(embedding_id),
+        embedding_id: None,
         token_count: Some(token_count),
         tags: Vec::new(),
     };
