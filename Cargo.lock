@@ -1988,7 +1988,21 @@ dependencies = [
 name = "retrieval"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "chrono",
  "common",
+ "processor",
+ "qdrant-client",
+ "redis",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "uuid",
+ "validator",
 ]
 
 [[package]]

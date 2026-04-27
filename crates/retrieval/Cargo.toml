@@ -10,4 +10,18 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
 common.workspace = true
+processor.workspace = true
+qdrant-client.workspace = true
+redis.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+validator.workspace = true

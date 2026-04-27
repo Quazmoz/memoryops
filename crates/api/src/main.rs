@@ -9,6 +9,7 @@ use common::{
 };
 use qdrant_client::Qdrant;
 use redis::aio::ConnectionManager;
+use retrieval::retrieval_router;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 
@@ -34,6 +35,7 @@ fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/health/ready", get(readiness))
         .merge(ingestion::ingestion_router())
+        .merge(retrieval_router())
         .with_state(state)
 }
 
