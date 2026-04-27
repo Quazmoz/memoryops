@@ -148,11 +148,7 @@ pub async fn handle_retrieve(
         query_id,
         memories: packed.memories,
         total_tokens: packed.total_tokens,
-        trace: if include_trace {
-            Some(trace)
-        } else {
-            None
-        },
+        trace: if include_trace { Some(trace) } else { None },
     }))
 }
 

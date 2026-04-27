@@ -278,6 +278,7 @@ mod tests {
         http::{Method, Request, StatusCode},
     };
     use chrono::Utc;
+    use common::models::MemoryType;
     use redis::aio::ConnectionManager;
     use serde_json::{json, Value};
     use sqlx::PgPool;
@@ -364,6 +365,46 @@ mod tests {
         }
 
         plaintext
+    }
+
+    async fn insert_memory(pool: &PgPool, workspace_id: Uuid, content: &str) -> Uuid {
+        let memory_id = Uuid::now_v7();
+        let result = sqlx::query(
+            r#"
+            INSERT INTO memory_units (
+                id,
+                workspace_id,
+                scope,
+                memory_type,
+                content,
+                entities,
+                importance_score,
+                tags
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(memory_id)
+        .bind(workspace_id)
+        .bind(json!({
+            "workspace_id": workspace_id,
+            "agent_id": null,
+            "user_id": null,
+            "repo": "Quazmoz/memoryops"
+        }))
+        .bind(MemoryType::Episodic)
+        .bind(content)
+        .bind(json!([]))
+        .bind(0.9_f32)
+        .bind(Vec::<String>::new())
+        .execute(pool)
+        .await;
+
+        if let Err(error) = result {
+            panic!("test memory insert should succeed: {error}");
+        }
+
+        memory_id
     }
 
     fn request(method: Method, uri: String, api_key: Option<&str>, body: Value) -> Request<Body> {
@@ -475,6 +516,79 @@ mod tests {
         };
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn retrieve_packs_memory_within_budget_and_persists_trace(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let memory_id = insert_memory(&pool, workspace_id, "alpha").await;
+        let app = router(test_state(pool).await);
+
+        let response = match app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/v1/retrieve".to_owned(),
+                Some(&api_key),
+                json!({
+                    "query": "alpha",
+                    "workspace_id": workspace_id,
+                    "token_budget": 1,
+                    "mode": "keyword",
+                    "include_trace": false
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("retrieve request should respond: {error}"),
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let total_tokens = body
+            .get("total_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX);
+        assert!(total_tokens <= 1);
+        assert!(body.get("trace").is_some_and(Value::is_null));
+        let memory_id_text = memory_id.to_string();
+        assert_eq!(
+            body.get("memories")
+                .and_then(Value::as_array)
+                .and_then(|memories| memories.first())
+                .and_then(|memory| memory.get("id"))
+                .and_then(Value::as_str),
+            Some(memory_id_text.as_str())
+        );
+        let query_id = match body.get("query_id").and_then(Value::as_str) {
+            Some(raw) => match Uuid::parse_str(raw) {
+                Ok(query_id) => query_id,
+                Err(error) => panic!("query_id should be a UUID: {error}"),
+            },
+            None => panic!("retrieve response should include query_id"),
+        };
+
+        let response = match app
+            .oneshot(request(
+                Method::GET,
+                format!("/v1/retrieve/trace/{query_id}"),
+                Some(&api_key),
+                json!(null),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("trace request should respond: {error}"),
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let trace = response_json(response).await;
+        let query_id_text = query_id.to_string();
+        assert_eq!(
+            trace.get("query_id").and_then(Value::as_str),
+            Some(query_id_text.as_str())
+        );
     }
 
     #[sqlx::test(migrations = "../../migrations")]
