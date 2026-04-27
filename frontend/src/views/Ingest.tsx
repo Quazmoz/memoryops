@@ -1,0 +1,177 @@
+import { Send, Sparkles } from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+
+import { fireGithubWebhook, fixtureFor, webhookFixtures, type WebhookEventKind, type WebhookFixture } from "../api/ingest";
+import type { IngestResult, JsonValue } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
+import { InlineError } from "../components/InlineError";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { useAppStore } from "../store/app-store";
+
+export function Ingest() {
+  const workspaceId = useAppStore((state) => state.workspaceId);
+  const [selectedKind, setSelectedKind] = useState<WebhookEventKind>("pull_request_opened");
+  const fixture = useMemo(() => fixtureFor(selectedKind), [selectedKind]);
+  const [payloadText, setPayloadText] = useState(formatPayload(fixture.payload));
+  const [parseError, setParseError] = useState<string | null>(null);
+  const mutation = useMutation<IngestResult, Error, { fixture: WebhookFixture; payload: JsonValue }>({
+    mutationKey: ["workspace", workspaceId, "ingest", "github"],
+    mutationFn: ({ fixture: selectedFixture, payload }) => fireGithubWebhook(workspaceId, selectedFixture, payload),
+  });
+
+  useEffect(() => {
+    setPayloadText(formatPayload(fixture.payload));
+    setParseError(null);
+    mutation.reset();
+  }, [fixture]);
+
+  function fireWebhook() {
+    setParseError(null);
+    const parsed = parsePayload(payloadText);
+    if ("error" in parsed) {
+      setParseError(parsed.error);
+      return;
+    }
+
+    mutation.mutate({ fixture, payload: parsed.value });
+  }
+
+  const response = mutation.data;
+  const accepted = response?.ok === true && response.status === 202;
+
+  return (
+    <div className="mx-auto grid max-w-7xl gap-5">
+      <header>
+        <p className="text-sm font-medium text-accent-strong">Dev webhook console</p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Webhook Tester</h1>
+      </header>
+
+      <section className="grid gap-4 xl:grid-cols-[22rem_1fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle>Event</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <label className="grid gap-2 text-sm font-medium text-ink/70">
+              Event type
+              <select
+                data-testid="webhook-event-select"
+                value={selectedKind}
+                onChange={(event) => setSelectedKind(event.target.value as WebhookEventKind)}
+                className="h-10 rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+              >
+                {webhookFixtures.map((option) => (
+                  <option key={option.kind} value={option.kind}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="rounded-md border border-line bg-soft p-3 text-sm">
+              <p className="text-xs font-medium uppercase text-ink/45">Actor</p>
+              <p className="mt-1 font-mono">{fixture.actor}</p>
+            </div>
+
+            <Button type="button" data-testid="fire-webhook-button" onClick={fireWebhook} disabled={mutation.isPending}>
+              <Send className="h-4 w-4" aria-hidden="true" />
+              {mutation.isPending ? "Firing" : "Fire Webhook"}
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Payload</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <textarea
+              data-testid="webhook-payload"
+              value={payloadText}
+              onChange={(event) => setPayloadText(event.target.value)}
+              spellCheck={false}
+              className="thin-scrollbar min-h-[30rem] resize-y rounded-md border border-line bg-[#101714] p-4 font-mono text-xs leading-5 text-[#e8f1e9] outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+            />
+            {parseError ? <InlineError title="Payload is not valid JSON" message={parseError} /> : null}
+          </CardContent>
+        </Card>
+      </section>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle>Response</CardTitle>
+          {response ? <Badge variant={response.ok ? "accent" : "rust"}>{response.status}</Badge> : null}
+        </CardHeader>
+        <CardContent>
+          {!response && !mutation.isPending ? (
+            <EmptyState title="Ready to fire" message="The selected fixture will send through the Vite proxy to the live backend." />
+          ) : null}
+          {mutation.isPending ? (
+            <div className="rounded-lg border border-line bg-soft p-5 text-sm text-ink/65">Sending fixture...</div>
+          ) : null}
+          {mutation.isError ? <InlineError message={mutation.error.message} /> : null}
+          {response && !response.ok ? <InlineError title="Webhook rejected" message={response.detail ?? "The backend returned an error."} /> : null}
+          {response ? (
+            <pre className="thin-scrollbar max-h-64 overflow-auto rounded-md border border-line bg-soft p-4 text-xs text-ink">{JSON.stringify(response.data, null, 2)}</pre>
+          ) : null}
+          {accepted ? (
+            <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+              <span>202 Accepted{eventId(response) ? ` · ${eventId(response)}` : ""}</span>
+              <Button asChild variant="secondary" size="sm">
+                <Link to={`/memory?q=${encodeURIComponent(fixture.actor)}`} data-testid="view-in-explorer-link">
+                  View in Explorer
+                </Link>
+              </Button>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function formatPayload(payload: JsonValue): string {
+  return JSON.stringify(payload, null, 2);
+}
+
+function parsePayload(value: string): { value: JsonValue; error?: never } | { value?: never; error: string } {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (isJsonValue(parsed)) {
+      return { value: parsed };
+    }
+    return { error: "The root value must be JSON-compatible." };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "JSON parsing failed." };
+  }
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return true;
+  }
+
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue);
+  }
+
+  if (typeof value === "object") {
+    return Object.values(value).every(isJsonValue);
+  }
+
+  return false;
+}
+
+function eventId(response: IngestResult): string | null {
+  const data = response.data;
+  if (typeof data === "object" && data !== null && !Array.isArray(data) && "event_id" in data && typeof data.event_id === "string") {
+    return data.event_id;
+  }
+
+  return null;
+}
