@@ -1,0 +1,185 @@
+use axum::{extract::Path, extract::State, Extension, Json};
+use chrono::{DateTime, Utc};
+use common::{
+    audit::spawn_audit_log, auth::AuthContext, error::AppResult, models::AuditAction, AppError,
+    AppState,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use uuid::Uuid;
+
+use crate::security::{generate_api_key, hash_secret};
+
+use super::require_workspace;
+
+#[derive(Debug, Deserialize)]
+pub struct CreateKeyRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateKeyResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub prefix: String,
+    pub key: String,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ApiKeySummary {
+    pub id: Uuid,
+    pub name: String,
+    pub prefix: String,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub revoked: bool,
+}
+
+#[axum::debug_handler]
+pub async fn create_key(
+    State(state): State<AppState>,
+    auth: Option<Extension<AuthContext>>,
+    Path(id): Path<Uuid>,
+    Json(request): Json<CreateKeyRequest>,
+) -> AppResult<Json<CreateKeyResponse>> {
+    let actor = match auth.as_ref() {
+        Some(auth) => {
+            require_workspace(&auth.0, id)?;
+            auth.0.actor()
+        }
+        None => {
+            ensure_first_key_bootstrap(&state, id).await?;
+            "bootstrap".to_owned()
+        }
+    };
+    if request.name.trim().is_empty() {
+        return Err(AppError::Validation("key name is required".to_owned()));
+    }
+
+    let key_id = Uuid::now_v7();
+    let (plaintext, prefix) = generate_api_key(id);
+    let key_hash = hash_secret(&plaintext)?;
+    let name = request.name.trim().to_owned();
+    let created = sqlx::query_as::<_, ApiKeySummary>(
+        r#"
+        INSERT INTO api_keys (id, workspace_id, name, key_hash, prefix)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, name, prefix, created_at, last_used_at, revoked
+        "#,
+    )
+    .bind(key_id)
+    .bind(id)
+    .bind(&name)
+    .bind(key_hash)
+    .bind(&prefix)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    spawn_audit_log(
+        state.db.clone(),
+        id,
+        actor,
+        AuditAction::KeyCreated,
+        key_id,
+        "api_key",
+        Some(json!({ "name": created.name, "prefix": created.prefix })),
+    );
+
+    Ok(Json(CreateKeyResponse {
+        id: created.id,
+        name,
+        prefix,
+        key: plaintext,
+    }))
+}
+
+async fn ensure_first_key_bootstrap(state: &AppState, workspace_id: Uuid) -> AppResult<()> {
+    let workspace_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND deleted_at IS NULL)",
+    )
+    .bind(workspace_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if !workspace_exists {
+        return Err(AppError::NotFound {
+            resource: format!("workspace:{workspace_id}"),
+        });
+    }
+
+    let active_keys = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM api_keys WHERE workspace_id = $1 AND revoked = false",
+    )
+    .bind(workspace_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if active_keys == 0 {
+        Ok(())
+    } else {
+        Err(AppError::Unauthorized)
+    }
+}
+
+#[axum::debug_handler]
+pub async fn list_keys(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Vec<ApiKeySummary>>> {
+    require_workspace(&auth, id)?;
+    let keys = sqlx::query_as::<_, ApiKeySummary>(
+        r#"
+        SELECT id, name, prefix, created_at, last_used_at, revoked
+        FROM api_keys
+        WHERE workspace_id = $1
+        ORDER BY created_at DESC
+        "#,
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(Json(keys))
+}
+
+#[axum::debug_handler]
+pub async fn revoke_key(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((id, key_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<ApiKeySummary>> {
+    require_workspace(&auth, id)?;
+    let revoked = sqlx::query_as::<_, ApiKeySummary>(
+        r#"
+        UPDATE api_keys
+        SET revoked = true, revoked_at = now()
+        WHERE workspace_id = $1 AND id = $2 AND revoked = false
+        RETURNING id, name, prefix, created_at, last_used_at, revoked
+        "#,
+    )
+    .bind(id)
+    .bind(key_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound {
+        resource: format!("api_key:{key_id}"),
+    })?;
+
+    spawn_audit_log(
+        state.db.clone(),
+        id,
+        auth.actor(),
+        AuditAction::KeyRevoked,
+        key_id,
+        "api_key",
+        Some(json!({ "prefix": revoked.prefix })),
+    );
+
+    Ok(Json(revoked))
+}

@@ -20,10 +20,31 @@ pub use promotion::decay::run_decay_pass;
 pub fn retrieval_router() -> Router<AppState> {
     Router::new()
         .route("/v1/memory/search", post(handlers::search::handle_search))
+        .route("/v1/retrieve", post(handlers::retrieve::handle_retrieve))
+        .route(
+            "/v1/retrieve/trace/{query_id}",
+            get(handlers::retrieve::handle_trace_get),
+        )
         .route("/v1/memory", get(handlers::list::handle_list))
+        .route("/v1/memory/bulk", post(handlers::lifecycle::handle_bulk))
+        .route("/v1/memory/merge", post(handlers::lifecycle::handle_merge))
+        .route(
+            "/v1/memory/{id}/restore",
+            post(handlers::lifecycle::handle_restore),
+        )
+        .route(
+            "/v1/memory/{id}/promote",
+            post(handlers::lifecycle::handle_promote),
+        )
+        .route(
+            "/v1/memory/{id}/history",
+            get(handlers::lifecycle::handle_history),
+        )
         .route(
             "/v1/memory/{id}",
-            get(handlers::get::handle_get).patch(handlers::update::handle_update),
+            get(handlers::get::handle_get)
+                .patch(handlers::update::handle_update)
+                .delete(handlers::lifecycle::handle_delete),
         )
         .layer(TraceLayer::new_for_http())
 }

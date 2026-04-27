@@ -14,6 +14,56 @@ pub struct Workspace {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceConfig {
+    #[serde(default = "default_promotion_threshold")]
+    pub promotion_threshold: f32,
+    #[serde(default = "default_access_count_trigger")]
+    pub access_count_trigger: u32,
+    #[serde(default = "default_half_life_days")]
+    pub half_life_days: f32,
+    #[serde(default = "default_decay_rate_episodic")]
+    pub decay_rate_episodic: f32,
+    #[serde(default = "default_decay_rate_semantic")]
+    pub decay_rate_semantic: f32,
+    pub llm_provider: Option<String>,
+    pub embedding_provider: Option<String>,
+}
+
+impl Default for WorkspaceConfig {
+    fn default() -> Self {
+        Self {
+            promotion_threshold: default_promotion_threshold(),
+            access_count_trigger: default_access_count_trigger(),
+            half_life_days: default_half_life_days(),
+            decay_rate_episodic: default_decay_rate_episodic(),
+            decay_rate_semantic: default_decay_rate_semantic(),
+            llm_provider: None,
+            embedding_provider: None,
+        }
+    }
+}
+
+fn default_promotion_threshold() -> f32 {
+    0.85
+}
+
+fn default_access_count_trigger() -> u32 {
+    3
+}
+
+fn default_half_life_days() -> f32 {
+    30.0
+}
+
+fn default_decay_rate_episodic() -> f32 {
+    1.0
+}
+
+fn default_decay_rate_semantic() -> f32 {
+    0.5
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ApiKey {
     pub id: Uuid,

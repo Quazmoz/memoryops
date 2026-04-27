@@ -43,6 +43,7 @@ jobs:
       DATABASE_URL: postgres://memoryops:memoryops@localhost:5432/memoryops_test
       REDIS_URL: redis://localhost:6379
       QDRANT_URL: http://localhost:6334
+      SQLX_OFFLINE: true
       RUST_LOG: info
     steps:
       - name: Checkout
@@ -111,3 +112,41 @@ jobs:
 
       - name: Lint OpenAPI contract
         run: npx --yes @stoplight/spectral-cli lint docs/openapi.yaml
+
+  integration-tests:
+    name: Ignored integration tests
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://memoryops:memoryops@localhost:15432/memoryops_test
+      REDIS_URL: redis://localhost:16379
+      QDRANT_URL: http://localhost:16333
+      GITHUB_WEBHOOK_SECRET: test-secret
+      RUST_LOG: info
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Start dependencies
+        run: docker compose -f docker-compose.test.yml up -d --wait
+
+      - name: Install sqlx CLI
+        run: cargo install sqlx-cli --no-default-features --features postgres --locked
+
+      - name: Run migrations
+        run: sqlx migrate run
+
+      - name: Run ignored tests
+        run: cargo test --workspace --all-features -- --ignored
+
+      - name: Stop dependencies
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v

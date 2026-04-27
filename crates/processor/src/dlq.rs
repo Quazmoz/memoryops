@@ -5,18 +5,24 @@ use serde_json::json;
 use uuid::Uuid;
 
 pub const DLQ_KEY_PREFIX: &str = "memoryops:dlq:";
+pub const DLQ_LIST_PREFIX: &str = "dlq:";
 
 pub async fn send_to_dlq(
     redis: &mut ConnectionManager,
     event: &RawEvent,
     error: &str,
+    retry_count: i32,
     ttl_days: u64,
 ) -> AppResult<()> {
     let key = dlq_key(event.workspace_id, event.id);
+    let list_key = dlq_list_key(event.workspace_id);
     let value = json!({
+        "job_id": event.id,
         "event_id": event.id,
         "workspace_id": event.workspace_id,
+        "payload": event.payload,
         "error": error,
+        "retry_count": retry_count.max(0),
         "failed_at": Utc::now(),
     })
     .to_string();
@@ -25,11 +31,24 @@ pub async fn send_to_dlq(
     if let Err(redis_error) = redis::cmd("SETEX")
         .arg(&key)
         .arg(ttl_seconds)
-        .arg(value)
+        .arg(&value)
         .query_async::<redis::Value>(&mut *redis)
         .await
     {
         tracing::error!(error = ?redis_error, key = %key, "failed to write processor DLQ entry");
+    }
+
+    if let Err(redis_error) = redis::pipe()
+        .cmd("LPUSH")
+        .arg(&list_key)
+        .arg(&value)
+        .cmd("EXPIRE")
+        .arg(&list_key)
+        .arg(ttl_seconds)
+        .query_async::<(i64, bool)>(&mut *redis)
+        .await
+    {
+        tracing::error!(error = ?redis_error, key = %list_key, "failed to write processor DLQ list entry");
     }
 
     Ok(())
@@ -37,6 +56,10 @@ pub async fn send_to_dlq(
 
 pub fn dlq_key(workspace_id: Uuid, event_id: Uuid) -> String {
     format!("{DLQ_KEY_PREFIX}{workspace_id}:{event_id}")
+}
+
+pub fn dlq_list_key(workspace_id: Uuid) -> String {
+    format!("{DLQ_LIST_PREFIX}{workspace_id}")
 }
 
 #[cfg(test)]
@@ -70,6 +93,7 @@ mod tests {
             dlq_key(workspace_id, event_id),
             format!("memoryops:dlq:{workspace_id}:{event_id}")
         );
+        assert_eq!(dlq_list_key(workspace_id), format!("dlq:{workspace_id}"));
     }
 
     #[tokio::test]
@@ -87,7 +111,7 @@ mod tests {
         };
         let event = raw_event();
 
-        if let Err(error) = send_to_dlq(&mut redis, &event, "boom", 1).await {
+        if let Err(error) = send_to_dlq(&mut redis, &event, "boom", 3, 1).await {
             panic!("DLQ write should not fail caller: {error}");
         }
         let stored = match redis::cmd("GET")

@@ -190,6 +190,7 @@ async fn handle_processing_error(
             redis,
             raw_event,
             &error_message,
+            attempts,
             state.config.processor.dlq_ttl_days,
         )
         .await?;

@@ -1,5 +1,5 @@
-use axum::{extract::State, Json};
-use common::{error::AppResult, AppError, AppState};
+use axum::{extract::State, Extension, Json};
+use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use uuid::Uuid;
 use validator::Validate;
 
@@ -10,15 +10,19 @@ use crate::{
     search::{hybrid, keyword, vector},
 };
 
+use super::resolve_workspace_id;
+
 #[axum::debug_handler]
 pub async fn handle_search(
     State(state): State<AppState>,
+    auth: Option<Extension<AuthContext>>,
     Json(req): Json<SearchRequest>,
 ) -> AppResult<Json<SearchResponse>> {
     Validate::validate(&req).map_err(|error| AppError::Validation(error.to_string()))?;
 
     let limit = req.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
-    let workspace_id = req.workspace_id;
+    let auth_context = auth.as_ref().map(|extension| &extension.0);
+    let workspace_id = resolve_workspace_id(auth_context, Some(req.workspace_id))?;
     let results = match req.mode {
         SearchMode::Vector => vector::vector_search(&state, &req, limit).await?,
         SearchMode::Keyword => keyword::keyword_search(&state, &req, limit).await?,

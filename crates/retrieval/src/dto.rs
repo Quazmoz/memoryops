@@ -26,7 +26,7 @@ pub struct SearchRequest {
     pub filters: Option<SearchFilters>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchMode {
     Vector,
@@ -102,7 +102,7 @@ impl From<MemoryUnit> for MemoryUnitDto {
 
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct ListQuery {
-    pub workspace_id: Uuid,
+    pub workspace_id: Option<Uuid>,
     #[validate(range(min = 1, max = 100))]
     pub limit: Option<u32>,
     pub offset: Option<u32>,
@@ -227,5 +227,6 @@ mod tests {
 
         assert_eq!(query.resolved_sort(), SortField::ImportanceScore);
         assert_eq!(query.resolved_direction(), SortDirection::Desc);
+        assert_eq!(query.workspace_id, Some(workspace_id));
     }
 }

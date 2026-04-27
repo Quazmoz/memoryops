@@ -2,22 +2,24 @@ use std::collections::HashMap;
 
 use axum::{
     extract::{Path, Query, State},
-    Json,
+    Extension, Json,
 };
-use common::{error::AppResult, AppError, AppState};
+use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use uuid::Uuid;
 
 use crate::{access, dto::MemoryUnitDto, store};
 
-use super::workspace_id_param;
+use super::{resolve_workspace_id, workspace_id_param};
 
 #[axum::debug_handler]
 pub async fn handle_get(
     State(state): State<AppState>,
+    auth: Option<Extension<AuthContext>>,
     Path(id): Path<Uuid>,
     Query(params): Query<HashMap<String, String>>,
 ) -> AppResult<Json<MemoryUnitDto>> {
-    let workspace_id = workspace_id_param(&params)?;
+    let auth_context = auth.as_ref().map(|extension| &extension.0);
+    let workspace_id = resolve_workspace_id(auth_context, workspace_id_param(&params)?)?;
     let unit = store::get_memory_unit_by_id(&state.db, id, workspace_id)
         .await?
         .ok_or_else(|| AppError::NotFound {

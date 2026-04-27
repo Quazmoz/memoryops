@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use common::{
     error::AppResult,
-    models::{Entity, MemoryScope, MemoryType, MemoryUnit},
+    models::{Entity, MemoryScope, MemoryType, MemoryUnit, MemoryVersion},
     AppError,
 };
 use sqlx::{types::Json, PgPool, Postgres, QueryBuilder};
@@ -82,6 +82,22 @@ pub async fn get_memory_unit_by_id(
         .map_err(AppError::Database)
 }
 
+pub async fn get_memory_unit_by_id_including_deleted(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+) -> AppResult<Option<MemoryUnit>> {
+    let sql =
+        format!("SELECT {MEMORY_COLUMNS} FROM memory_units WHERE id = $1 AND workspace_id = $2");
+
+    sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(id)
+        .bind(workspace_id)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)
+}
+
 pub async fn get_memory_units_by_ids(
     db: &PgPool,
     ids: &[Uuid],
@@ -106,6 +122,7 @@ pub async fn get_memory_units_by_ids(
 pub async fn list_memory_units(
     db: &PgPool,
     params: &ListQuery,
+    workspace_id: Uuid,
 ) -> AppResult<(Vec<MemoryUnit>, u64)> {
     let limit = params.resolved_limit().min(MAX_LIMIT);
     let offset = params.resolved_offset();
@@ -113,7 +130,7 @@ pub async fn list_memory_units(
     let mut builder = QueryBuilder::<Postgres>::new("SELECT ");
     builder.push(MEMORY_COLUMNS);
     builder.push(", COUNT(*) OVER() AS total_count FROM memory_units WHERE workspace_id = ");
-    builder.push_bind(params.workspace_id);
+    builder.push_bind(workspace_id);
     builder.push(" AND deleted_at IS NULL");
 
     if let Some(memory_type) = &params.memory_type {
@@ -179,23 +196,25 @@ pub async fn update_memory_unit(
     }
 
     let mut builder = QueryBuilder::<Postgres>::new("UPDATE memory_units SET ");
-    {
-        let mut separated = builder.separated(", ");
-        if let Some(pinned) = req.pinned {
-            separated.push("pinned = ");
-            separated.push_bind(pinned);
-        }
-        if let Some(importance_score) = req.importance_score {
-            separated.push("importance_score = ");
-            separated.push_bind(importance_score);
-            separated.push("importance_overridden = true");
-        }
-        if let Some(tags) = &req.tags {
-            separated.push("tags = ");
-            separated.push_bind(tags.clone());
-        }
-        separated.push("version = version + 1");
+    let mut wrote_assignment = false;
+    if let Some(pinned) = req.pinned {
+        push_assignment_separator(&mut builder, &mut wrote_assignment);
+        builder.push("pinned = ");
+        builder.push_bind(pinned);
     }
+    if let Some(importance_score) = req.importance_score {
+        push_assignment_separator(&mut builder, &mut wrote_assignment);
+        builder.push("importance_score = ");
+        builder.push_bind(importance_score);
+        builder.push(", importance_overridden = true");
+    }
+    if let Some(tags) = &req.tags {
+        push_assignment_separator(&mut builder, &mut wrote_assignment);
+        builder.push("tags = ");
+        builder.push_bind(tags.clone());
+    }
+    push_assignment_separator(&mut builder, &mut wrote_assignment);
+    builder.push("version = version + 1");
 
     builder.push(" WHERE id = ");
     builder.push_bind(id);
@@ -209,6 +228,221 @@ pub async fn update_memory_unit(
         .fetch_optional(db)
         .await
         .map_err(AppError::Database)
+}
+
+pub async fn soft_delete_memory_unit(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+) -> AppResult<Option<MemoryUnit>> {
+    let sql = format!(
+        "UPDATE memory_units SET deleted_at = now(), version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+    );
+
+    sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(id)
+        .bind(workspace_id)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)
+}
+
+pub async fn restore_memory_unit(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+) -> AppResult<Option<MemoryUnit>> {
+    let sql = format!(
+        "UPDATE memory_units SET deleted_at = NULL, version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NOT NULL RETURNING {MEMORY_COLUMNS}"
+    );
+
+    sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(id)
+        .bind(workspace_id)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)
+}
+
+pub async fn force_promote_to_semantic(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+) -> AppResult<Option<MemoryUnit>> {
+    let sql = format!(
+        "UPDATE memory_units SET memory_type = 'semantic', version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+    );
+
+    sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(id)
+        .bind(workspace_id)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulkStoreAction {
+    Pin,
+    Unpin,
+    Delete,
+}
+
+pub async fn bulk_update_memory_units(
+    db: &PgPool,
+    ids: &[Uuid],
+    workspace_id: Uuid,
+    action: BulkStoreAction,
+) -> AppResult<Vec<MemoryUnit>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut transaction = db.begin().await.map_err(AppError::Database)?;
+    let sql = match action {
+        BulkStoreAction::Pin => format!(
+            "UPDATE memory_units SET pinned = true, version = version + 1 WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+        ),
+        BulkStoreAction::Unpin => format!(
+            "UPDATE memory_units SET pinned = false, version = version + 1 WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+        ),
+        BulkStoreAction::Delete => format!(
+            "UPDATE memory_units SET deleted_at = now(), version = version + 1 WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+        ),
+    };
+
+    let units = sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(workspace_id)
+        .bind(ids.to_vec())
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(AppError::Database)?;
+
+    if units.len() != ids.len() {
+        transaction.rollback().await.map_err(AppError::Database)?;
+        return Err(AppError::NotFound {
+            resource: "one or more memory ids".to_owned(),
+        });
+    }
+
+    transaction.commit().await.map_err(AppError::Database)?;
+    Ok(units)
+}
+
+pub async fn list_memory_versions(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+) -> AppResult<Vec<MemoryVersion>> {
+    sqlx::query_as::<_, MemoryVersion>(
+        r#"
+        SELECT id, memory_id, workspace_id, version, content, importance_score, tags, edited_by, created_at
+        FROM memory_versions
+        WHERE memory_id = $1 AND workspace_id = $2
+        ORDER BY version DESC
+        "#,
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+#[derive(Debug)]
+pub struct MergeResult {
+    pub source: MemoryUnit,
+    pub target_before: MemoryUnit,
+    pub target_after: MemoryUnit,
+}
+
+pub async fn merge_memory_units(
+    db: &PgPool,
+    source_id: Uuid,
+    target_id: Uuid,
+    workspace_id: Uuid,
+    actor: &str,
+) -> AppResult<MergeResult> {
+    if source_id == target_id {
+        return Err(AppError::Validation(
+            "source_id and target_id must be different".to_owned(),
+        ));
+    }
+
+    let mut transaction = db.begin().await.map_err(AppError::Database)?;
+    let source = select_memory_for_update(&mut transaction, source_id, workspace_id).await?;
+    let target_before = select_memory_for_update(&mut transaction, target_id, workspace_id).await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO memory_versions (
+            id, memory_id, workspace_id, version, content, importance_score, tags, edited_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(target_before.id)
+    .bind(workspace_id)
+    .bind(target_before.version)
+    .bind(&target_before.content)
+    .bind(target_before.importance_score)
+    .bind(&target_before.tags)
+    .bind(actor)
+    .execute(&mut *transaction)
+    .await
+    .map_err(AppError::Database)?;
+
+    let merged_content = format!(
+        "{}\n\n--- merged memory ---\n\n{}",
+        target_before.content, source.content
+    );
+    let sql = format!(
+        "UPDATE memory_units SET content = $3, version = version + 1 WHERE id = $1 AND workspace_id = $2 RETURNING {MEMORY_COLUMNS}"
+    );
+    let target_after = sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(target_id)
+        .bind(workspace_id)
+        .bind(merged_content)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(AppError::Database)?;
+
+    sqlx::query(
+        "UPDATE memory_units SET deleted_at = now(), version = version + 1 WHERE id = $1 AND workspace_id = $2",
+    )
+    .bind(source_id)
+    .bind(workspace_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(AppError::Database)?;
+
+    transaction.commit().await.map_err(AppError::Database)?;
+    Ok(MergeResult {
+        source,
+        target_before,
+        target_after,
+    })
+}
+
+async fn select_memory_for_update(
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    id: Uuid,
+    workspace_id: Uuid,
+) -> AppResult<MemoryUnit> {
+    let sql = format!(
+        "SELECT {MEMORY_COLUMNS} FROM memory_units WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL FOR UPDATE"
+    );
+
+    sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(id)
+        .bind(workspace_id)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(AppError::Database)?
+        .ok_or_else(|| AppError::NotFound {
+            resource: format!("memory:{id}"),
+        })
 }
 
 pub async fn increment_access_count(db: &PgPool, id: Uuid) -> AppResult<()> {
@@ -292,6 +526,16 @@ fn sort_column(field: SortField) -> &'static str {
         SortField::UpdatedAt => "updated_at",
         SortField::CreatedAt => "created_at",
     }
+}
+
+fn push_assignment_separator(
+    builder: &mut QueryBuilder<'_, Postgres>,
+    wrote_assignment: &mut bool,
+) {
+    if *wrote_assignment {
+        builder.push(", ");
+    }
+    *wrote_assignment = true;
 }
 
 fn sort_direction(direction: SortDirection) -> &'static str {
@@ -401,7 +645,7 @@ mod tests {
         insert_memory(&pool, workspace_id, "third", 0.7).await;
 
         let params = ListQuery {
-            workspace_id,
+            workspace_id: Some(workspace_id),
             limit: Some(1),
             offset: Some(1),
             memory_type: None,
@@ -411,7 +655,7 @@ mod tests {
             direction: None,
         };
 
-        let (items, total) = match list_memory_units(&pool, &params).await {
+        let (items, total) = match list_memory_units(&pool, &params, workspace_id).await {
             Ok(result) => result,
             Err(error) => panic!("list should succeed: {error}"),
         };

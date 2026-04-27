@@ -29,6 +29,7 @@ pub enum AuditAction {
     ImportanceOverridden,
     KeyCreated,
     KeyRevoked,
+    ConfigUpdated,
     WorkspaceConfigUpdated,
     IntegrationAdded,
     IntegrationRemoved,
