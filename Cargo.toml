@@ -1,0 +1,65 @@
+[workspace]
+members = [
+    "crates/api",
+    "crates/common",
+    "crates/ingestion",
+    "crates/processor",
+    "crates/retrieval",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Quazmoz/memoryops"
+rust-version = "1.88.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+
+[workspace.dependencies]
+# General error context and typed errors keep failures explicit across crate boundaries.
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Async traits let provider interfaces remain object-safe behind Arc<dyn Trait>.
+async-trait = "0.1"
+
+# Axum is the required API runtime; tower-http supplies production middleware layers.
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["cors", "request-id", "set-header", "timeout", "trace"] }
+
+# Tokio is the async runtime used by axum, sqlx, Redis, and service workers.
+tokio = { version = "1.44", features = ["macros", "net", "rt-multi-thread", "signal"] }
+
+# Serialization, validation, IDs, and time are shared by API payloads and DB models.
+chrono = { version = "0.4", features = ["clock", "serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+uuid = { version = "1.16", features = ["serde", "v7"] }
+validator = { version = "0.20", features = ["derive"] }
+
+# sqlx provides parameterized Postgres access and migration embedding.
+sqlx = { version = "0.8", features = ["chrono", "json", "migrate", "postgres", "runtime-tokio-rustls", "uuid"] }
+
+# Redis Streams back processor queues and rate limiting; connection-manager gives pooled async handles.
+redis = { version = "0.29", features = ["connection-manager", "tokio-comp"] }
+
+# Qdrant is the required vector search backend and is held in shared AppState.
+qdrant-client = "1.13"
+
+# Structured logs are the foundation for request tracing and later OTEL export wiring.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+common = { path = "crates/common" }
+ingestion = { path = "crates/ingestion" }
+processor = { path = "crates/processor" }
+retrieval = { path = "crates/retrieval" }

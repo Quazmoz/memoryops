@@ -1,0 +1,1288 @@
+openapi: 3.1.0
+info:
+  title: MemoryOps API
+  version: 0.1.0
+  description: Control plane API for AI-agent memory ingestion, lifecycle management, retrieval, and audit.
+  contact:
+    name: MemoryOps
+    url: https://github.com/Quazmoz/memoryops
+servers:
+  - url: http://localhost:8080
+security:
+  - ApiKeyAuth: []
+tags:
+  - name: Webhooks
+  - name: Memory
+  - name: Retrieval
+  - name: Workspaces
+  - name: API Keys
+  - name: Audit
+  - name: DLQ
+  - name: Export
+  - name: Health
+paths:
+  /v1/webhooks/github:
+    post:
+      tags: [Webhooks]
+      operationId: ingestGitHubWebhook
+      summary: Receive a GitHub webhook event
+      description: Validates the GitHub signature and accepts supported repository events for ingestion.
+      security: []
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-GitHub-Event
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '202':
+          description: Event accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/webhooks/slack:
+    post:
+      tags: [Webhooks]
+      operationId: ingestSlackWebhook
+      summary: Receive a Slack Events API webhook
+      description: Validates the Slack signature and accepts supported workspace events for ingestion.
+      security: []
+      parameters:
+        - name: X-Slack-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-Slack-Request-Timestamp
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '202':
+          description: Event accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/memory:
+    get:
+      tags: [Memory]
+      operationId: listMemory
+      summary: List memory units
+      description: Returns cursor-paginated memory units filtered within the authenticated workspace.
+      parameters:
+        - $ref: '#/components/parameters/After'
+        - $ref: '#/components/parameters/Limit'
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/MemoryType'
+        - name: source
+          in: query
+          schema:
+            $ref: '#/components/schemas/Source'
+        - name: tag
+          in: query
+          schema:
+            type: string
+        - name: entity
+          in: query
+          schema:
+            type: string
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Paginated memory units
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/memory/{id}:
+    get:
+      tags: [Memory]
+      operationId: getMemory
+      summary: Get a memory unit
+      description: Returns one memory unit by ID within the authenticated workspace.
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+      responses:
+        '200':
+          description: Memory unit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryUnit'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Memory]
+      operationId: updateMemory
+      summary: Update memory content, tags, pin state, or importance
+      description: Mutates editable memory fields and records version or audit data as needed.
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryPatchRequest'
+      responses:
+        '200':
+          description: Updated memory unit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryUnit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Memory]
+      operationId: deleteMemory
+      summary: Soft-delete a memory unit
+      description: Marks a memory unit as deleted without immediately removing stored history.
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+      responses:
+        '204':
+          description: Memory unit soft-deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/memory/{id}/promote:
+    post:
+      tags: [Memory]
+      operationId: promoteMemory
+      summary: Promote an episodic memory to semantic memory
+      description: Forces promotion of an episodic memory into a semantic memory unit.
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+      responses:
+        '200':
+          description: Promoted memory unit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryUnit'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/memory/{id}/restore:
+    post:
+      tags: [Memory]
+      operationId: restoreMemory
+      summary: Restore a soft-deleted memory unit
+      description: Clears the soft-delete timestamp for a recoverable memory unit.
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+      responses:
+        '200':
+          description: Restored memory unit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryUnit'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/memory/{id}/history:
+    get:
+      tags: [Memory]
+      operationId: listMemoryHistory
+      summary: List memory version history
+      description: Returns version rows created before semantic memory edits.
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+      responses:
+        '200':
+          description: Memory versions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MemoryVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/memory/bulk:
+    post:
+      tags: [Memory]
+      operationId: bulkUpdateMemory
+      summary: Bulk pin or delete memory units
+      description: Applies a supported bulk lifecycle action to selected memory units.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkMemoryRequest'
+      responses:
+        '200':
+          description: Bulk operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkMemoryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/memory/merge:
+    post:
+      tags: [Memory]
+      operationId: mergeMemory
+      summary: Merge semantic memory units
+      description: Combines semantic memory units into a single versioned memory.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryMergeRequest'
+      responses:
+        '200':
+          description: Merged memory unit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryUnit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/retrieve:
+    post:
+      tags: [Retrieval]
+      operationId: retrieveMemory
+      summary: Retrieve token-packed memory context
+      description: Runs scoped hybrid retrieval and returns packed memories with a trace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetrievalRequest'
+      responses:
+        '200':
+          description: Retrieval result with trace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievalResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/retrieve/trace/{query_id}:
+    get:
+      tags: [Retrieval]
+      operationId: getRetrievalTrace
+      summary: Get a persisted retrieval trace
+      description: Returns the scoring and packing trace for a previously executed retrieval query.
+      parameters:
+        - $ref: '#/components/parameters/QueryId'
+      responses:
+        '200':
+          description: Retrieval trace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievalTraceResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces:
+    post:
+      tags: [Workspaces]
+      operationId: createWorkspace
+      summary: Create a workspace
+      description: Creates a tenant workspace that owns memory, keys, integrations, and configuration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceCreateRequest'
+      responses:
+        '201':
+          description: Workspace created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/workspaces/{id}:
+    get:
+      tags: [Workspaces]
+      operationId: getWorkspace
+      summary: Get a workspace
+      description: Returns workspace metadata and configuration for the authenticated tenant.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/config:
+    patch:
+      tags: [Workspaces]
+      operationId: updateWorkspaceConfig
+      summary: Update workspace configuration
+      description: Updates workspace-level provider, scoring, lifecycle, and rate-limit configuration.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Workspace configuration updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/integrations:
+    post:
+      tags: [Workspaces]
+      operationId: addIntegration
+      summary: Add a workspace integration
+      description: Registers an external source integration for a workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntegrationRequest'
+      responses:
+        '201':
+          description: Integration added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationHealth'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      tags: [Workspaces]
+      operationId: listIntegrations
+      summary: List workspace integrations
+      description: Returns configured integrations and their health state for a workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Workspace integrations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IntegrationHealth'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/integrations/{source}:
+    delete:
+      tags: [Workspaces]
+      operationId: removeIntegration
+      summary: Remove a workspace integration
+      description: Removes a source integration from a workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: source
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Source'
+      responses:
+        '204':
+          description: Integration removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/keys:
+    post:
+      tags: [API Keys]
+      operationId: createApiKey
+      summary: Create an API key
+      description: Creates a workspace API key and returns the plaintext key once.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyCreateRequest'
+      responses:
+        '201':
+          description: API key created; plaintext key returned once
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      tags: [API Keys]
+      operationId: listApiKeys
+      summary: List API keys
+      description: Lists non-secret API key metadata for a workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: API keys
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/keys/{key_id}:
+    delete:
+      tags: [API Keys]
+      operationId: revokeApiKey
+      summary: Revoke an API key
+      description: Revokes a workspace API key and prevents future authentication with it.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/KeyId'
+      responses:
+        '204':
+          description: API key revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/audit:
+    get:
+      tags: [Audit]
+      operationId: listAuditLog
+      summary: List audit entries
+      description: Returns cursor-paginated audit entries for workspace state changes.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/After'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Audit entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/dlq:
+    get:
+      tags: [DLQ]
+      operationId: listDlqJobs
+      summary: List dead-letter queue jobs
+      description: Lists failed processing jobs currently held in the workspace dead-letter queue.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: DLQ jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DlqJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/dlq/{job_id}/retry:
+    post:
+      tags: [DLQ]
+      operationId: retryDlqJob
+      summary: Retry a dead-letter queue job
+      description: Requeues a failed processing job from the dead-letter queue.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '202':
+          description: DLQ job queued for retry
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/dlq/{job_id}:
+    delete:
+      tags: [DLQ]
+      operationId: discardDlqJob
+      summary: Discard a dead-letter queue job
+      description: Deletes a failed processing job from the dead-letter queue.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '204':
+          description: DLQ job discarded
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/export:
+    get:
+      tags: [Export]
+      operationId: exportWorkspaceMemory
+      summary: Stream a workspace memory export as JSONL
+      description: Streams memory units as JSONL while excluding raw event payloads and embeddings.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: JSONL memory export
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /health:
+    get:
+      tags: [Health]
+      operationId: health
+      summary: Liveness check
+      description: Confirms the API process is alive.
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: readiness
+      summary: Dependency readiness check
+      description: Checks whether the API can reach Postgres, Redis, and Qdrant.
+      security: []
+      responses:
+        '200':
+          description: Dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: One or more dependencies are unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  parameters:
+    After:
+      name: after
+      in: query
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    WorkspaceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MemoryId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    QueryId:
+      name: query_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    KeyId:
+      name: key_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    WebhookAccepted:
+      type: object
+      required: [event_id]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+    Source:
+      type: string
+      enum: [github, slack, jira, linear]
+    MemoryType:
+      type: string
+      enum: [episodic, semantic]
+    EntityType:
+      type: string
+      enum: [person, repo, branch, topic, file, team]
+    AuditAction:
+      type: string
+      enum:
+        - memory_created
+        - memory_edited
+        - memory_deleted
+        - memory_restored
+        - memory_pinned
+        - memory_unpinned
+        - memory_promoted
+        - memory_merged
+        - importance_overridden
+        - key_created
+        - key_revoked
+        - workspace_config_updated
+        - integration_added
+        - integration_removed
+    IntegrationStatus:
+      type: string
+      enum: [active, degraded, failing]
+    MemoryScope:
+      type: object
+      required: [workspace_id]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        agent_id:
+          type: [string, 'null']
+        user_id:
+          type: [string, 'null']
+        repo:
+          type: [string, 'null']
+    Entity:
+      type: object
+      required: [entity_type, value, confidence]
+      properties:
+        entity_type:
+          $ref: '#/components/schemas/EntityType'
+        value:
+          type: string
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+    MemoryUnit:
+      type: object
+      required:
+        - id
+        - workspace_id
+        - scope
+        - memory_type
+        - content
+        - entities
+        - importance_score
+        - importance_overridden
+        - source_events
+        - decay_score
+        - pinned
+        - tags
+        - version
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        scope:
+          $ref: '#/components/schemas/MemoryScope'
+        memory_type:
+          $ref: '#/components/schemas/MemoryType'
+        content:
+          type: string
+        entities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entity'
+        importance_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        importance_overridden:
+          type: boolean
+        source_events:
+          type: array
+          items:
+            type: string
+            format: uuid
+        embedding_id:
+          type: [string, 'null']
+        token_count:
+          type: [integer, 'null']
+        decay_score:
+          type: number
+          format: float
+        pinned:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+        version:
+          type: integer
+        deleted_at:
+          type: [string, 'null']
+          format: date-time
+        last_accessed_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    MemoryVersion:
+      type: object
+      required: [id, memory_id, workspace_id, version, content, importance_score, tags, edited_by, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        memory_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+        content:
+          type: string
+        importance_score:
+          type: number
+          format: float
+        tags:
+          type: array
+          items:
+            type: string
+        edited_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    MemoryPatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        pinned:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+        content:
+          type: string
+        importance_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+    BulkMemoryRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [pin, delete]
+        ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+    BulkMemoryResponse:
+      type: object
+      required: [updated]
+      properties:
+        updated:
+          type: integer
+          minimum: 0
+    MemoryMergeRequest:
+      type: object
+      required: [source_ids, content]
+      properties:
+        source_ids:
+          type: array
+          minItems: 2
+          items:
+            type: string
+            format: uuid
+        content:
+          type: string
+    MemoryListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryUnit'
+        next_cursor:
+          type: [string, 'null']
+    RetrievalRequest:
+      type: object
+      required: [query]
+      properties:
+        scope:
+          anyOf:
+            - $ref: '#/components/schemas/MemoryScope'
+            - type: 'null'
+        query:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        token_budget:
+          type: integer
+          minimum: 256
+          maximum: 32768
+          default: 4096
+        filters:
+          anyOf:
+            - $ref: '#/components/schemas/RetrievalFilters'
+            - type: 'null'
+    RetrievalFilters:
+      type: object
+      properties:
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Source'
+        memory_types:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryType'
+        entities:
+          type: array
+          items:
+            type: string
+        since:
+          type: string
+          format: date-time
+        tags:
+          type: array
+          items:
+            type: string
+        min_importance:
+          type: number
+          format: float
+    RetrievalResult:
+      type: object
+      required: [query_id, memories, total_tokens, trace, retrieved_at]
+      properties:
+        query_id:
+          type: string
+          format: uuid
+        memories:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScoredMemory'
+        total_tokens:
+          type: integer
+        trace:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievalTraceEntry'
+        retrieved_at:
+          type: string
+          format: date-time
+    ScoredMemory:
+      allOf:
+        - $ref: '#/components/schemas/MemoryUnit'
+        - type: object
+          required: [score]
+          properties:
+            score:
+              $ref: '#/components/schemas/ScoreBreakdown'
+    ScoreBreakdown:
+      type: object
+      required: [semantic_similarity, importance, recency, source_authority, memory_type, final_score]
+      properties:
+        semantic_similarity:
+          type: number
+          format: float
+        importance:
+          type: number
+          format: float
+        recency:
+          type: number
+          format: float
+        source_authority:
+          type: number
+          format: float
+        memory_type:
+          type: number
+          format: float
+        final_score:
+          type: number
+          format: float
+    RetrievalTraceEntry:
+      type: object
+      required: [memory_id, breakdown, token_count, included]
+      properties:
+        memory_id:
+          type: string
+          format: uuid
+        breakdown:
+          $ref: '#/components/schemas/ScoreBreakdown'
+        token_count:
+          type: integer
+        included:
+          type: boolean
+        exclusion_reason:
+          anyOf:
+            - $ref: '#/components/schemas/ExclusionReason'
+            - type: 'null'
+    ExclusionReason:
+      type: string
+      enum: [token_budget, dedup, filtered, below_min_importance]
+    RetrievalTraceResponse:
+      type: object
+      required: [query_id, trace]
+      properties:
+        query_id:
+          type: string
+          format: uuid
+        trace:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievalTraceEntry'
+    WorkspaceCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+    Workspace:
+      type: object
+      required: [id, name, config, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: [string, 'null']
+          format: date-time
+    IntegrationRequest:
+      type: object
+      required: [source]
+      properties:
+        source:
+          $ref: '#/components/schemas/Source'
+    IntegrationHealth:
+      type: object
+      required: [workspace_id, source, events_24h, errors_24h, status]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        source:
+          $ref: '#/components/schemas/Source'
+        last_event_at:
+          type: [string, 'null']
+          format: date-time
+        events_24h:
+          type: integer
+        errors_24h:
+          type: integer
+        status:
+          $ref: '#/components/schemas/IntegrationStatus'
+    ApiKeyCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+    ApiKeyCreateResponse:
+      type: object
+      required: [key, api_key]
+      properties:
+        key:
+          type: string
+        api_key:
+          $ref: '#/components/schemas/ApiKey'
+    ApiKey:
+      type: object
+      required: [id, workspace_id, name, prefix, created_at, revoked]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        prefix:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: [string, 'null']
+          format: date-time
+        revoked:
+          type: boolean
+        revoked_at:
+          type: [string, 'null']
+          format: date-time
+    AuditEntry:
+      type: object
+      required: [id, workspace_id, actor, action, target_id, target_type, occurred_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        actor:
+          type: string
+        action:
+          $ref: '#/components/schemas/AuditAction'
+        target_id:
+          type: string
+          format: uuid
+        target_type:
+          type: string
+        diff:
+          type: [object, 'null']
+          additionalProperties: true
+        occurred_at:
+          type: string
+          format: date-time
+    AuditListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+        next_cursor:
+          type: [string, 'null']
+    DlqJob:
+      type: object
+      required: [job_id, payload, error, retry_count, failed_at]
+      properties:
+        job_id:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        error:
+          type: string
+        retry_count:
+          type: integer
+        failed_at:
+          type: string
+          format: date-time
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    ReadinessResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable]
+        checks:
+          type: object
+          required: [database, redis, qdrant]
+          properties:
+            database:
+              type: string
+            redis:
+              type: string
+            qdrant:
+              type: string
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string

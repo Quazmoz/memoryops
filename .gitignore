@@ -1,0 +1,9 @@
+/target/
+/.sqlx/
+/.env
+/.env.*
+!.env.example
+/coverage/
+/lcov.info
+/frontend/node_modules/
+/frontend/dist/
