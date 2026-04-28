@@ -8,12 +8,12 @@ use axum::{
     Extension,
 };
 use common::{auth::AuthContext, error::AppResult, models::MemoryUnit, AppState};
+use serde_json::Value;
 use uuid::Uuid;
 
 use super::require_workspace;
 
 const EXPORT_CHUNK_SIZE: i64 = 500;
-const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, deleted_at, last_accessed_at, created_at, updated_at";
 
 #[axum::debug_handler]
 pub async fn export_workspace(
@@ -27,10 +27,35 @@ pub async fn export_workspace(
     let stream = stream! {
         let mut cursor = None;
         loop {
-            let sql = format!(
-                "SELECT {MEMORY_COLUMNS} FROM memory_units WHERE workspace_id = $1 AND deleted_at IS NULL AND ($2::uuid IS NULL OR id > $2) ORDER BY id ASC LIMIT $3"
-            );
-            let rows = match sqlx::query_as::<_, MemoryUnit>(&sql)
+            let rows = match sqlx::query_as::<_, MemoryUnit>(
+                r#"
+                SELECT id,
+                    workspace_id,
+                    scope,
+                    memory_type,
+                    content,
+                    entities,
+                    importance_score,
+                    importance_overridden,
+                    source_events,
+                    embedding_id,
+                    token_count,
+                    decay_score,
+                    pinned,
+                    tags,
+                    version,
+                    deleted_at,
+                    last_accessed_at,
+                    created_at,
+                    updated_at
+                FROM memory_units
+                WHERE workspace_id = $1
+                  AND deleted_at IS NULL
+                  AND ($2::uuid IS NULL OR id > $2)
+                ORDER BY id ASC
+                LIMIT $3
+                "#,
+            )
                 .bind(id)
                 .bind(cursor)
                 .bind(EXPORT_CHUNK_SIZE)
@@ -49,7 +74,7 @@ pub async fn export_workspace(
             }
 
             for memory in &rows {
-                let mut line = match serde_json::to_string(memory) {
+                let mut line = match export_line(memory) {
                     Ok(line) => line,
                     Err(error) => {
                         yield Err::<Bytes, io::Error>(io_error(error));
@@ -75,6 +100,14 @@ pub async fn export_workspace(
     );
 
     Ok(response)
+}
+
+fn export_line(memory: &MemoryUnit) -> Result<String, serde_json::Error> {
+    let mut value = serde_json::to_value(memory)?;
+    if let Value::Object(object) = &mut value {
+        object.remove("embedding_id");
+    }
+    serde_json::to_string(&value)
 }
 
 fn io_error(error: impl ToString) -> io::Error {

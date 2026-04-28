@@ -3,6 +3,7 @@ import type { JsonValue } from "./types";
 
 type ApiRequestOptions = Omit<RequestInit, "body"> & {
   body?: JsonValue;
+  auth?: boolean;
 };
 
 export class ApiError extends Error {
@@ -18,10 +19,10 @@ export class ApiError extends Error {
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const { body, ...requestOptions } = options;
+  const { body, auth = true, ...requestOptions } = options;
   const init: RequestInit = {
     ...requestOptions,
-    headers: requestHeaders(options),
+    headers: requestHeaders(options, auth),
   };
 
   if (body !== undefined) {
@@ -79,9 +80,9 @@ export async function parseResponse(response: Response): Promise<unknown> {
   }
 }
 
-export function requestHeaders(options: Pick<RequestInit, "headers"> = {}): Headers {
+export function requestHeaders(options: Pick<RequestInit, "headers"> = {}, includeAuth = true): Headers {
   const headers = new Headers(options.headers);
-  const apiKey = useAppStore.getState().apiKey.trim();
+  const apiKey = includeAuth ? useAppStore.getState().apiKey.trim() : "";
 
   if (!headers.has("content-type")) {
     headers.set("content-type", "application/json");

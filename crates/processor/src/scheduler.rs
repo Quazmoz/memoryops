@@ -11,6 +11,7 @@ const WORKSPACE_PAGE_SIZE: i64 = 500;
 const PRUNE_THRESHOLD: f32 = 0.10;
 const HARD_DELETE_RETENTION_DAYS: i64 = 30;
 const DEFAULT_DECAY_HALF_LIFE_DAYS: f64 = 30.0;
+const SECONDS_PER_DAY: f64 = 86_400.0;
 
 #[derive(Debug, Clone, Copy, FromRow)]
 struct MemoryIdentity {
@@ -66,7 +67,7 @@ pub fn next_scheduled_utc_after(now: DateTime<Utc>, hour_utc: u8) -> DateTime<Ut
 pub async fn run_decay_pass(state: &AppState) -> AppResult<u64> {
     let mut total = 0_u64;
     let mut cursor = None;
-    let half_life_secs = DEFAULT_DECAY_HALF_LIFE_DAYS * 86_400.0;
+    let half_life_secs = DEFAULT_DECAY_HALF_LIFE_DAYS * SECONDS_PER_DAY;
 
     loop {
         let workspace_ids = list_workspace_ids_after(state, cursor, WORKSPACE_PAGE_SIZE).await?;
@@ -283,11 +284,28 @@ pub fn hard_delete_eligible(deleted_at: Option<DateTime<Utc>>, now: DateTime<Utc
     })
 }
 
+pub fn decay_score(importance_score: f32, elapsed_secs: f64, half_life_secs: f64) -> f32 {
+    if half_life_secs <= 0.0 {
+        return 0.0;
+    }
+
+    let score = f64::from(importance_score) * 0.5_f64.powf(elapsed_secs / half_life_secs);
+    score.clamp(0.0, 1.0) as f32
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone;
 
     use super::*;
+
+    #[test]
+    fn decay_boundary_at_exactly_half_life_is_half_importance() {
+        let half_life_secs = DEFAULT_DECAY_HALF_LIFE_DAYS * SECONDS_PER_DAY;
+        let score = decay_score(1.0, half_life_secs, half_life_secs);
+
+        assert!((score - 0.5).abs() <= 0.001);
+    }
 
     #[test]
     fn decay_filter_skips_pinned_and_overridden_memories() {
@@ -305,6 +323,11 @@ mod tests {
     }
 
     #[test]
+    fn pruning_skips_pinned_memory() {
+        assert!(!should_prune(0.01, true, false, false));
+    }
+
+    #[test]
     fn hard_delete_requires_more_than_thirty_days() {
         let Some(now) = Utc.with_ymd_and_hms(2026, 4, 27, 12, 0, 0).single() else {
             panic!("test timestamp should be valid");
@@ -318,6 +341,22 @@ mod tests {
             now
         ));
         assert!(!hard_delete_eligible(None, now));
+    }
+
+    #[test]
+    fn hard_delete_eligible_requires_strictly_more_than_thirty_days() {
+        let Some(now) = Utc.with_ymd_and_hms(2026, 4, 27, 12, 0, 0).single() else {
+            panic!("test timestamp should be valid");
+        };
+
+        assert!(!hard_delete_eligible(
+            Some(now - ChronoDuration::days(30)),
+            now
+        ));
+        assert!(hard_delete_eligible(
+            Some(now - ChronoDuration::days(30) - ChronoDuration::seconds(1)),
+            now
+        ));
     }
 
     #[test]

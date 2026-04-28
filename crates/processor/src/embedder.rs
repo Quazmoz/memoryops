@@ -127,7 +127,7 @@ impl Embedder {
     }
 
     pub async fn delete_point(&self, memory_id: Uuid) -> AppResult<()> {
-        self.qdrant.delete_point_id(memory_id.to_string()).await
+        delete_point_with_writer(&self.qdrant, memory_id).await
     }
 }
 
@@ -143,6 +143,13 @@ async fn embed_and_store_with_writer(
     let point = PointStruct::new(point_id.clone(), vector, payload.into_qdrant_payload());
     writer.upsert_point(point).await?;
     Ok(point_id)
+}
+
+async fn delete_point_with_writer(
+    writer: &dyn QdrantPointWriter,
+    memory_id: Uuid,
+) -> AppResult<()> {
+    writer.delete_point_id(memory_id.to_string()).await
 }
 
 #[async_trait]
@@ -214,6 +221,7 @@ mod tests {
     #[derive(Default)]
     struct MockQdrantWriter {
         upserted: Mutex<Vec<PointStruct>>,
+        deleted: Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -226,9 +234,61 @@ mod tests {
             Ok(())
         }
 
-        async fn delete_point_id(&self, _point_id: String) -> AppResult<()> {
+        async fn delete_point_id(&self, point_id: String) -> AppResult<()> {
+            match self.deleted.lock() {
+                Ok(mut deleted) => deleted.push(point_id),
+                Err(error) => return Err(AppError::Internal(anyhow!(error.to_string()))),
+            }
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn embed_and_store_returns_memory_id_as_point_id() {
+        let provider = MockEmbeddingProvider;
+        let writer = MockQdrantWriter::default();
+        let memory_id = Uuid::now_v7();
+        let payload = QdrantPayload {
+            workspace_id: Uuid::now_v7(),
+            memory_type: MemoryType::Episodic,
+            importance_score: 0.8,
+            decay_score: 0.7,
+            agent_id: None,
+            user_id: None,
+            repo: None,
+            tags: Vec::new(),
+        };
+
+        let point_id = match embed_and_store_with_writer(
+            &provider,
+            &writer,
+            memory_id,
+            "memory text",
+            payload,
+        )
+        .await
+        {
+            Ok(point_id) => point_id,
+            Err(error) => panic!("embedder should upsert: {error}"),
+        };
+
+        assert_eq!(point_id, memory_id.to_string());
+    }
+
+    #[tokio::test]
+    async fn delete_point_calls_qdrant_delete() {
+        let writer = MockQdrantWriter::default();
+        let memory_id = Uuid::now_v7();
+
+        if let Err(error) = delete_point_with_writer(&writer, memory_id).await {
+            panic!("delete point should call writer: {error}");
+        }
+
+        let deleted = match writer.deleted.lock() {
+            Ok(deleted) => deleted,
+            Err(error) => panic!("mock writer mutex should not be poisoned: {error}"),
+        };
+        assert_eq!(deleted.as_slice(), &[memory_id.to_string()]);
     }
 
     #[tokio::test]

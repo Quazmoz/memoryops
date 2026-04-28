@@ -34,6 +34,7 @@ export type MemoryUnit = {
   decay_score: number;
   pinned: boolean;
   tags: string[];
+  embedding_id?: string | null;
   token_count?: number | null;
   source_events: string[];
   access_count?: number;
@@ -118,17 +119,29 @@ export type ProviderDefaults = {
 };
 
 export type CreateWorkspaceResponse = {
-  workspace_id: string;
+  id?: string;
+  name?: string;
+  workspace_id?: string;
+};
+
+export type WorkspaceSummary = {
+  id: string;
+  name: string;
 };
 
 export type CreateApiKeyResponse = {
-  id: string;
-  name: string;
-  prefix: string;
-  key: string;
+  id?: string;
+  name?: string;
+  prefix?: string;
+  key?: string;
+  plaintext_key?: string;
 };
 
-export type AuditEntry = {
+export type CreatedApiKey = {
+  plaintext_key: string;
+};
+
+export type AuditEvent = {
   id: string;
   workspace_id: string;
   actor: string;
@@ -139,8 +152,10 @@ export type AuditEntry = {
   occurred_at: string;
 };
 
+export type AuditEntry = AuditEvent;
+
 export type AuditResponse = {
-  items: AuditEntry[];
+  items: AuditEvent[];
   limit: number;
   offset: number;
 };
@@ -157,8 +172,20 @@ export type IntegrationResponse = {
 
 export type DlqEntryResponse = {
   job_id: string;
+  workspace_id?: string;
   payload_summary: string;
-  error: string;
-  retry_count: number;
+  error?: string;
+  error_message?: string;
+  retry_count?: number;
+  attempts?: number;
   failed_at?: string | null;
+  created_at?: string | null;
+};
+
+export type DlqEntry = {
+  job_id: string;
+  workspace_id: string;
+  error_message: string;
+  attempts: number;
+  created_at?: string | null;
 };

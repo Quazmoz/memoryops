@@ -182,6 +182,7 @@ mod tests {
                 decay_score: 1.0,
                 pinned: false,
                 tags: Vec::new(),
+                embedding_id: None,
                 token_count: None,
                 source_events: Vec::new(),
                 created_at: Utc::now(),

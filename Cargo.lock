@@ -1727,6 +1727,7 @@ dependencies = [
  "ingestion",
  "qdrant-client",
  "redis",
+ "reqwest",
  "serde_json",
  "sqlx",
  "tiktoken-rs",

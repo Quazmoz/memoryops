@@ -1,15 +1,12 @@
-import { Download, KeyRound, ServerCog, ShieldCheck } from "lucide-react";
+import { AlertCircle, Download, KeyRound, Loader2, ServerCog, ShieldCheck, X } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
-import type { FormEvent } from "react";
 import { useState } from "react";
 
 import type { ProviderDefaults } from "../api/types";
-import { createWorkspace, createWorkspaceKey, downloadWorkspaceExport } from "../api/workspace";
-import { InlineError } from "../components/InlineError";
+import { exportMemories } from "../api/workspaces";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Input } from "../components/ui/input";
 import { useAppStore } from "../store/app-store";
 
 const providerDefaults: ProviderDefaults = {
@@ -24,50 +21,24 @@ const providerDefaults: ProviderDefaults = {
   },
 };
 
-type BootstrapResult = {
-  workspaceId: string;
-  apiKey: string;
-  prefix: string;
-};
-
 export function SettingsView() {
   const workspaceId = useAppStore((state) => state.workspaceId);
   const apiKey = useAppStore((state) => state.apiKey);
-  const setWorkspaceId = useAppStore((state) => state.setWorkspaceId);
-  const setApiKey = useAppStore((state) => state.setApiKey);
-  const [workspaceName, setWorkspaceName] = useState("MemoryOps Workspace");
-
-  const bootstrap = useMutation<BootstrapResult, Error, string>({
-    mutationKey: ["workspace", "bootstrap"],
-    mutationFn: async (name) => {
-      const workspace = await createWorkspace(name.trim());
-      const key = await createWorkspaceKey(workspace.workspace_id, "frontend-session");
-      return {
-        workspaceId: workspace.workspace_id,
-        apiKey: key.key,
-        prefix: key.prefix,
-      };
-    },
-    onSuccess: (result) => {
-      setWorkspaceId(result.workspaceId);
-      setApiKey(result.apiKey);
-    },
-  });
-
-  const exportMutation = useMutation<void, Error>({
-    mutationKey: ["workspace", workspaceId, "export"],
-    mutationFn: () => downloadWorkspaceExport(workspaceId),
-  });
-
+  const [exportError, setExportError] = useState<string | null>(null);
   const hasApiKey = apiKey.trim().length > 0;
-
-  function submitBootstrap(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    bootstrap.mutate(workspaceName);
-  }
+  const exportMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "export"],
+    mutationFn: () => exportMemories(workspaceId),
+    onSuccess: (blob) => {
+      setExportError(null);
+      downloadBlob(blob, exportFilename(workspaceId));
+    },
+    onError: (error: Error) => setExportError(error.message),
+  });
 
   return (
     <div className="mx-auto grid max-w-7xl gap-6">
+      {exportError ? <ExportErrorToast message={exportError} onDismiss={() => setExportError(null)} /> : null}
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-medium text-accent-strong">Workspace</p>
@@ -86,38 +57,23 @@ export function SettingsView() {
             <KeyRound className="h-4 w-4 text-accent-strong" aria-hidden="true" />
           </CardHeader>
           <CardContent className="space-y-4">
-            {!hasApiKey ? (
-              <form className="grid gap-3" onSubmit={submitBootstrap}>
-                <label className="grid gap-2 text-sm font-medium text-ink/70">
-                  Name
-                  <Input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} />
-                </label>
-                <Button type="submit" disabled={bootstrap.isPending || workspaceName.trim().length === 0}>
-                  <KeyRound className="h-4 w-4" aria-hidden="true" />
-                  {bootstrap.isPending ? "Creating" : "Create Workspace"}
-                </Button>
-                {bootstrap.isError ? <InlineError message={bootstrap.error.message} /> : null}
-              </form>
-            ) : (
-              <div className="grid gap-3">
-                <Field label="Workspace ID" value={workspaceId} />
-                <Field label="Key prefix" value={apiKey.slice(0, 8)} />
-              </div>
-            )}
+            <div className="grid gap-3">
+              <Field label="Workspace ID" value={workspaceId} />
+              <Field label="Key prefix" value={apiKey.slice(0, 8)} />
+            </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <CardTitle>Export</CardTitle>
+            <CardTitle>Export Memories</CardTitle>
             <Download className="h-4 w-4 text-accent-strong" aria-hidden="true" />
           </CardHeader>
           <CardContent className="space-y-4">
-            <Button type="button" onClick={() => exportMutation.mutate()} disabled={!hasApiKey || exportMutation.isPending}>
-              <Download className="h-4 w-4" aria-hidden="true" />
-              {exportMutation.isPending ? "Preparing" : "Download JSONL"}
+            <Button type="button" onClick={() => exportMutation.mutate()} disabled={!hasApiKey || workspaceId.trim().length === 0 || exportMutation.isPending}>
+              {exportMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
+              Export JSONL
             </Button>
-            {exportMutation.isError ? <InlineError message={exportMutation.error.message} /> : null}
           </CardContent>
         </Card>
       </section>
@@ -158,4 +114,34 @@ function ProviderBlock({ title, rows }: { title: string; rows: string[] }) {
       </div>
     </div>
   );
+}
+
+function ExportErrorToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div role="alert" className="fixed right-4 top-4 z-50 flex max-w-sm items-start gap-3 rounded-lg border border-orange-200 bg-orange-50 p-4 text-orange-900 shadow-lg">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold">Export failed</p>
+        <p className="mt-1 break-words text-sm text-orange-900/80">{message}</p>
+      </div>
+      <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-orange-900" onClick={onDismiss} aria-label="Dismiss export error">
+        <X className="h-4 w-4" aria-hidden="true" />
+      </Button>
+    </div>
+  );
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportFilename(workspaceId: string): string {
+  return `memoryops-export-${workspaceId}-${new Date().toISOString().slice(0, 10)}.jsonl`;
 }

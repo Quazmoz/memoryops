@@ -1,11 +1,19 @@
 use std::time::Duration;
 
 use anyhow::anyhow;
-use common::{audit::spawn_audit_log, error::AppResult, models::AuditAction, AppError, AppState};
+use async_trait::async_trait;
+use common::{
+    audit::spawn_audit_log,
+    error::AppResult,
+    models::{AuditAction, MemoryUnit},
+    providers::LlmProvider,
+    AppError, AppState,
+};
 use ingestion::STREAM_KEY;
 use redis::{
     aio::ConnectionManager, from_redis_value, streams::StreamId, streams::StreamReadReply, Value,
 };
+use sqlx::PgPool;
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
@@ -36,6 +44,88 @@ pub struct ProcessorJob {
     pub memory_id: Uuid,
     pub workspace_id: Uuid,
     pub attempts: i32,
+}
+
+#[async_trait]
+trait SlowMemoryStore: Send + Sync {
+    async fn get_memory_unit_by_id(
+        &self,
+        id: Uuid,
+        workspace_id: Uuid,
+    ) -> AppResult<Option<MemoryUnit>>;
+
+    async fn update_memory_embedding(
+        &self,
+        id: Uuid,
+        workspace_id: Uuid,
+        content: &str,
+        embedding_id: &str,
+        token_count: Option<i32>,
+    ) -> AppResult<Option<MemoryUnit>>;
+}
+
+struct PgSlowMemoryStore<'a> {
+    db: &'a PgPool,
+}
+
+#[async_trait]
+impl SlowMemoryStore for PgSlowMemoryStore<'_> {
+    async fn get_memory_unit_by_id(
+        &self,
+        id: Uuid,
+        workspace_id: Uuid,
+    ) -> AppResult<Option<MemoryUnit>> {
+        store::get_memory_unit_by_id(self.db, id, workspace_id).await
+    }
+
+    async fn update_memory_embedding(
+        &self,
+        id: Uuid,
+        workspace_id: Uuid,
+        content: &str,
+        embedding_id: &str,
+        token_count: Option<i32>,
+    ) -> AppResult<Option<MemoryUnit>> {
+        store::update_memory_embedding(
+            self.db,
+            id,
+            workspace_id,
+            content,
+            embedding_id,
+            token_count,
+        )
+        .await
+    }
+}
+
+#[async_trait]
+trait SlowPathEmbedder: Send + Sync {
+    async fn embed_and_store(
+        &self,
+        memory_id: Uuid,
+        workspace_id: Uuid,
+        text: &str,
+        payload: QdrantPayload,
+    ) -> AppResult<String>;
+}
+
+struct QdrantSlowPathEmbedder {
+    embedder: Embedder,
+}
+
+#[async_trait]
+impl SlowPathEmbedder for QdrantSlowPathEmbedder {
+    async fn embed_and_store(
+        &self,
+        memory_id: Uuid,
+        workspace_id: Uuid,
+        text: &str,
+        payload: QdrantPayload,
+    ) -> AppResult<String> {
+        self.embedder
+            .embed_and_store(memory_id, workspace_id, text, payload)
+            .await
+    }
 }
 
 pub async fn run_worker(worker_id: usize, state: AppState) {
@@ -319,7 +409,30 @@ async fn process_slow_stream_message(
 }
 
 pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> {
-    let memory = match store::get_memory_unit_by_id(&state.db, job.memory_id, job.workspace_id)
+    let memory_store = PgSlowMemoryStore { db: &state.db };
+    let embedder = QdrantSlowPathEmbedder {
+        embedder: Embedder::from_state(state),
+    };
+
+    process_slow_with_dependencies(
+        job,
+        &memory_store,
+        state.llm_provider.as_ref(),
+        &embedder,
+        Some(state.db.clone()),
+    )
+    .await
+}
+
+async fn process_slow_with_dependencies(
+    job: ProcessorJob,
+    memory_store: &dyn SlowMemoryStore,
+    llm_provider: &dyn LlmProvider,
+    embedder: &dyn SlowPathEmbedder,
+    audit_db: Option<PgPool>,
+) -> AppResult<()> {
+    let memory = match memory_store
+        .get_memory_unit_by_id(job.memory_id, job.workspace_id)
         .await?
     {
         Some(memory) => memory,
@@ -334,27 +447,26 @@ pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> 
         return Ok(());
     }
 
-    let content = summarize_or_content(state, memory.id, &memory.content).await;
+    let content = summarize_or_content(llm_provider, memory.id, &memory.content).await;
     let token_count = Some(count_tokens(&content)?);
-    let embedder = Embedder::from_state(state);
     let payload = QdrantPayload::from_memory_unit(&memory);
     let embedding_id = embedder
         .embed_and_store(memory.id, memory.workspace_id, &content, payload)
         .await?;
 
-    let updated = store::update_memory_embedding(
-        &state.db,
-        memory.id,
-        memory.workspace_id,
-        &content,
-        &embedding_id,
-        token_count,
-    )
-    .await?;
+    let updated = memory_store
+        .update_memory_embedding(
+            memory.id,
+            memory.workspace_id,
+            &content,
+            &embedding_id,
+            token_count,
+        )
+        .await?;
 
-    if let Some(updated) = updated {
+    if let (Some(updated), Some(db)) = (updated, audit_db) {
         spawn_audit_log(
-            state.db.clone(),
+            db,
             updated.workspace_id,
             "system".to_owned(),
             AuditAction::MemoryEmbedded,
@@ -367,9 +479,12 @@ pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> 
     Ok(())
 }
 
-async fn summarize_or_content(state: &AppState, memory_id: Uuid, content: &str) -> String {
-    match state
-        .llm_provider
+async fn summarize_or_content(
+    llm_provider: &dyn LlmProvider,
+    memory_id: Uuid,
+    content: &str,
+) -> String {
+    match llm_provider
         .summarize(content, SLOW_SUMMARY_MAX_TOKENS)
         .await
     {
@@ -531,11 +646,85 @@ fn is_busy_group_error(error: &redis::RedisError) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{
+        collections::HashMap,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
+    use common::{
+        error::ProviderError,
+        models::{MemoryScope, MemoryType},
+    };
     use redis::Value;
+    use sqlx::types::Json;
 
     use super::*;
+
+    #[derive(Default)]
+    struct MockSlowMemoryStore {
+        memory: Option<MemoryUnit>,
+        updates: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl SlowMemoryStore for MockSlowMemoryStore {
+        async fn get_memory_unit_by_id(
+            &self,
+            _id: Uuid,
+            _workspace_id: Uuid,
+        ) -> AppResult<Option<MemoryUnit>> {
+            Ok(self.memory.clone())
+        }
+
+        async fn update_memory_embedding(
+            &self,
+            _id: Uuid,
+            _workspace_id: Uuid,
+            _content: &str,
+            _embedding_id: &str,
+            _token_count: Option<i32>,
+        ) -> AppResult<Option<MemoryUnit>> {
+            self.updates.fetch_add(1, Ordering::SeqCst);
+            Ok(None)
+        }
+    }
+
+    #[derive(Default)]
+    struct MockSlowPathEmbedder {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl SlowPathEmbedder for MockSlowPathEmbedder {
+        async fn embed_and_store(
+            &self,
+            memory_id: Uuid,
+            _workspace_id: Uuid,
+            _text: &str,
+            _payload: QdrantPayload,
+        ) -> AppResult<String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(memory_id.to_string())
+        }
+    }
+
+    #[derive(Default)]
+    struct MockLlmProvider {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for MockLlmProvider {
+        async fn complete(&self, _prompt: &str) -> Result<String, ProviderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok("complete".to_owned())
+        }
+
+        async fn summarize(&self, text: &str, _max_tokens: usize) -> Result<String, ProviderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(text.to_owned())
+        }
+    }
 
     fn stream_message(event_id: &str, workspace_id: &str) -> StreamId {
         let mut map = HashMap::new();
@@ -570,6 +759,36 @@ mod tests {
         StreamId {
             id: "1700000000000-1".to_owned(),
             map,
+        }
+    }
+
+    fn memory_unit(id: Uuid, workspace_id: Uuid, embedding_id: Option<String>) -> MemoryUnit {
+        let now = chrono::Utc::now();
+        MemoryUnit {
+            id,
+            workspace_id,
+            scope: MemoryScope {
+                workspace_id,
+                agent_id: None,
+                user_id: None,
+                repo: Some("Quazmoz/memoryops".to_owned()),
+            },
+            memory_type: MemoryType::Episodic,
+            content: "already embedded memory".to_owned(),
+            entities: Json(Vec::new()),
+            importance_score: 0.8,
+            importance_overridden: false,
+            source_events: Vec::new(),
+            embedding_id,
+            token_count: Some(3),
+            decay_score: 1.0,
+            pinned: false,
+            tags: Vec::new(),
+            version: 1,
+            deleted_at: None,
+            last_accessed_at: None,
+            created_at: now,
+            updated_at: now,
         }
     }
 
@@ -612,5 +831,37 @@ mod tests {
         assert_eq!(parsed.memory_id, memory_id);
         assert_eq!(parsed.workspace_id, workspace_id);
         assert_eq!(parsed.attempts, 2);
+    }
+
+    #[tokio::test]
+    async fn process_slow_skips_memory_with_existing_embedding_id() {
+        let memory_id = Uuid::now_v7();
+        let workspace_id = Uuid::now_v7();
+        let store = MockSlowMemoryStore {
+            memory: Some(memory_unit(
+                memory_id,
+                workspace_id,
+                Some("existing".to_owned()),
+            )),
+            updates: AtomicUsize::new(0),
+        };
+        let llm_provider = MockLlmProvider::default();
+        let embedder = MockSlowPathEmbedder::default();
+        let job = ProcessorJob {
+            stream_id: "1700000000000-1".to_owned(),
+            memory_id,
+            workspace_id,
+            attempts: 0,
+        };
+
+        if let Err(error) =
+            process_slow_with_dependencies(job, &store, &llm_provider, &embedder, None).await
+        {
+            panic!("existing embedding should skip slow path: {error}");
+        }
+
+        assert_eq!(llm_provider.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(embedder.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(store.updates.load(Ordering::SeqCst), 0);
     }
 }

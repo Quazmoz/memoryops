@@ -27,7 +27,7 @@ This document tracks all planned features across the platform with current statu
 | M4 | Retrieval engine + providers | 🟢 Complete |
 | M5 | React Control Center (frontend) | 🟢 Complete |
 | M6 | Auth, rate limiting, workspace API, lifecycle, audit | 🟢 Complete |
-| M7 | Slow path worker, embeddings, Qdrant writes, scheduler | 🟡 In progress |
+| M7 | Slow path worker, embeddings, Qdrant writes, scheduler | 🟢 Complete |
 | M8 | Promotion pipeline | 🔴 Not started |
 | M9 | Slack ingestion | 🔴 Not started |
 
@@ -73,13 +73,13 @@ This document tracks all planned features across the platform with current statu
 | Entity extraction (regex + rules) | 🟢 | M3 | Person, Repo, Branch, File, Team |
 | Importance scoring (rule table) | 🟢 | M3 | Workspace-configurable thresholds |
 | Episodic MemoryUnit creation | 🟢 | M3 | |
-| Slow path async worker | 🟡 | M7 | XREADGROUP consumer loop; LLM + embed pipeline |
-| LLM summarization (OllamaProvider default) | 🟡 | M7 | Via LlmProvider trait |
-| Embedding generation (fastembed-rs default) | 🟡 | M7 | Via EmbeddingProvider trait |
-| Qdrant vector write | 🟡 | M7 | memoryops_memories collection |
-| Decay scheduler (daily 02:00 UTC) | 🟡 | M7 | Spawned from api/main.rs |
-| Pruning (soft delete at decay < 0.1) | 🟡 | M7 | Skips pinned + importance_overridden |
-| Hard delete after 30-day window | 🟡 | M7 | Also removes Qdrant point |
+| Slow path async worker | 🟢 | M7 | XREADGROUP consumer loop; LLM + embed pipeline |
+| LLM summarization (OllamaProvider default) | 🟢 | M7 | Via LlmProvider trait |
+| Embedding generation (fastembed-rs default) | 🟢 | M7 | Via EmbeddingProvider trait |
+| Qdrant vector write | 🟢 | M7 | memoryops_memories collection |
+| Decay scheduler (daily 02:00 UTC) | 🟢 | M7 | Spawned from api/main.rs |
+| Pruning (soft delete at decay < 0.1) | 🟢 | M7 | Skips pinned + importance_overridden |
+| Hard delete after 30-day window | 🟢 | M7 | Also removes Qdrant point |
 | Promotion pipeline (episodic → semantic) | 🔴 | M8 | Cluster → threshold → summarize → promote |
 | Configurable promotion threshold | 🔴 | M8 | Per workspace |
 | Memory deduplication | 🔴 | M8 | Cosine similarity threshold |
@@ -122,7 +122,7 @@ This document tracks all planned features across the platform with current statu
 | Retrieval trace generation | 🟢 | M6 | Per-component scores, exclusion reasons |
 | Trace persistence (30 days) | 🟢 | M6 | retrieval_traces table |
 | GET /v1/retrieve/trace/:query_id | 🟢 | M6 | |
-| Vector search leg (live when embedding_id populated) | 🟡 | M7 | Wired; needs slow path to populate |
+| Vector search leg (live when embedding_id populated) | 🟢 | M7 | Wired through slow path embeddings |
 | Configurable scoring weights per workspace | 🟢 | M6 | WorkspaceConfig |
 
 ---
@@ -156,7 +156,7 @@ This document tracks all planned features across the platform with current statu
 | GET /v1/workspaces/:id/dlq | 🟢 | M6 | |
 | POST /v1/workspaces/:id/dlq/:job_id/retry | 🟢 | M6 | |
 | DELETE /v1/workspaces/:id/dlq/:job_id | 🟢 | M6 | |
-| GET /v1/workspaces/:id/export | 🟡 | M7 | JSONL streaming, cursor-paginated |
+| GET /v1/workspaces/:id/export | 🟢 | M7 | JSONL streaming, cursor-paginated |
 
 ---
 
@@ -203,11 +203,11 @@ This document tracks all planned features across the platform with current statu
 | Lifecycle / Promotion Timeline (stubbed) | 🟢 | M5 | Wired in M8 |
 | Integration Status view (stubbed) | 🟢 | M5 | |
 | Audit Log view (stubbed) | 🟢 | M5 | |
-| First-run workspace + key creation flow | 🟡 | M7 | POST /v1/workspaces + POST /v1/workspaces/:id/keys |
-| X-API-Key header on all API requests | 🟡 | M7 | From Zustand store |
-| Audit Log view (live data) | 🟡 | M7 | GET /v1/workspaces/:id/audit |
-| Integration Status view (live data + DLQ panel) | 🟡 | M7 | |
-| Export trigger (download JSONL) | 🟡 | M7 | GET /v1/workspaces/:id/export |
+| First-run workspace + key creation flow | 🟢 | M7 | POST /v1/workspaces + POST /v1/workspaces/:id/keys |
+| X-API-Key header on all API requests | 🟢 | M7 | From Zustand store |
+| Audit Log view (live data) | 🟢 | M7 | GET /v1/workspaces/:id/audit |
+| Integration Status view (live data + DLQ panel) | 🟢 | M7 | |
+| Export trigger (download JSONL) | 🟢 | M7 | GET /v1/workspaces/:id/export |
 | Bulk pin / bulk delete | 🟢 | M6 | POST /v1/memory/bulk |
 | Memory merge UI | 🟢 | M6 | POST /v1/memory/merge |
 
@@ -217,15 +217,15 @@ This document tracks all planned features across the platform with current statu
 
 | Feature | Status | Milestone | Notes |
 |---------|--------|-----------|-------|
-| Decay scoring (daily scheduler 02:00 UTC) | 🟡 | M7 | Runs for all workspaces |
-| Soft delete / archive at decay threshold (< 0.10) | 🟡 | M7 | Skips pinned + importance_overridden |
+| Decay scoring (daily scheduler 02:00 UTC) | 🟢 | M7 | Runs for all workspaces |
+| Soft delete / archive at decay threshold (< 0.10) | 🟢 | M7 | Skips pinned + importance_overridden |
 | 30-day recovery window | 🟢 | M6 | POST /v1/memory/:id/restore |
-| Hard delete after recovery window | 🟡 | M7 | Also removes Qdrant point |
+| Hard delete after recovery window | 🟢 | M7 | Also removes Qdrant point |
 | Pin = decay freeze | 🟢 | M4 | Pinned skipped in decay pass |
 | Manual importance override | 🟢 | M4 | Stored, used in scoring, skips decay |
 | Memory version history | 🟢 | M6 | Incremented on edit and merge |
-| Soft delete → Qdrant point removed immediately | 🟡 | M7 | embedder.delete_point() on DELETE |
-| Restore → re-enqueue for re-embedding | 🟡 | M7 | processor_jobs stream |
+| Soft delete → Qdrant point removed immediately | 🟢 | M7 | embedder.delete_point() on DELETE |
+| Restore → re-enqueue for re-embedding | 🟢 | M7 | processor_jobs stream |
 
 ---
 
@@ -233,7 +233,7 @@ This document tracks all planned features across the platform with current statu
 
 | Feature | Status | Milestone | Notes |
 |---------|--------|-----------|-------|
-| JSONL export (streaming, cursor-paginated) | 🟡 | M7 | 500 rows/chunk, no raw payloads or vectors |
+| JSONL export (streaming, cursor-paginated) | 🟢 | M7 | 500 rows/chunk, no raw payloads or vectors |
 | Import (restore) | 🔴 | v1.0 | Not in v0.x scope |
 
 ---
@@ -252,4 +252,4 @@ This document tracks all planned features across the platform with current statu
 | 0008_integrations.sql | integrations + webhook_secret_hash | 🟢 |
 | 0009_retrieval_traces.sql | retrieval_traces + 30-day TTL | 🟢 |
 | 0010_soft_delete.sql | deleted_at + soft-delete indexes | 🟢 |
-| 0011_scheduler.sql | hard_deleted_at + pruning indexes | 🟡 M7 |
+| 0011_scheduler.sql | hard_deleted_at + pruning indexes | 🟢 M7 |
