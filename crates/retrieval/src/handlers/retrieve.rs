@@ -10,6 +10,7 @@ use common::{
     auth::AuthContext,
     error::AppResult,
     models::{Entity, MemoryUnit},
+    telemetry::{RETRIEVAL_REQUESTS, TOKEN_PACK_BUDGET_USED},
     AppError, AppState,
 };
 use serde::{Deserialize, Serialize};
@@ -164,6 +165,10 @@ pub async fn handle_retrieve(
     )
     .await?;
     let packed = pack_memories(candidates, token_budget);
+    if token_budget > 0 {
+        let pct = (packed.total_tokens as f64 / token_budget as f64) * 100.0;
+        TOKEN_PACK_BUDGET_USED.record(pct, &[]);
+    }
     let trace = RetrievalTrace {
         query_id,
         query: request.query,
@@ -179,6 +184,7 @@ pub async fn handle_retrieve(
     };
 
     persist_trace(&state, workspace_id, &trace).await?;
+    RETRIEVAL_REQUESTS.add(1, &[]);
 
     Ok(Json(RetrieveResponse {
         query_id,

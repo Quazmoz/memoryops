@@ -4,7 +4,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-use common::{models::Source, AppError, AppState};
+use common::{models::Source, telemetry::INGEST_EVENTS, AppError, AppState};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -78,6 +78,7 @@ pub async fn handle_github_webhook(
         },
     )
     .await?;
+    INGEST_EVENTS.add(1, &[]);
 
     let mut redis = state.redis.clone();
     publish_raw_event(&mut redis, &event).await?;

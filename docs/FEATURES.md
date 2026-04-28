@@ -42,7 +42,7 @@ This document tracks all planned features across the platform with current statu
 | M19 | Scope-filtered retrieval (agent_id, user_id, repo on search + retrieve) | 🟢 Complete |
 | M20 | Tag management API + UI (enumerate, count, bulk-retag) | 🟢 Complete |
 | M21 | Import / restore (JSONL round-trip with export) | 🟢 Complete |
-| M22 | Metrics dashboard (OTel summary endpoint + UI panel) | 🔴 Not started |
+| M22 | Metrics dashboard (OTel summary endpoint + UI panel) | 🟢 Complete |
 | M23 | Property-based tests for token packing (proptest) | 🔴 Not started |
 | M24 | Playwright E2E test suite | 🔴 Not started |
 | M25 | HTTP Skills (agent-callable skill registry) | 🔴 Not started |
@@ -233,6 +233,11 @@ This document tracks all planned features across the platform with current statu
 | Audit writes fire-and-forget (never block request path) | 🟢 | M6 | tokio::spawn |
 | tracing + OpenTelemetry instrumentation | 🟢 | M6 | All services |
 | Integration health dashboard data | 🟢 | M6 | |
+| In-process metrics registry (counters + histograms) | 🟢 | M22 | crates/common::telemetry |
+| Metrics summary endpoint | 🟢 | M22 | GET /v1/workspaces/:id/metrics |
+| Ingest events / slow-path / retrieval counters | 🟢 | M22 | Recorded at handler + worker call sites |
+| Embedding + LLM latency histograms (p50/p99) | 🟢 | M22 | Recorded around provider calls |
+| Token-pack budget-used histogram (mean) | 🟢 | M22 | Recorded after pack_memories |
 
 ---
 
@@ -275,6 +280,7 @@ This document tracks all planned features across the platform with current statu
 | Settings view — provider selector (LLM + embedding) | 🟢 | M17 | Dropdown saved via PATCH /v1/workspaces/:id/config |
 | Dashboard trend charts (30-day memory activity) | 🟢 | M18 | GET /v1/workspaces/:id/stats/history |
 | Tag browser (enumerate + filter by tag) | 🟢 | M20 | GET /v1/workspaces/:id/tags |
+| Dashboard Metrics panel (3×3 telemetry grid, auto-refresh 30s) | 🟢 | M22 | useMetrics hook → /v1/workspaces/:id/metrics |
 
 ---
 

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -7,6 +7,7 @@ use common::{
     error::AppResult,
     models::{AuditAction, MemoryUnit},
     providers::LlmProvider,
+    telemetry::{LLM_LATENCY, SLOW_PATH_FAILED, SLOW_PATH_PROCESSED},
     AppError, AppState,
 };
 use ingestion::STREAM_KEY;
@@ -391,6 +392,7 @@ async fn process_slow_stream_message(
 
     match process_slow(&state, job.clone()).await {
         Ok(()) => {
+            SLOW_PATH_PROCESSED.add(1, &[]);
             if let Err(error) = ack_message(
                 redis,
                 PROCESSOR_JOBS_STREAM,
@@ -484,10 +486,13 @@ async fn summarize_or_content(
     memory_id: Uuid,
     content: &str,
 ) -> String {
-    match llm_provider
+    let started = Instant::now();
+    let result = llm_provider
         .summarize(content, SLOW_SUMMARY_MAX_TOKENS)
-        .await
-    {
+        .await;
+    LLM_LATENCY.record(elapsed_ms(started), &[]);
+
+    match result {
         Ok(summary) if summary.trim().is_empty() => content.to_owned(),
         Ok(summary) => summary,
         Err(error) => {
@@ -495,6 +500,10 @@ async fn summarize_or_content(
             content.to_owned()
         }
     }
+}
+
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1_000.0
 }
 
 async fn handle_processing_error(
@@ -549,6 +558,7 @@ async fn handle_slow_processing_error(
     let max_retries = i32::try_from(state.config.processor.max_retries).unwrap_or(i32::MAX);
 
     if attempts >= max_retries {
+        SLOW_PATH_FAILED.add(1, &[]);
         dlq::send_processor_job_to_dlq(
             redis,
             job.workspace_id,

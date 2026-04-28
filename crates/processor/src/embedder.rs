@@ -1,9 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
 use common::{
-    error::AppResult, models::MemoryType, providers::EmbeddingProvider, AppError, AppState,
+    error::AppResult, models::MemoryType, providers::EmbeddingProvider,
+    telemetry::EMBEDDING_LATENCY, AppError, AppState,
 };
 use qdrant_client::{
     qdrant::{
@@ -138,7 +139,9 @@ async fn embed_and_store_with_writer(
     text: &str,
     payload: QdrantPayload,
 ) -> AppResult<String> {
+    let started = Instant::now();
     let vector = embedding_provider.embed(text).await?;
+    EMBEDDING_LATENCY.record(started.elapsed().as_secs_f64() * 1_000.0, &[]);
     let point_id = memory_id.to_string();
     let point = PointStruct::new(point_id.clone(), vector, payload.into_qdrant_payload());
     writer.upsert_point(point).await?;

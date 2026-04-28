@@ -8,6 +8,7 @@ use axum::{
 };
 use common::{
     models::{EventType, RawEvent, Source},
+    telemetry::INGEST_EVENTS,
     AppError, AppState,
 };
 use redis::aio::ConnectionManager;
@@ -67,6 +68,7 @@ pub async fn handle_linear_webhook(
     let event =
         insert_and_publish_linear_event(&state, integration.workspace_id, &parsed, idempotency_key)
             .await?;
+    INGEST_EVENTS.add(1, &[]);
 
     Ok((
         StatusCode::ACCEPTED,
