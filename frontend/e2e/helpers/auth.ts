@@ -17,4 +17,5 @@ export async function authenticateApp(
 
   // Wait for the app shell to render (nav should appear)
   await page.getByTestId('nav-dashboard').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByTestId('nav-lifecycle').waitFor({ state: 'visible', timeout: 15_000 });
 }

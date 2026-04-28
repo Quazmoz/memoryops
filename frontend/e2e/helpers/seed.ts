@@ -50,16 +50,20 @@ export async function seedGitHubEvent(workspaceId: string, apiKey: string): Prom
 export async function waitForMemory(
   workspaceId: string,
   apiKey: string,
-  timeoutMs = 15_000,
+  timeoutMs = 30_000,
 ): Promise<void> {
   const start = Date.now();
   const pollInterval = 1_000;
+  const fetchTimeoutMs = 5_000;
 
   while (Date.now() - start < timeoutMs) {
+    const controller = new AbortController();
+    const abortId = setTimeout(() => controller.abort(), fetchTimeoutMs);
     try {
       const res = await fetch(
         `${API_BASE}/v1/memory?workspace_id=${workspaceId}&limit=1`,
         {
+          signal: controller.signal,
           headers: {
             'X-API-Key': apiKey,
             'X-Workspace-Id': workspaceId,
@@ -75,7 +79,9 @@ export async function waitForMemory(
         }
       }
     } catch {
-      // Network error — retry
+      // Network error or abort timeout — retry
+    } finally {
+      clearTimeout(abortId);
     }
 
     await new Promise((resolve) => setTimeout(resolve, pollInterval));

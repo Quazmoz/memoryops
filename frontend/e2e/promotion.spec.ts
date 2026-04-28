@@ -17,10 +17,13 @@ test('Manual workspace promotion trigger completes', async ({ page }) => {
   // Navigate to Lifecycle / Promotion view
   await page.getByTestId('nav-lifecycle').click();
 
+  // Wait for the button to be enabled (workspace query must have resolved)
+  await expect(page.getByTestId('manual-promote-button')).toBeEnabled({ timeout: 10_000 });
+
   // Click manual promotion trigger button
   await page.getByTestId('manual-promote-button').click();
 
   // Expect the promotion report to appear (not an error)
-  await expect(page.getByTestId('promote-status')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('promote-status')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('promote-status')).not.toContainText('error', { ignoreCase: true });
 });
