@@ -13,7 +13,7 @@ pub const MAX_LIMIT: u32 = 100;
 pub const DEFAULT_OFFSET: u32 = 0;
 pub const MIN_SCORE_THRESHOLD: f32 = 0.70;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ScopeFilter {
     pub agent_id: Option<String>,
     pub user_id: Option<String>,
@@ -38,7 +38,46 @@ pub struct SearchRequest {
     pub offset: Option<u32>,
     pub filters: Option<SearchFilters>,
     pub scope: Option<ScopeFilter>,
+    pub agent_id: Option<String>,
+    pub user_id: Option<String>,
+    pub repo: Option<String>,
     pub memory_types: Option<Vec<String>>,
+}
+
+impl SearchRequest {
+    pub fn resolved_scope_filter(&self) -> Option<ScopeFilter> {
+        let scope = ScopeFilter {
+            agent_id: first_scope_value([
+                self.agent_id.as_ref(),
+                self.scope
+                    .as_ref()
+                    .and_then(|scope| scope.agent_id.as_ref()),
+                self.filters
+                    .as_ref()
+                    .and_then(|filters| filters.agent_id.as_ref()),
+            ]),
+            user_id: first_scope_value([
+                self.user_id.as_ref(),
+                self.scope.as_ref().and_then(|scope| scope.user_id.as_ref()),
+                self.filters
+                    .as_ref()
+                    .and_then(|filters| filters.user_id.as_ref()),
+            ]),
+            repo: first_scope_value([
+                self.repo.as_ref(),
+                self.scope.as_ref().and_then(|scope| scope.repo.as_ref()),
+                self.filters
+                    .as_ref()
+                    .and_then(|filters| filters.repo.as_ref()),
+            ]),
+        };
+
+        if scope.is_empty() {
+            None
+        } else {
+            Some(scope)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
@@ -238,6 +277,17 @@ pub fn normalized_memory_types(req: &SearchRequest) -> AppResult<Option<Vec<Stri
         .map(|memory_type| vec![memory_type_as_str(memory_type).to_owned()]))
 }
 
+fn first_scope_value(values: [Option<&String>; 3]) -> Option<String> {
+    values.into_iter().find_map(|value| {
+        let trimmed = value?.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    })
+}
+
 pub fn rank_from_index(index: usize) -> u32 {
     match u32::try_from(index.saturating_add(1)) {
         Ok(rank) => rank,
@@ -278,5 +328,45 @@ mod tests {
         assert_eq!(query.resolved_sort(), SortField::ImportanceScore);
         assert_eq!(query.resolved_direction(), SortDirection::Desc);
         assert_eq!(query.workspace_id, Some(workspace_id));
+    }
+
+    #[test]
+    fn search_request_resolves_top_level_scope_before_nested_filters() {
+        let workspace_id = Uuid::now_v7();
+        let request = SearchRequest {
+            query: "memory".to_owned(),
+            workspace_id,
+            mode: SearchMode::Hybrid,
+            limit: None,
+            offset: None,
+            filters: Some(SearchFilters {
+                memory_type: None,
+                source: None,
+                min_importance: None,
+                pinned: None,
+                tags: None,
+                agent_id: Some("filter-agent".to_owned()),
+                user_id: None,
+                repo: Some("filter/repo".to_owned()),
+            }),
+            scope: Some(ScopeFilter {
+                agent_id: Some("scope-agent".to_owned()),
+                user_id: Some("scope-user".to_owned()),
+                repo: None,
+            }),
+            agent_id: Some("top-agent".to_owned()),
+            user_id: None,
+            repo: None,
+            memory_types: None,
+        };
+
+        let scope = match request.resolved_scope_filter() {
+            Some(scope) => scope,
+            None => panic!("scope should resolve"),
+        };
+
+        assert_eq!(scope.agent_id.as_deref(), Some("top-agent"));
+        assert_eq!(scope.user_id.as_deref(), Some("scope-user"));
+        assert_eq!(scope.repo.as_deref(), Some("filter/repo"));
     }
 }

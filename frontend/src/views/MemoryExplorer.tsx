@@ -1,4 +1,4 @@
-import { ArrowDownAZ, ArrowUpAZ, Filter, Search, Send, X } from "lucide-react";
+import { ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, Filter, Search, Send, Tag, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
@@ -11,6 +11,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { useMemoryList, useMemorySearch, useUpdateMemory } from "../hooks/use-memory";
+import { useTags } from "../hooks/useTags";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
@@ -45,6 +46,8 @@ export function MemoryExplorer() {
   const [minImportance, setMinImportance] = useState(0);
   const [scopeDraft, setScopeDraft] = useState<ScopeFilterDraft>(emptyScopeFilter);
   const [debouncedScope, setDebouncedScope] = useState<ScopeFilterDraft>(emptyScopeFilter);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagsCollapsed, setTagsCollapsed] = useState(false);
   const [offset, setOffset] = useState(0);
   const [sortField, setSortField] = useState<SortField>("importance_score");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -79,25 +82,27 @@ export function MemoryExplorer() {
     },
     [debouncedScope, memoryType, minImportance, offset, pinned, sortDirection, sortField],
   );
+  const searchText = submittedQuery || selectedTags.join(" ");
   const searchCriteria = useMemo(
     () => ({
-      query: submittedQuery,
+      query: searchText,
       memoryType,
       pinned,
       minImportance,
       agentId: debouncedScope.agentId,
       userId: debouncedScope.userId,
       repo: debouncedScope.repo,
-      tags: [] as string[],
+      tags: selectedTags,
       limit: 50,
       offset,
     }),
-    [debouncedScope, memoryType, minImportance, offset, pinned, submittedQuery],
+    [debouncedScope, memoryType, minImportance, offset, pinned, searchText, selectedTags],
   );
   const listQuery = useMemoryList(workspaceId, listParams);
   const searchQuery = useMemorySearch(workspaceId, searchCriteria);
+  const tagsQuery = useTags(workspaceId);
   const updateMemory = useUpdateMemory(workspaceId);
-  const searchActive = submittedQuery.trim().length > 0;
+  const searchActive = searchText.trim().length > 0;
   const rows = useMemo(
     () => buildRows(searchActive, searchQuery.data?.results, listQuery.data?.items, sortField, sortDirection),
     [listQuery.data?.items, searchActive, searchQuery.data?.results, sortDirection, sortField],
@@ -148,6 +153,20 @@ export function MemoryExplorer() {
   function changeScopeFilter(field: keyof ScopeFilterDraft, value: string) {
     setScopeDraft((current) => ({ ...current, [field]: value }));
     setOffset(0);
+  }
+
+  function addTagFilter(name: string) {
+    setSelectedTags((current) => (current.includes(name) ? current : [...current, name]));
+    setOffset(0);
+  }
+
+  function removeTagFilter(name: string) {
+    setSelectedTags((current) => current.filter((tag) => tag !== name));
+    setOffset(0);
+  }
+
+  function toggleTagsPanel() {
+    setTagsCollapsed((value) => !value);
   }
 
   function handleTogglePinned(memory: MemoryUnit) {
@@ -226,9 +245,9 @@ export function MemoryExplorer() {
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
-            <ScopeFilterInput label="Agent ID" value={scopeDraft.agentId} onChange={(value) => changeScopeFilter("agentId", value)} />
-            <ScopeFilterInput label="User ID" value={scopeDraft.userId} onChange={(value) => changeScopeFilter("userId", value)} />
-            <ScopeFilterInput label="Repo" value={scopeDraft.repo} onChange={(value) => changeScopeFilter("repo", value)} placeholder="owner/repo" />
+            <ScopeFilterInput label="Agent ID" testId="filter-agent-id" value={scopeDraft.agentId} onChange={(value) => changeScopeFilter("agentId", value)} />
+            <ScopeFilterInput label="User ID" testId="filter-user-id" value={scopeDraft.userId} onChange={(value) => changeScopeFilter("userId", value)} />
+            <ScopeFilterInput label="Repo" testId="filter-repo" value={scopeDraft.repo} onChange={(value) => changeScopeFilter("repo", value)} placeholder="owner/repo" />
           </div>
         </div>
 
@@ -260,10 +279,64 @@ export function MemoryExplorer() {
         </div>
       </section>
 
+      <section className="rounded-lg border border-line bg-white p-4">
+        <button
+          type="button"
+          data-testid="tags-panel-toggle"
+          onClick={toggleTagsPanel}
+          className="flex w-full items-center justify-between gap-3 text-left text-sm font-semibold text-ink"
+        >
+          <span className="inline-flex items-center gap-2">
+            <Tag className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+            Tags
+          </span>
+          {tagsCollapsed ? <ChevronRight className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
+        </button>
+        {!tagsCollapsed ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {tagsQuery.isLoading ? <span className="text-sm text-ink/55">Loading tags</span> : null}
+            {tagsQuery.error ? <span className="text-sm text-rust">Tags could not be loaded</span> : null}
+            {tagsQuery.data?.tags.map((tag) => (
+              <button
+                key={tag.name}
+                type="button"
+                data-testid={`tag-pill-${tag.name}`}
+                onClick={() => addTagFilter(tag.name)}
+                className={tagPillClass(selectedTags.includes(tag.name))}
+              >
+                <span>{tag.name}</span>
+                <span className="text-ink/45">{tag.count}</span>
+              </button>
+            ))}
+            {!tagsQuery.isLoading && !tagsQuery.error && tagsQuery.data?.tags.length === 0 ? (
+              <span className="text-sm text-ink/55">No tags yet</span>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+
       {submittedQuery ? (
         <div className="flex flex-wrap items-center gap-2 text-sm text-ink/65">
           <span>Searching for</span>
           <Badge variant="accent">{submittedQuery}</Badge>
+        </div>
+      ) : null}
+
+      {selectedTags.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-ink/65" data-testid="active-tag-filters">
+          <span>Tags</span>
+          {selectedTags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              data-testid={`active-tag-${tag}`}
+              onClick={() => removeTagFilter(tag)}
+              className="inline-flex h-8 items-center gap-1 rounded-md border border-accent/20 bg-accent/10 px-2 text-xs font-medium text-accent-strong transition hover:bg-accent/15 focus:outline-none focus:ring-2 focus:ring-accent"
+            >
+              {tag}
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          ))}
         </div>
       ) : null}
 
@@ -343,11 +416,18 @@ function filterButtonClass(active: boolean): string {
   );
 }
 
-function ScopeFilterInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+function tagPillClass(active: boolean): string {
+  return cn(
+    "inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-accent",
+    active ? "border-accent bg-accent/10 text-accent-strong" : "border-line bg-soft text-ink/70 hover:bg-accent/10 hover:text-accent-strong",
+  );
+}
+
+function ScopeFilterInput({ label, testId, value, onChange, placeholder }: { label: string; testId: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
   return (
     <label className="grid gap-1 text-xs font-medium uppercase text-ink/45">
       {label}
-      <Input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="normal-case text-ink" />
+      <Input data-testid={testId} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="normal-case text-ink" />
     </label>
   );
 }

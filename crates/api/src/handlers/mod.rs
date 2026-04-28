@@ -1,4 +1,4 @@
-use axum::{routing::get, Router};
+use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use uuid::Uuid;
 
@@ -6,6 +6,7 @@ pub mod audit;
 pub mod export;
 pub mod integrations;
 pub mod keys;
+pub mod tags;
 pub mod workspaces;
 
 pub fn bootstrap_router() -> Router<AppState> {
@@ -24,6 +25,12 @@ pub fn protected_router() -> Router<AppState> {
             get(workspaces::get_stats_history),
         )
         .route("/v1/workspaces/{id}/export", get(export::export_workspace))
+        .route(
+            "/v1/workspaces/{id}/import",
+            axum::routing::post(workspaces::import_memories)
+                .layer(DefaultBodyLimit::max(workspaces::MAX_IMPORT_BODY_BYTES)),
+        )
+        .route("/v1/workspaces/{id}/tags", get(tags::list_tags))
         .route(
             "/v1/workspaces/{id}/config",
             axum::routing::patch(workspaces::update_workspace_config),

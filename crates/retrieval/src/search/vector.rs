@@ -80,7 +80,7 @@ pub async fn vector_search_results(
     limit: u32,
 ) -> AppResult<Vec<MemoryResult>> {
     let memory_types = normalized_memory_types(req)?;
-    let scope = merged_scope_filter(req);
+    let scope = req.resolved_scope_filter();
     let candidates = vector_search(
         &state.qdrant,
         &state.embedding_provider,
@@ -148,28 +148,6 @@ pub fn build_vector_filter(
     }
 
     Filter::must(conditions)
-}
-
-fn merged_scope_filter(req: &SearchRequest) -> Option<ScopeFilter> {
-    let request_scope = req.scope.as_ref();
-    let filters = req.filters.as_ref();
-    let merged = ScopeFilter {
-        agent_id: request_scope
-            .and_then(|scope| scope.agent_id.clone())
-            .or_else(|| filters.and_then(|filters| filters.agent_id.clone())),
-        user_id: request_scope
-            .and_then(|scope| scope.user_id.clone())
-            .or_else(|| filters.and_then(|filters| filters.user_id.clone())),
-        repo: request_scope
-            .and_then(|scope| scope.repo.clone())
-            .or_else(|| filters.and_then(|filters| filters.repo.clone())),
-    };
-
-    if merged.is_empty() {
-        None
-    } else {
-        Some(merged)
-    }
 }
 
 fn scored_point_uuid(point: &ScoredPoint) -> Option<Uuid> {

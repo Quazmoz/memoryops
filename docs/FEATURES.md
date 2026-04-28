@@ -39,9 +39,9 @@ This document tracks all planned features across the platform with current statu
 | M16 | DLQ management UI (retry + discard from the Integration view) | 🟢 Complete |
 | M17 | Settings view — write mode (config sliders + provider selection) | 🟢 Complete |
 | M18 | Workspace stats time-series endpoint + trend charts | 🟢 Complete |
-| M19 | Scope-filtered retrieval (agent_id, user_id, repo on search + retrieve) | 🔴 Not started |
-| M20 | Tag management API + UI (enumerate, count, bulk-retag) | 🔴 Not started |
-| M21 | Import / restore (JSONL round-trip with export) | 🔴 Not started |
+| M19 | Scope-filtered retrieval (agent_id, user_id, repo on search + retrieve) | 🟢 Complete |
+| M20 | Tag management API + UI (enumerate, count, bulk-retag) | 🟢 Complete |
+| M21 | Import / restore (JSONL round-trip with export) | 🟢 Complete |
 | M22 | Metrics dashboard (OTel summary endpoint + UI panel) | 🔴 Not started |
 | M23 | Property-based tests for token packing (proptest) | 🔴 Not started |
 | M24 | Playwright E2E test suite | 🔴 Not started |
@@ -192,8 +192,8 @@ This document tracks all planned features across the platform with current statu
 | POST /v1/workspaces/:id/promote | 🟢 | M8 | Manual promotion pass with workspace lock |
 | GET /v1/workspaces/:id/stats | 🟢 | M13 | Aggregate memory stats per workspace |
 | GET /v1/workspaces/:id/stats/history | 🟢 | M18 | Daily aggregate: created, promoted, soft-deleted per day |
-| GET /v1/workspaces/:id/tags | 🔴 | M20 | Tag name + count enumeration |
-| POST /v1/workspaces/:id/import | 🔴 | M21 | JSONL import; idempotent on id |
+| GET /v1/workspaces/:id/tags | 🟢 | M20 | Tag name + count enumeration |
+| POST /v1/workspaces/:id/import | 🟢 | M21 | JSONL import; idempotent on id |
 
 ---
 
@@ -274,7 +274,7 @@ This document tracks all planned features across the platform with current statu
 | Settings view — config write (decay, pruning, promotion sliders) | 🟢 | M17 | PATCH /v1/workspaces/:id/config |
 | Settings view — provider selector (LLM + embedding) | 🟢 | M17 | Dropdown saved via PATCH /v1/workspaces/:id/config |
 | Dashboard trend charts (30-day memory activity) | 🟢 | M18 | GET /v1/workspaces/:id/stats/history |
-| Tag browser (enumerate + filter by tag) | 🔴 | M20 | GET /v1/workspaces/:id/tags |
+| Tag browser (enumerate + filter by tag) | 🟢 | M20 | GET /v1/workspaces/:id/tags |
 
 ---
 
@@ -299,8 +299,8 @@ This document tracks all planned features across the platform with current statu
 | Feature | Status | Milestone | Notes |
 |---------|--------|-----------|-------|
 | JSONL export (streaming, cursor-paginated) | 🟢 | M7 | 500 rows/chunk, no raw payloads or vectors |
-| Import (restore) | 🔴 | v1.0 | Not in v0.x scope |
-| JSONL import (restore from export) | 🔴 | M21 | POST /v1/workspaces/:id/import; idempotent on id |
+| Import (restore) | 🟢 | M21 | JSONL import endpoint available in v0.x |
+| JSONL import (restore from export) | 🟢 | M21 | POST /v1/workspaces/:id/import; idempotent on id |
 
 ---
 
@@ -308,12 +308,12 @@ This document tracks all planned features across the platform with current statu
 
 | Feature | Status | Milestone | Notes |
 |---------|--------|-----------|-------|
-| agent_id filter on POST /v1/memory/search | 🔴 | M19 | Narrow results to a single agent |
-| user_id filter on POST /v1/memory/search | 🔴 | M19 | |
-| repo filter on POST /v1/memory/search | 🔴 | M19 | |
-| agent_id filter on POST /v1/retrieve | 🔴 | M19 | |
-| user_id filter on POST /v1/retrieve | 🔴 | M19 | |
-| repo filter on POST /v1/retrieve | 🔴 | M19 | |
+| agent_id filter on POST /v1/memory/search | 🟢 | M19 | Narrow results to a single agent |
+| user_id filter on POST /v1/memory/search | 🟢 | M19 | |
+| repo filter on POST /v1/memory/search | 🟢 | M19 | |
+| agent_id filter on POST /v1/retrieve | 🟢 | M19 | |
+| user_id filter on POST /v1/retrieve | 🟢 | M19 | |
+| repo filter on POST /v1/retrieve | 🟢 | M19 | |
 
 ---
 
@@ -380,3 +380,4 @@ This document tracks all planned features across the platform with current statu
 | 0012_promotion.sql | semantic promotion metadata + thresholds | 🟢 M8 |
 | 0013_slack.sql | Slack signing secret + channel/thread metadata + channel index | 🟢 M9 |
 | 0014_linear_jira.sql | Linear/Jira signing secret support + active integration indexes | 🟢 M10 |
+| 0015_scope_indexes.sql | Scope-filter generated columns + composite active-memory index | 🟢 M19 |

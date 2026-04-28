@@ -1,9 +1,9 @@
-import { Download, GitMerge, KeyRound, Loader2, Play, ServerCog, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Download, GitMerge, KeyRound, Loader2, Play, ServerCog, ShieldCheck, SlidersHorizontal, Upload } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import type { PromotionReport, WorkspaceConfig } from "../api/types";
-import { exportMemories, getWorkspace, triggerPromotion, updateWorkspaceConfig } from "../api/workspaces";
+import type { ImportMemoriesResponse, PromotionReport, WorkspaceConfig } from "../api/types";
+import { exportMemories, getWorkspace, importMemories, triggerPromotion, updateWorkspaceConfig } from "../api/workspaces";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -16,6 +16,8 @@ export function SettingsView() {
   const apiKey = useAppStore((state) => state.apiKey);
   const queryClient = useQueryClient();
   const [exportError, setExportError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<ImportMemoriesResponse | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [promotionError, setPromotionError] = useState<string | null>(null);
   const [promotionResult, setPromotionResult] = useState<PromotionReport | null>(null);
@@ -29,6 +31,7 @@ export function SettingsView() {
   const [llmModel, setLlmModel] = useState("llama3");
   const embeddingModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const llmModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const hasApiKey = apiKey.trim().length > 0;
   const workspaceQuery = useQuery({
     queryKey: ["workspace", workspaceId, "settings"],
@@ -43,6 +46,20 @@ export function SettingsView() {
       downloadBlob(blob, exportFilename(workspaceId));
     },
     onError: (error: Error) => setExportError(error.message),
+  });
+  const importMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "import"],
+    mutationFn: (file: File) => importMemories(workspaceId, file),
+    onSuccess: (result) => {
+      setImportError(null);
+      setImportResult(result);
+      void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "memory"] });
+      void queryClient.invalidateQueries({ queryKey: ["tags", workspaceId] });
+    },
+    onError: (error: Error) => {
+      setImportResult(null);
+      setImportError(error.message);
+    },
   });
   const configMutation = useMutation({
     mutationKey: ["workspace", workspaceId, "config"],
@@ -148,9 +165,21 @@ export function SettingsView() {
     }, 600);
   }
 
+  function chooseImportFile() {
+    importFileInputRef.current?.click();
+  }
+
+  function handleImportFile(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+    importMutation.mutate(file);
+  }
+
   return (
     <div className="mx-auto grid max-w-7xl gap-6">
       {exportError ? <InlineError title="Export failed" message={exportError} /> : null}
+      {importError ? <InlineError title="Import failed" message={importError} /> : null}
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-medium text-accent-strong">Workspace</p>
@@ -178,14 +207,47 @@ export function SettingsView() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <CardTitle>Export Memories</CardTitle>
+            <CardTitle>Backup</CardTitle>
             <Download className="h-4 w-4 text-accent-strong" aria-hidden="true" />
           </CardHeader>
-          <CardContent className="space-y-4">
-            <Button type="button" onClick={() => exportMutation.mutate()} disabled={!hasApiKey || workspaceId.trim().length === 0 || exportMutation.isPending}>
-              {exportMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
-              Export JSONL
-            </Button>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                data-testid="export-jsonl-button"
+                onClick={() => exportMutation.mutate()}
+                disabled={!hasApiKey || workspaceId.trim().length === 0 || exportMutation.isPending}
+              >
+                {exportMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
+                Export JSONL
+              </Button>
+              <input
+                ref={importFileInputRef}
+                data-testid="import-jsonl-input"
+                type="file"
+                accept=".jsonl,application/x-ndjson"
+                className="hidden"
+                onChange={(event) => {
+                  handleImportFile(event.currentTarget.files?.[0]);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                data-testid="import-jsonl-button"
+                onClick={chooseImportFile}
+                disabled={!hasApiKey || workspaceId.trim().length === 0 || importMutation.isPending}
+              >
+                {importMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
+                Import JSONL
+              </Button>
+            </div>
+            {importResult ? (
+              <p className="text-sm text-ink/70">
+                Imported {importResult.imported}; skipped {importResult.skipped}; errors {importResult.errors}
+              </p>
+            ) : null}
           </CardContent>
         </Card>
       </section>
@@ -203,6 +265,7 @@ export function SettingsView() {
                 {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <input
+                data-testid="promotion-threshold-slider"
                 type="range"
                 min="0.5"
                 max="1"
@@ -219,6 +282,7 @@ export function SettingsView() {
                 {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <input
+                data-testid="dedup-threshold-slider"
                 type="range"
                 min="0.8"
                 max="0.99"
@@ -235,6 +299,7 @@ export function SettingsView() {
                 {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <input
+                data-testid="decay-half-life-slider"
                 type="range"
                 min="1"
                 max="365"
@@ -251,6 +316,7 @@ export function SettingsView() {
                 {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <input
+                data-testid="pruning-threshold-slider"
                 type="range"
                 min="0.01"
                 max="0.50"
@@ -265,6 +331,7 @@ export function SettingsView() {
           <div className="grid gap-2">
             <Button
               type="button"
+              data-testid="run-promotion-button"
               onClick={() => promotionMutation.mutate()}
               disabled={!hasApiKey || workspaceId.trim().length === 0 || promotionMutation.isPending}
             >
@@ -293,6 +360,7 @@ export function SettingsView() {
               </label>
               <select
                 id="embedding-provider"
+                data-testid="embedding-provider-select"
                 value={embeddingProvider}
                 onChange={(event) => saveEmbeddingProvider(event.target.value)}
                 className="h-10 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
@@ -305,7 +373,7 @@ export function SettingsView() {
               <label className="text-xs font-medium uppercase text-ink/45" htmlFor="embedding-model">
                 Embedding model
               </label>
-              <Input id="embedding-model" value={embeddingModel} onChange={(event) => saveEmbeddingModel(event.target.value)} />
+              <Input id="embedding-model" data-testid="embedding-model-input" value={embeddingModel} onChange={(event) => saveEmbeddingModel(event.target.value)} />
             </div>
           </div>
 
@@ -316,6 +384,7 @@ export function SettingsView() {
               </label>
               <select
                 id="llm-provider"
+                data-testid="llm-provider-select"
                 value={llmProvider}
                 onChange={(event) => saveLlmProvider(event.target.value)}
                 className="h-10 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
@@ -329,7 +398,7 @@ export function SettingsView() {
               <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-model">
                 LLM model
               </label>
-              <Input id="llm-model" value={llmModel} onChange={(event) => saveLlmModel(event.target.value)} />
+              <Input id="llm-model" data-testid="llm-model-input" value={llmModel} onChange={(event) => saveLlmModel(event.target.value)} />
             </div>
           </div>
         </CardContent>

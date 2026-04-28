@@ -130,6 +130,17 @@ function retrieveRequestBody(workspaceId: string, request: RetrieveRequest): Rec
     body.scope = request.scope as JsonValue;
   }
 
+  const scope = scopeFilter(request.agent_id, request.user_id, request.repo);
+  if (scope.agent_id !== undefined) {
+    body.agent_id = scope.agent_id;
+  }
+  if (scope.user_id !== undefined) {
+    body.user_id = scope.user_id;
+  }
+  if (scope.repo !== undefined) {
+    body.repo = scope.repo;
+  }
+
   return body;
 }
 
@@ -154,16 +165,6 @@ export function buildSearchRequest(workspaceId: string, criteria: SearchCriteria
   }
 
   const scope = scopeFilter(criteria.agentId, criteria.userId, criteria.repo);
-  if (scope.agent_id !== undefined) {
-    filters.agent_id = scope.agent_id;
-  }
-  if (scope.user_id !== undefined) {
-    filters.user_id = scope.user_id;
-  }
-  if (scope.repo !== undefined) {
-    filters.repo = scope.repo;
-  }
-
   const request: SearchRequest = {
     query,
     workspace_id: workspaceId,
@@ -171,6 +172,16 @@ export function buildSearchRequest(workspaceId: string, criteria: SearchCriteria
     limit: criteria.limit,
     offset: criteria.offset,
   };
+
+  if (scope.agent_id !== undefined) {
+    request.agent_id = scope.agent_id;
+  }
+  if (scope.user_id !== undefined) {
+    request.user_id = scope.user_id;
+  }
+  if (scope.repo !== undefined) {
+    request.repo = scope.repo;
+  }
 
   if (criteria.memoryType !== "all") {
     request.memory_types = [criteria.memoryType];

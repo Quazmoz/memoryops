@@ -1,21 +1,29 @@
-use std::time::Duration;
+use std::{str, time::Duration};
 
 use anyhow::anyhow;
-use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
+use axum::{
+    body::Body, extract::Path, extract::Query, extract::State, response::IntoResponse, Extension,
+    Json,
+};
 use chrono::{DateTime, NaiveDate, Utc};
 use common::{
     audit::spawn_audit_log,
     auth::AuthContext,
     error::AppResult,
-    models::{AuditAction, Workspace, WorkspaceConfig},
+    models::{AuditAction, MemoryUnit, Workspace, WorkspaceConfig},
     AppError, AppState,
 };
+use futures_util::StreamExt;
 use processor::promoter::{run_promotion_pass, PromoterConfig, PromotionReport};
+use processor::worker::enqueue_slow_job;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::require_workspace;
+
+pub const MAX_IMPORT_BODY_BYTES: usize = 50 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkspaceRequest {
@@ -70,6 +78,13 @@ pub struct WorkspaceStatsHistoryPoint {
     pub created: i64,
     pub promoted: i64,
     pub soft_deleted: i64,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct ImportMemoriesResponse {
+    pub imported: u64,
+    pub skipped: u64,
+    pub errors: u64,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -352,6 +367,189 @@ pub async fn promote(
     Ok(Json(report))
 }
 
+#[axum::debug_handler]
+pub async fn import_memories(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    body: Body,
+) -> Result<impl IntoResponse, AppError> {
+    require_workspace(&auth, id)?;
+    let workspace_id = auth.workspace_id;
+    let mut response = ImportMemoriesResponse::default();
+    let mut buffer = String::new();
+    let mut stream = body.into_data_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| AppError::Internal(anyhow!(error)))?;
+        let text = str::from_utf8(&chunk).map_err(|_| {
+            AppError::Validation("import body must be valid UTF-8 JSONL".to_owned())
+        })?;
+        buffer.push_str(text);
+        process_complete_import_lines(&state, workspace_id, &mut buffer, &mut response).await;
+    }
+
+    if !buffer.trim().is_empty() {
+        process_import_line(
+            &state,
+            workspace_id,
+            buffer.trim_end_matches('\r'),
+            &mut response,
+        )
+        .await;
+    }
+
+    Ok(Json(response))
+}
+
+async fn process_complete_import_lines(
+    state: &AppState,
+    workspace_id: Uuid,
+    buffer: &mut String,
+    response: &mut ImportMemoriesResponse,
+) {
+    while let Some(index) = buffer.find('\n') {
+        let line = buffer[..index].trim_end_matches('\r').to_owned();
+        buffer.drain(..=index);
+        process_import_line(state, workspace_id, &line, response).await;
+    }
+}
+
+async fn process_import_line(
+    state: &AppState,
+    workspace_id: Uuid,
+    line: &str,
+    response: &mut ImportMemoriesResponse,
+) {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    let memory = match serde_json::from_str::<MemoryUnit>(trimmed) {
+        Ok(memory) => memory,
+        Err(error) => {
+            response.errors = response.errors.saturating_add(1);
+            tracing::warn!(error = ?error, "failed to parse JSONL memory import line");
+            return;
+        }
+    };
+
+    if should_skip_import(&memory, workspace_id) {
+        response.skipped = response.skipped.saturating_add(1);
+        return;
+    }
+
+    let memory = sanitize_imported_memory(memory, workspace_id);
+    match upsert_imported_memory(&state.db, &memory).await {
+        Ok(memory_id) => {
+            response.imported = response.imported.saturating_add(1);
+            let mut redis = state.redis.clone();
+            if let Err(error) = enqueue_slow_job(&mut redis, memory_id, workspace_id, 0).await {
+                tracing::warn!(error = ?error, memory_id = %memory_id, "failed to enqueue imported memory for embedding");
+            }
+        }
+        Err(error) => {
+            response.errors = response.errors.saturating_add(1);
+            tracing::warn!(error = ?error, memory_id = %memory.id, "failed to upsert imported memory");
+        }
+    }
+}
+
+fn should_skip_import(memory: &MemoryUnit, workspace_id: Uuid) -> bool {
+    memory.workspace_id != workspace_id
+}
+
+fn sanitize_imported_memory(mut memory: MemoryUnit, workspace_id: Uuid) -> MemoryUnit {
+    memory.workspace_id = workspace_id;
+    memory.scope.workspace_id = workspace_id;
+    memory.embedding_id = None;
+    memory.deleted_at = None;
+    memory
+}
+
+async fn upsert_imported_memory(db: &PgPool, memory: &MemoryUnit) -> AppResult<Uuid> {
+    let scope =
+        serde_json::to_value(&memory.scope).map_err(|error| AppError::Internal(anyhow!(error)))?;
+    let entities = serde_json::to_value(&memory.entities.0)
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+
+    sqlx::query_scalar::<_, Uuid>(
+        r#"
+        INSERT INTO memory_units (
+            id,
+            workspace_id,
+            scope,
+            memory_type,
+            content,
+            entities,
+            importance_score,
+            importance_overridden,
+            source_events,
+            embedding_id,
+            token_count,
+            decay_score,
+            pinned,
+            tags,
+            version,
+            promoted_at,
+            source_episode_ids,
+            corroboration_count,
+            deleted_at,
+            last_accessed_at,
+            created_at,
+            updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10, $11, $12, $13, $14, $15, $16, $17, NULL, $18, $19, $20)
+        ON CONFLICT (id) DO UPDATE SET
+            workspace_id = EXCLUDED.workspace_id,
+            scope = EXCLUDED.scope,
+            memory_type = EXCLUDED.memory_type,
+            content = EXCLUDED.content,
+            entities = EXCLUDED.entities,
+            importance_score = EXCLUDED.importance_score,
+            importance_overridden = EXCLUDED.importance_overridden,
+            source_events = EXCLUDED.source_events,
+            embedding_id = NULL,
+            token_count = EXCLUDED.token_count,
+            decay_score = EXCLUDED.decay_score,
+            pinned = EXCLUDED.pinned,
+            tags = EXCLUDED.tags,
+            version = EXCLUDED.version,
+            promoted_at = EXCLUDED.promoted_at,
+            source_episode_ids = EXCLUDED.source_episode_ids,
+            corroboration_count = EXCLUDED.corroboration_count,
+            deleted_at = NULL,
+            last_accessed_at = EXCLUDED.last_accessed_at,
+            updated_at = now()
+        RETURNING id
+        "#,
+    )
+    .bind(memory.id)
+    .bind(memory.workspace_id)
+    .bind(scope)
+    .bind(memory.memory_type)
+    .bind(&memory.content)
+    .bind(entities)
+    .bind(memory.importance_score)
+    .bind(memory.importance_overridden)
+    .bind(&memory.source_events)
+    .bind(memory.token_count)
+    .bind(memory.decay_score)
+    .bind(memory.pinned)
+    .bind(&memory.tags)
+    .bind(memory.version)
+    .bind(memory.promoted_at)
+    .bind(&memory.source_episode_ids)
+    .bind(memory.corroboration_count)
+    .bind(memory.last_accessed_at)
+    .bind(memory.created_at)
+    .bind(memory.updated_at)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
 async fn get_workspace_by_id(state: &AppState, id: Uuid) -> AppResult<Option<Workspace>> {
     sqlx::query_as::<_, Workspace>(
         r#"
@@ -546,13 +744,13 @@ mod tests {
     };
     use common::{
         config::AppConfig,
-        models::MemoryType,
+        models::{MemoryScope, MemoryType, MemoryUnit},
         providers::{FastEmbedProvider, OllamaProvider},
     };
     use qdrant_client::Qdrant;
     use redis::aio::ConnectionManager;
     use serde_json::Value;
-    use sqlx::PgPool;
+    use sqlx::{types::Json, PgPool};
     use tower::ServiceExt;
 
     use super::*;
@@ -734,6 +932,39 @@ mod tests {
         }
     }
 
+    fn import_memory_unit(workspace_id: Uuid) -> MemoryUnit {
+        let now = Utc::now();
+        MemoryUnit {
+            id: Uuid::now_v7(),
+            workspace_id,
+            scope: MemoryScope {
+                workspace_id,
+                agent_id: None,
+                user_id: None,
+                repo: Some("Quazmoz/memoryops".to_owned()),
+            },
+            memory_type: MemoryType::Episodic,
+            content: "imported memory".to_owned(),
+            entities: Json(Vec::new()),
+            importance_score: 0.8,
+            importance_overridden: false,
+            source_events: Vec::new(),
+            embedding_id: Some("stale-embedding".to_owned()),
+            token_count: Some(4),
+            decay_score: 1.0,
+            pinned: false,
+            tags: vec!["import".to_owned()],
+            version: 1,
+            promoted_at: None,
+            source_episode_ids: Vec::new(),
+            corroboration_count: 1,
+            deleted_at: None,
+            last_accessed_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     #[test]
     fn lifecycle_config_rejects_zero_half_life() {
         let error = match validate_lifecycle_config(&update_request(Some(0), None)) {
@@ -777,6 +1008,30 @@ mod tests {
 
         assert_eq!(stats.oldest_memory_at, None);
         assert_eq!(stats.newest_memory_at, None);
+    }
+
+    #[test]
+    fn import_line_with_mismatched_workspace_id_is_skipped() {
+        let target_workspace_id = Uuid::now_v7();
+        let source_workspace_id = Uuid::now_v7();
+        let memory = import_memory_unit(source_workspace_id);
+
+        assert!(should_skip_import(&memory, target_workspace_id));
+        assert!(!should_skip_import(&memory, source_workspace_id));
+    }
+
+    #[test]
+    fn imported_memory_is_sanitized_for_target_workspace_and_reembedding() {
+        let source_workspace_id = Uuid::now_v7();
+        let target_workspace_id = Uuid::now_v7();
+        let memory = import_memory_unit(source_workspace_id);
+
+        let sanitized = sanitize_imported_memory(memory, target_workspace_id);
+
+        assert_eq!(sanitized.workspace_id, target_workspace_id);
+        assert_eq!(sanitized.scope.workspace_id, target_workspace_id);
+        assert_eq!(sanitized.embedding_id, None);
+        assert_eq!(sanitized.deleted_at, None);
     }
 
     #[test]

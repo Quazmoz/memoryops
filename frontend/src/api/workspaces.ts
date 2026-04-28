@@ -3,9 +3,11 @@ import type {
   CreatedApiKey,
   CreateApiKeyResponse,
   CreateWorkspaceResponse,
+  ImportMemoriesResponse,
   JsonValue,
   PromotionReport,
   StatsHistory,
+  TagsResponse,
   WorkspaceConfig,
   WorkspaceDetail,
   WorkspaceSummary,
@@ -57,6 +59,15 @@ export function getWorkspaceStatsHistory(workspaceId: string, days = 30): Promis
   return apiRequest<StatsHistory>(`/v1/workspaces/${workspaceId}/stats/history?days=${days}`);
 }
 
+export function listWorkspaceTags(workspaceId: string, limit = 50, cursor?: string): Promise<TagsResponse> {
+  const search = new URLSearchParams({ limit: String(limit) });
+  if (cursor) {
+    search.set("cursor", cursor);
+  }
+
+  return apiRequest<TagsResponse>(`/v1/workspaces/${workspaceId}/tags?${search.toString()}`);
+}
+
 export function updateWorkspaceConfig(workspaceId: string, patch: Partial<WorkspaceConfig>): Promise<WorkspaceDetail> {
   return apiRequest<WorkspaceDetail>(`/v1/workspaces/${workspaceId}/config`, {
     method: "PATCH",
@@ -81,6 +92,22 @@ export async function exportMemories(workspaceId: string): Promise<Blob> {
   }
 
   return response.blob();
+}
+
+export async function importMemories(workspaceId: string, file: File): Promise<ImportMemoriesResponse> {
+  const headers = requestHeaders({ headers: { "content-type": "application/x-ndjson" } });
+  const response = await fetch(`/v1/workspaces/${workspaceId}/import`, {
+    method: "POST",
+    headers,
+    body: file,
+  });
+  const payload = await parseResponse(response);
+
+  if (!response.ok) {
+    throw new ApiError(response.status, extractDetail(payload, response.statusText));
+  }
+
+  return payload as ImportMemoriesResponse;
 }
 
 function configPatchBody(patch: Partial<WorkspaceConfig>): { [key: string]: JsonValue } {

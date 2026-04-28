@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::{
     dto::{
-        normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto, SearchFilters,
-        SearchRequest, DEFAULT_OFFSET,
+        normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto, ScopeFilter,
+        SearchFilters, SearchRequest, DEFAULT_OFFSET,
     },
     store,
 };
@@ -64,13 +64,8 @@ async fn keyword_hits(
     if let Some(filters) = &req.filters {
         push_search_filters(&mut builder, filters);
     }
-    if let Some(scope) = &req.scope {
-        push_scope_filter(
-            &mut builder,
-            scope.agent_id.as_deref(),
-            scope.user_id.as_deref(),
-            scope.repo.as_deref(),
-        );
+    if let Some(scope) = req.resolved_scope_filter() {
+        push_scope_filter(&mut builder, &scope);
     }
     if let Some(memory_types) = normalized_memory_types(req)? {
         builder.push(" AND memory_type::text = ANY(");
@@ -113,30 +108,68 @@ fn push_search_filters<'a>(builder: &mut QueryBuilder<'a, Postgres>, filters: &'
             builder.push_bind(tags.clone());
         }
     }
-    push_scope_filter(
-        builder,
-        filters.agent_id.as_deref(),
-        filters.user_id.as_deref(),
-        filters.repo.as_deref(),
-    );
 }
 
-fn push_scope_filter<'a>(
-    builder: &mut QueryBuilder<'a, Postgres>,
-    agent_id: Option<&'a str>,
-    user_id: Option<&'a str>,
-    repo: Option<&'a str>,
+fn push_scope_filter(builder: &mut QueryBuilder<'_, Postgres>, scope: &ScopeFilter) {
+    if scope.is_empty() {
+        return;
+    }
+
+    push_scope_field(builder, "agent_id", scope.agent_id.clone());
+    push_scope_field(builder, "user_id", scope.user_id.clone());
+    push_scope_field(builder, "repo", scope.repo.clone());
+}
+
+fn push_scope_field(
+    builder: &mut QueryBuilder<'_, Postgres>,
+    column: &'static str,
+    value: Option<String>,
 ) {
-    if let Some(agent_id) = agent_id {
-        builder.push(" AND scope->>'agent_id' = ");
-        builder.push_bind(agent_id);
+    builder.push(" AND (");
+    builder.push(column);
+    builder.push(" = ");
+    builder.push_bind(value.clone());
+    builder.push(" OR ");
+    builder.push_bind(value);
+    builder.push(" IS NULL)");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scope_filter_with_all_fields_adds_optional_where_clauses() {
+        let mut builder = QueryBuilder::<Postgres>::new(
+            "SELECT id, 1.0 AS rank_score FROM memory_units WHERE workspace_id = ",
+        );
+        builder.push_bind(Uuid::now_v7());
+        let scope = ScopeFilter {
+            agent_id: Some("agent-1".to_owned()),
+            user_id: Some("user-1".to_owned()),
+            repo: Some("Quazmoz/memoryops".to_owned()),
+        };
+
+        push_scope_filter(&mut builder, &scope);
+        let sql = builder.sql();
+
+        assert!(sql.contains("AND (agent_id ="));
+        assert!(sql.contains("AND (user_id ="));
+        assert!(sql.contains("AND (repo ="));
+        assert!(sql.matches("OR").count() >= 3);
+        assert!(sql.matches("IS NULL").count() >= 3);
     }
-    if let Some(user_id) = user_id {
-        builder.push(" AND scope->>'user_id' = ");
-        builder.push_bind(user_id);
-    }
-    if let Some(repo) = repo {
-        builder.push(" AND scope->>'repo' = ");
-        builder.push_bind(repo);
+
+    #[test]
+    fn empty_scope_filter_adds_no_where_clauses() {
+        let mut builder = QueryBuilder::<Postgres>::new(
+            "SELECT id, 1.0 AS rank_score FROM memory_units WHERE workspace_id = ",
+        );
+        builder.push_bind(Uuid::now_v7());
+        let before = builder.sql().to_owned();
+
+        push_scope_filter(&mut builder, &ScopeFilter::default());
+
+        assert_eq!(builder.sql(), before);
     }
 }

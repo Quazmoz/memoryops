@@ -77,6 +77,9 @@ export type SearchRequest = {
   offset?: number;
   filters?: SearchFilters;
   scope?: ScopeFilter;
+  agent_id?: string;
+  user_id?: string;
+  repo?: string;
   memory_types?: MemoryType[];
 };
 
@@ -96,10 +99,29 @@ export type RetrieveRequest = {
   query: string;
   limit?: number;
   scope?: ScopeFilter;
+  agent_id?: string;
+  user_id?: string;
+  repo?: string;
   token_budget?: number;
   search_mode?: SearchMode;
   mode?: SearchMode;
   include_trace?: boolean;
+};
+
+export type TagSummary = {
+  name: string;
+  count: number;
+};
+
+export type TagsResponse = {
+  tags: TagSummary[];
+  next_cursor?: string | null;
+};
+
+export type ImportMemoriesResponse = {
+  imported: number;
+  skipped: number;
+  errors: number;
 };
 
 export type ScoreBreakdown = {

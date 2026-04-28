@@ -42,4 +42,24 @@ describe("buildSearchRequest", () => {
     expect(request.filters).toBeUndefined();
     expect(request.mode).toBe("hybrid");
   });
+
+  it("places scope filters on the top-level search request", () => {
+    const request = buildSearchRequest("018f0000-0000-7000-8000-000000000001", {
+      query: "memory",
+      memoryType: "all",
+      pinned: false,
+      minImportance: 0,
+      tags: [],
+      agentId: "agent-1",
+      userId: "user-1",
+      repo: "Quazmoz/memoryops",
+      limit: 50,
+      offset: 0,
+    });
+
+    expect(request.agent_id).toBe("agent-1");
+    expect(request.user_id).toBe("user-1");
+    expect(request.repo).toBe("Quazmoz/memoryops");
+    expect(request.filters).toBeUndefined();
+  });
 });

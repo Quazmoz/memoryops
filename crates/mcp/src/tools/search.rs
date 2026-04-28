@@ -79,6 +79,9 @@ pub async fn run(
         offset: None,
         filters: search_filters(input.filters)?,
         scope: None,
+        agent_id: None,
+        user_id: None,
+        repo: None,
         memory_types: None,
     };
 

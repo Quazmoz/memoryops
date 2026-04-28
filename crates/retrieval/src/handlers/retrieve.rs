@@ -31,9 +31,39 @@ pub struct RetrieveRequest {
     pub query: String,
     pub workspace_id: Uuid,
     pub scope: Option<ScopeFilter>,
+    pub agent_id: Option<String>,
+    pub user_id: Option<String>,
+    pub repo: Option<String>,
     pub token_budget: Option<usize>,
     pub mode: Option<SearchMode>,
     pub include_trace: Option<bool>,
+}
+
+impl RetrieveRequest {
+    fn resolved_scope_filter(&self) -> Option<ScopeFilter> {
+        let scope = ScopeFilter {
+            agent_id: first_scope_value([
+                self.agent_id.as_ref(),
+                self.scope
+                    .as_ref()
+                    .and_then(|scope| scope.agent_id.as_ref()),
+            ]),
+            user_id: first_scope_value([
+                self.user_id.as_ref(),
+                self.scope.as_ref().and_then(|scope| scope.user_id.as_ref()),
+            ]),
+            repo: first_scope_value([
+                self.repo.as_ref(),
+                self.scope.as_ref().and_then(|scope| scope.repo.as_ref()),
+            ]),
+        };
+
+        if scope.is_empty() {
+            None
+        } else {
+            Some(scope)
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -109,6 +139,7 @@ pub async fn handle_retrieve(
         .token_budget
         .unwrap_or(state.config.retrieval.default_token_budget);
     let query_id = Uuid::now_v7();
+    let scope_filter = request.resolved_scope_filter();
     let search_request = SearchRequest {
         query: request.query.clone(),
         workspace_id,
@@ -116,7 +147,10 @@ pub async fn handle_retrieve(
         limit: Some(MAX_LIMIT),
         offset: None,
         filters: None,
-        scope: request.scope.clone(),
+        scope: scope_filter.clone(),
+        agent_id: None,
+        user_id: None,
+        repo: None,
         memory_types: None,
     };
 
@@ -125,7 +159,7 @@ pub async fn handle_retrieve(
         &state,
         workspace_id,
         search_results,
-        request.scope.as_ref(),
+        scope_filter.as_ref(),
         mode,
     )
     .await?;
@@ -331,6 +365,17 @@ fn scope_matches(unit_scope: &common::models::MemoryScope, requested_scope: &Sco
     }
 
     true
+}
+
+fn first_scope_value(values: [Option<&String>; 2]) -> Option<String> {
+    values.into_iter().find_map(|value| {
+        let trimmed = value?.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    })
 }
 
 fn estimate_tokens(content: &str) -> usize {

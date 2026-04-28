@@ -51,6 +51,7 @@ dependencies = [
  "bytes",
  "chrono",
  "common",
+ "futures-util",
  "ingestion",
  "processor",
  "qdrant-client",

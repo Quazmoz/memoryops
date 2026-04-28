@@ -12,7 +12,8 @@ use sqlx::{types::Json, PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::dto::{
-    parse_memory_type, ListQuery, SortDirection, SortField, UpdateMemoryRequest, MAX_LIMIT,
+    parse_memory_type, ListQuery, ScopeFilter, SortDirection, SortField, UpdateMemoryRequest,
+    MAX_LIMIT,
 };
 
 const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
@@ -154,18 +155,7 @@ pub async fn list_memory_units(
         builder.push(" AND importance_score >= ");
         builder.push_bind(min_importance);
     }
-    if let Some(agent_id) = &params.agent_id {
-        builder.push(" AND scope->>'agent_id' = ");
-        builder.push_bind(agent_id.clone());
-    }
-    if let Some(user_id) = &params.user_id {
-        builder.push(" AND scope->>'user_id' = ");
-        builder.push_bind(user_id.clone());
-    }
-    if let Some(repo) = &params.repo {
-        builder.push(" AND scope->>'repo' = ");
-        builder.push_bind(repo.clone());
-    }
+    push_scope_filter(&mut builder, &scope_from_list_query(params));
 
     builder.push(" ORDER BY ");
     builder.push(sort_column(params.resolved_sort()));
@@ -571,6 +561,47 @@ fn push_assignment_separator(
         builder.push(", ");
     }
     *wrote_assignment = true;
+}
+
+fn scope_from_list_query(params: &ListQuery) -> ScopeFilter {
+    ScopeFilter {
+        agent_id: normalized_scope_value(params.agent_id.as_ref()),
+        user_id: normalized_scope_value(params.user_id.as_ref()),
+        repo: normalized_scope_value(params.repo.as_ref()),
+    }
+}
+
+fn normalized_scope_value(value: Option<&String>) -> Option<String> {
+    let trimmed = value?.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn push_scope_filter(builder: &mut QueryBuilder<'_, Postgres>, scope: &ScopeFilter) {
+    if scope.is_empty() {
+        return;
+    }
+
+    push_scope_field(builder, "agent_id", scope.agent_id.clone());
+    push_scope_field(builder, "user_id", scope.user_id.clone());
+    push_scope_field(builder, "repo", scope.repo.clone());
+}
+
+fn push_scope_field(
+    builder: &mut QueryBuilder<'_, Postgres>,
+    column: &'static str,
+    value: Option<String>,
+) {
+    builder.push(" AND (");
+    builder.push(column);
+    builder.push(" = ");
+    builder.push_bind(value.clone());
+    builder.push(" OR ");
+    builder.push_bind(value);
+    builder.push(" IS NULL)");
 }
 
 fn sort_direction(direction: SortDirection) -> &'static str {

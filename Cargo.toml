@@ -50,6 +50,7 @@ uuid = { version = "1.16", features = ["serde", "v7"] }
 validator = { version = "0.20", features = ["derive"] }
 async-stream = "0.3"
 bytes = "1.9"
+futures-util = "0.3"
 
 # sqlx provides parameterized Postgres access and migration embedding.
 sqlx = { version = "0.8", features = ["chrono", "json", "migrate", "postgres", "runtime-tokio-rustls", "uuid"] }

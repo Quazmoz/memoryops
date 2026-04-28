@@ -56,6 +56,9 @@ pub async fn run(
         offset: None,
         filters: None,
         scope: None,
+        agent_id: None,
+        user_id: None,
+        repo: None,
         memory_types: None,
     };
     let results = hybrid::hybrid_search(state, &request, limit).await?;
