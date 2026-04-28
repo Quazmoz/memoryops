@@ -25,3 +25,6 @@ tower-http.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 validator.workspace = true
+
+[dev-dependencies]
+proptest = "1"

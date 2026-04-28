@@ -73,6 +73,9 @@ qdrant-client = "1.13"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
+# Property-based testing is used for invariant verification in retrieval packing.
+proptest = "1"
+
 common = { path = "crates/common" }
 ingestion = { path = "crates/ingestion" }
 processor = { path = "crates/processor" }
