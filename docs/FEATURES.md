@@ -1,6 +1,6 @@
 # MemoryOps — Feature List
 
-**Version:** 0.12.0  
+**Version:** 0.13.0  
 **Last Updated:** 2026-04-28
 
 This document tracks all planned features across the platform with current status and target milestone.
@@ -35,6 +35,17 @@ This document tracks all planned features across the platform with current statu
 | M12 | Lifecycle configuration | 🟢 Complete |
 | M13 | Workspace stats endpoint + Dashboard KPIs | 🟢 Complete |
 | M14 | Retrieval Trace view (live data) | 🟢 Complete |
+| M15 | Webhook Tester — multi-source (Slack, Linear, Jira) | 🔴 Not started |
+| M16 | DLQ management UI (retry + discard from the Integration view) | 🔴 Not started |
+| M17 | Settings view — write mode (config sliders + provider selection) | 🔴 Not started |
+| M18 | Workspace stats time-series endpoint + trend charts | 🔴 Not started |
+| M19 | Scope-filtered retrieval (agent_id, user_id, repo on search + retrieve) | 🔴 Not started |
+| M20 | Tag management API + UI (enumerate, count, bulk-retag) | 🔴 Not started |
+| M21 | Import / restore (JSONL round-trip with export) | 🔴 Not started |
+| M22 | Metrics dashboard (OTel summary endpoint + UI panel) | 🔴 Not started |
+| M23 | Property-based tests for token packing (proptest) | 🔴 Not started |
+| M24 | Playwright E2E test suite | 🔴 Not started |
+| M25 | HTTP Skills (agent-callable skill registry) | 🔴 Not started |
 
 ---
 
@@ -172,6 +183,9 @@ This document tracks all planned features across the platform with current statu
 | GET /v1/workspaces/:id/export | 🟢 | M7 | JSONL streaming, cursor-paginated |
 | POST /v1/workspaces/:id/promote | 🟢 | M8 | Manual promotion pass with workspace lock |
 | GET /v1/workspaces/:id/stats | 🟢 | M13 | Aggregate memory stats per workspace |
+| GET /v1/workspaces/:id/stats/history | 🔴 | M18 | Daily aggregate: created, promoted, soft-deleted per day |
+| GET /v1/workspaces/:id/tags | 🔴 | M20 | Tag name + count enumeration |
+| POST /v1/workspaces/:id/import | 🔴 | M21 | JSONL import; idempotent on id |
 
 ---
 
@@ -242,6 +256,17 @@ This document tracks all planned features across the platform with current statu
 | Semantic memory display | 🟢 | M8 | Badge, source count, promoted timestamp |
 | Dashboard KPI strip (6 cards via /stats) | 🟢 | M13 | Replaces 3 useMemoryList calls |
 | Dashboard secondary stats row | 🟢 | M13 | Memory health + 30-day activity cards |
+| Retrieval Trace view (live data) | 🔴 | M14 | GET /v1/retrieve/trace/:query_id; per-component score breakdown |
+| Webhook Tester — Slack fixtures | 🔴 | M15 | POST /v1/ingest/slack; source tab switcher |
+| Webhook Tester — Linear fixtures | 🔴 | M15 | POST /v1/ingest/linear |
+| Webhook Tester — Jira fixtures | 🔴 | M15 | POST /v1/ingest/jira |
+| DLQ retry action (from Integration view) | 🔴 | M16 | POST /v1/workspaces/:id/dlq/:job_id/retry |
+| DLQ discard action (from Integration view) | 🔴 | M16 | DELETE /v1/workspaces/:id/dlq/:job_id |
+| DLQ error detail expand (raw payload + error message) | 🔴 | M16 | Inline expandable row in DLQ panel |
+| Settings view — config write (decay, pruning, promotion sliders) | 🔴 | M17 | PATCH /v1/workspaces/:id/config |
+| Settings view — provider selector (LLM + embedding) | 🔴 | M17 | Dropdown saved via PATCH /v1/workspaces/:id/config |
+| Dashboard trend charts (30-day memory activity) | 🔴 | M18 | GET /v1/workspaces/:id/stats/history |
+| Tag browser (enumerate + filter by tag) | 🔴 | M20 | GET /v1/workspaces/:id/tags |
 
 ---
 
@@ -267,6 +292,39 @@ This document tracks all planned features across the platform with current statu
 |---------|--------|-----------|-------|
 | JSONL export (streaming, cursor-paginated) | 🟢 | M7 | 500 rows/chunk, no raw payloads or vectors |
 | Import (restore) | 🔴 | v1.0 | Not in v0.x scope |
+| JSONL import (restore from export) | 🔴 | M21 | POST /v1/workspaces/:id/import; idempotent on id |
+
+---
+
+## Retrieval — Scope Filtering
+
+| Feature | Status | Milestone | Notes |
+|---------|--------|-----------|-------|
+| agent_id filter on POST /v1/memory/search | 🔴 | M19 | Narrow results to a single agent |
+| user_id filter on POST /v1/memory/search | 🔴 | M19 | |
+| repo filter on POST /v1/memory/search | 🔴 | M19 | |
+| agent_id filter on POST /v1/retrieve | 🔴 | M19 | |
+| user_id filter on POST /v1/retrieve | 🔴 | M19 | |
+| repo filter on POST /v1/retrieve | 🔴 | M19 | |
+
+---
+
+## Testing
+
+| Feature | Status | Milestone | Notes |
+|---------|--------|-----------|-------|
+| proptest token packing invariants | 🔴 | M23 | packed ≤ budget; dedup threshold respected; all excluded in trace |
+| Playwright E2E — ingest → process → search flow | 🔴 | M24 | |
+| Playwright E2E — promotion via repeated access | 🔴 | M24 | |
+| Playwright E2E — DLQ retry flow | 🔴 | M24 | |
+
+---
+
+## Future / v1.0
+
+| Feature | Status | Milestone | Notes |
+|---------|--------|-----------|-------|
+| HTTP Skills (agent-callable skill registry) | 🔴 | M25 | |
 
 ---
 
