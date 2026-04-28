@@ -40,6 +40,7 @@ export function useReadiness(workspaceId: string) {
     queryKey: memoryKeys.readiness(workspaceId),
     queryFn: getReadiness,
     refetchInterval: 10_000,
+    enabled: workspaceId.trim().length > 0,
   });
 }
 

@@ -135,10 +135,11 @@ function TracePanel({ trace }: { trace: RetrievalTrace }) {
           <thead className="bg-soft text-xs uppercase text-ink/55">
             <tr>
               <th className="px-3 py-2 font-medium">Memory ID</th>
-              <th className="px-3 py-2 font-medium">vector_score</th>
-              <th className="px-3 py-2 font-medium">keyword_score</th>
-              <th className="px-3 py-2 font-medium">rrf_score</th>
-              <th className="px-3 py-2 font-medium">decay_score</th>
+              <th className="px-3 py-2 font-medium">semantic_similarity</th>
+              <th className="px-3 py-2 font-medium">keyword_rank</th>
+              <th className="px-3 py-2 font-medium">importance</th>
+              <th className="px-3 py-2 font-medium">recency</th>
+              <th className="px-3 py-2 font-medium">source_authority</th>
               <th className="px-3 py-2 font-medium">final_score</th>
               <th className="px-3 py-2 font-medium">Status</th>
             </tr>
@@ -185,8 +186,9 @@ function TraceRow({ entry }: { entry: RetrievalTraceEntry }) {
       <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-ink/70">{shortId(entry.memory_id)}</td>
       <td className="px-3 py-3">{formatScore(entry.score_breakdown.semantic_similarity)}</td>
       <td className="px-3 py-3">{formatScore(entry.score_breakdown.keyword_rank)}</td>
-      <td className="px-3 py-3">{formatScore(entry.score)}</td>
+      <td className="px-3 py-3">{formatScore(entry.score_breakdown.importance)}</td>
       <td className="px-3 py-3">{formatScore(entry.score_breakdown.recency)}</td>
+      <td className="px-3 py-3">{formatScore(entry.score_breakdown.source_authority)}</td>
       <td className="px-3 py-3 font-semibold text-ink">{formatScore(entry.score)}</td>
       <td className="px-3 py-3">
         <Badge variant={entry.included ? "green" : "amber"}>{entry.included ? "included" : "excluded"}</Badge>

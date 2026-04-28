@@ -31,6 +31,15 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
     () => {
       const tableColumns: ColumnDef<MemoryRow>[] = [
       {
+        id: "rank",
+        header: "#",
+        cell: ({ row }) => {
+          const rank = row.original.rank;
+          return rank ? <span className="w-10 text-ink/50">{rank}</span> : null;
+        },
+        meta: { className: "w-10" },
+      },
+      {
         id: "content",
         header: "Memory",
         cell: ({ row }) => {
@@ -38,7 +47,6 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
           return (
             <div className="min-w-[18rem] space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                {memory.rank ? <Badge variant="muted">#{memory.rank}</Badge> : null}
                 <Badge variant={memory.memory_type === "semantic" ? "teal" : "rust"}>{memoryTypeLabel(memory)}</Badge>
                 {memory.memory_type === "semantic" && memory.corroboration_count > 1 ? (
                   <Badge variant="purple" title={`${memory.source_episode_ids.length || memory.corroboration_count} source episodes`}>

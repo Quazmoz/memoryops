@@ -1,4 +1,4 @@
-import { AlertCircle, Download, GitMerge, KeyRound, Loader2, Play, ServerCog, ShieldCheck, SlidersHorizontal, X } from "lucide-react";
+import { Download, GitMerge, KeyRound, Loader2, Play, ServerCog, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
@@ -90,7 +90,7 @@ export function SettingsView() {
 
   return (
     <div className="mx-auto grid max-w-7xl gap-6">
-      {exportError ? <ExportErrorToast message={exportError} onDismiss={() => setExportError(null)} /> : null}
+      {exportError ? <InlineError title="Export failed" message={exportError} /> : null}
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-medium text-accent-strong">Workspace</p>
@@ -224,19 +224,8 @@ function ProviderBlock({ title, rows }: { title: string; rows: string[] }) {
   );
 }
 
-function ExportErrorToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  return (
-    <div role="alert" className="fixed right-4 top-4 z-50 flex max-w-sm items-start gap-3 rounded-lg border border-orange-200 bg-orange-50 p-4 text-orange-900 shadow-lg">
-      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold">Export failed</p>
-        <p className="mt-1 break-words text-sm text-orange-900/80">{message}</p>
-      </div>
-      <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-orange-900" onClick={onDismiss} aria-label="Dismiss export error">
-        <X className="h-4 w-4" aria-hidden="true" />
-      </Button>
-    </div>
-  );
+function exportFilename(workspaceId: string): string {
+  return `memoryops-export-${workspaceId}-${new Date().toISOString().slice(0, 10)}.jsonl`;
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -248,8 +237,4 @@ function downloadBlob(blob: Blob, filename: string) {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
-}
-
-function exportFilename(workspaceId: string): string {
-  return `memoryops-export-${workspaceId}-${new Date().toISOString().slice(0, 10)}.jsonl`;
 }

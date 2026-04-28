@@ -99,6 +99,7 @@ export function LifecycleView() {
     }, 500);
 
     return () => window.clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authReady, promotionThreshold, dedupThreshold]);
 
   return (

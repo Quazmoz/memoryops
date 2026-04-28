@@ -37,7 +37,7 @@ export function Dashboard() {
     <div className="mx-auto grid max-w-7xl gap-6">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-sm font-medium text-accent-strong">M5 Memory Control Center</p>
+          <p className="text-sm font-medium text-accent-strong">Memory Control Center</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Dashboard</h1>
         </div>
         <StatusPill
