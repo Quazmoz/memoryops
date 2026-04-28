@@ -19,12 +19,16 @@ test('GitHub push event ingested and searchable', async ({ page }) => {
   // Select the "push" event type
   await page.getByTestId('webhook-event-select').selectOption('push');
 
+  // Wait for fixture effect to flush before firing webhook.
+  await expect(page.getByTestId('fire-webhook-button')).toBeEnabled({ timeout: 5_000 });
+  await expect(page.getByTestId('webhook-payload')).toContainText('refs/heads', { timeout: 5_000 });
+
   // Fire the webhook
   await page.getByTestId('fire-webhook-button').click();
 
   // Verify response status shows 202 (accepted)
   await expect(page.getByTestId('webhook-response-status')).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId('webhook-response-status')).toContainText('202', { timeout: 10_000 });
+  await expect(page.getByTestId('webhook-response-status')).toContainText('202', { timeout: 5_000 });
 
   // 4. Wait for memory to appear (poll /v1/memory)
   await waitForMemory(workspaceId, apiKey);
