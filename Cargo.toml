@@ -3,6 +3,7 @@ members = [
     "crates/api",
     "crates/common",
     "crates/ingestion",
+    "crates/mcp",
     "crates/processor",
     "crates/retrieval",
 ]

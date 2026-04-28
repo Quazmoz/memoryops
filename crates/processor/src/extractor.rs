@@ -17,12 +17,22 @@ pub fn extract_text(event: &RawEvent) -> AppResult<String> {
         ),
         EventType::PullRequestReview => string_or_no_content(event.payload.pointer("/review/body")),
         EventType::Push => extract_push_text(&event.payload),
-        EventType::IssueComment => string_or_no_content(event.payload.pointer("/comment/body")),
-        EventType::Issue => format!(
-            "{}\n\n{}",
-            string_or_no_content(event.payload.pointer("/issue/title")),
-            string_or_no_content(event.payload.pointer("/issue/body"))
-        ),
+        EventType::IssueComment => match event.source {
+            Source::Jira => extract_jira_comment_text(&event.payload),
+            Source::Linear => extract_linear_comment_text(&event.payload),
+            Source::GitHub | Source::Slack => {
+                string_or_no_content(event.payload.pointer("/comment/body"))
+            }
+        },
+        EventType::Issue => match event.source {
+            Source::Jira => extract_jira_issue_text(&event.payload),
+            Source::Linear => extract_linear_issue_text(&event.payload),
+            Source::GitHub | Source::Slack => format!(
+                "{}\n\n{}",
+                string_or_no_content(event.payload.pointer("/issue/title")),
+                string_or_no_content(event.payload.pointer("/issue/body"))
+            ),
+        },
         EventType::Message => string_or_no_content(event.payload.get("text")),
         EventType::Reaction => extract_reaction_text(&event.payload),
     };
@@ -37,7 +47,9 @@ pub fn extract_text(event: &RawEvent) -> AppResult<String> {
 pub fn extract_entities(event: &RawEvent, content: &str) -> Vec<Entity> {
     match event.source {
         Source::Slack => extract_slack_entities(content),
-        Source::GitHub | Source::Jira | Source::Linear => Vec::new(),
+        Source::Jira => extract_jira_entities(&event.payload, content),
+        Source::Linear => extract_linear_entities(&event.payload, content),
+        Source::GitHub => Vec::new(),
     }
 }
 
@@ -66,6 +78,51 @@ fn extract_reaction_text(payload: &Value) -> String {
     format!("Reaction :{reaction}: by {user} on message {channel}/{timestamp}")
 }
 
+fn extract_linear_issue_text(payload: &Value) -> String {
+    let object_type =
+        string_or_no_content(payload.get("object_type").or_else(|| payload.get("type")));
+    let action = string_or_no_content(payload.get("action"));
+    let identifier = string_or_no_content(payload.get("identifier"));
+    let title = string_or_no_content(payload.get("title"));
+    let body = string_or_no_content(payload.get("body"));
+    let status = string_or_no_content(payload.get("status"));
+    let assignee = string_or_no_content(payload.get("assignee"));
+    let priority = string_or_no_content(payload.get("priority"));
+
+    format!(
+        "Linear {object_type} {action}: {identifier} {title}\nStatus: {status}\nAssignee: {assignee}\nPriority: {priority}\n\n{body}"
+    )
+}
+
+fn extract_linear_comment_text(payload: &Value) -> String {
+    let issue = string_or_no_content(payload.pointer("/issue/identifier"));
+    let body = string_or_no_content(payload.get("body"));
+    let actor = string_or_no_content(payload.get("actor"));
+
+    format!("Linear comment by {actor} on {issue}: {body}")
+}
+
+fn extract_jira_issue_text(payload: &Value) -> String {
+    let issue_key = string_or_no_content(payload.get("issue_key"));
+    let summary = string_or_no_content(payload.get("summary"));
+    let description = string_or_no_content(payload.get("description"));
+    let status = string_or_no_content(payload.get("status"));
+    let assignee = string_or_no_content(payload.get("assignee"));
+    let priority = string_or_no_content(payload.get("priority"));
+
+    format!(
+        "Jira issue {issue_key}: {summary}\nStatus: {status}\nAssignee: {assignee}\nPriority: {priority}\n\n{description}"
+    )
+}
+
+fn extract_jira_comment_text(payload: &Value) -> String {
+    let issue_key = string_or_no_content(payload.get("issue_key"));
+    let body = string_or_no_content(payload.get("body"));
+    let actor = string_or_no_content(payload.get("actor"));
+
+    format!("Jira comment by {actor} on {issue_key}: {body}")
+}
+
 fn extract_slack_entities(content: &str) -> Vec<Entity> {
     let mut entities = Vec::new();
 
@@ -92,6 +149,140 @@ fn extract_slack_entities(content: &str) -> Vec<Entity> {
     }
 
     entities
+}
+
+fn extract_linear_entities(payload: &Value, content: &str) -> Vec<Entity> {
+    let mut entities = Vec::new();
+
+    add_optional_entity(
+        &mut entities,
+        EntityType::Person,
+        payload.get("actor"),
+        0.85,
+    );
+    add_optional_entity(
+        &mut entities,
+        EntityType::Person,
+        payload.get("assignee"),
+        0.85,
+    );
+    add_optional_entity(&mut entities, EntityType::Team, payload.get("team"), 0.90);
+    add_optional_entity(
+        &mut entities,
+        EntityType::Topic,
+        payload.get("identifier"),
+        0.90,
+    );
+    add_optional_entity(
+        &mut entities,
+        EntityType::Topic,
+        payload.pointer("/issue/identifier"),
+        0.90,
+    );
+    add_optional_entity(
+        &mut entities,
+        EntityType::Topic,
+        payload.get("project"),
+        0.80,
+    );
+    add_optional_entity(&mut entities, EntityType::Topic, payload.get("cycle"), 0.80);
+    add_optional_entity(
+        &mut entities,
+        EntityType::Topic,
+        payload.get("status"),
+        0.70,
+    );
+    add_optional_entity(
+        &mut entities,
+        EntityType::Topic,
+        payload.get("priority"),
+        0.70,
+    );
+
+    for value in github_repo_mentions(content) {
+        add_entity(&mut entities, EntityType::Repo, value, 0.80);
+    }
+
+    entities
+}
+
+fn extract_jira_entities(payload: &Value, content: &str) -> Vec<Entity> {
+    let mut entities = Vec::new();
+
+    add_optional_entity(
+        &mut entities,
+        EntityType::Person,
+        payload.get("actor"),
+        0.85,
+    );
+    add_optional_entity(
+        &mut entities,
+        EntityType::Person,
+        payload.get("assignee"),
+        0.85,
+    );
+    add_optional_entity(
+        &mut entities,
+        EntityType::Team,
+        payload.get("project_key"),
+        0.90,
+    );
+    add_optional_entity(
+        &mut entities,
+        EntityType::Team,
+        payload.get("project_name"),
+        0.75,
+    );
+    add_optional_entity(
+        &mut entities,
+        EntityType::Topic,
+        payload.get("issue_key"),
+        0.90,
+    );
+    add_optional_entity(
+        &mut entities,
+        EntityType::Topic,
+        payload.get("status"),
+        0.75,
+    );
+    add_optional_entity(
+        &mut entities,
+        EntityType::Topic,
+        payload.get("priority"),
+        0.75,
+    );
+
+    for value in github_repo_mentions(content) {
+        add_entity(&mut entities, EntityType::Repo, value, 0.80);
+    }
+
+    entities
+}
+
+fn add_optional_entity(
+    entities: &mut Vec<Entity>,
+    entity_type: EntityType,
+    value: Option<&Value>,
+    confidence: f32,
+) {
+    if let Some(value) = value.and_then(value_as_entity_string) {
+        add_entity(entities, entity_type, value, confidence);
+    }
+}
+
+fn add_entity(entities: &mut Vec<Entity>, entity_type: EntityType, value: String, confidence: f32) {
+    if entities
+        .iter()
+        .any(|entity| entity.entity_type == entity_type && entity.value == value)
+    {
+        return;
+    }
+
+    entities.push(Entity {
+        entity_type,
+        value,
+        confidence,
+    });
 }
 
 fn person_mentions(content: &str) -> BTreeSet<String> {
@@ -214,6 +405,14 @@ fn is_repo_segment(value: &str) -> bool {
         && value.chars().all(|character| {
             character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
         })
+}
+
+fn value_as_entity_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(raw) => Some(raw.trim().to_owned()).filter(|value| !value.is_empty()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 fn string_or_no_content(value: Option<&Value>) -> String {
@@ -356,6 +555,92 @@ mod tests {
         assert!(entities.iter().any(|entity| {
             entity.entity_type == EntityType::Topic && entity.value == "#platform"
         }));
+        assert!(entities.iter().any(|entity| {
+            entity.entity_type == EntityType::Repo && entity.value == "Quazmoz/memoryops"
+        }));
+    }
+
+    #[test]
+    fn extract_linear_issue_content_and_entities() {
+        let event = RawEvent {
+            id: Uuid::now_v7(),
+            workspace_id: Uuid::now_v7(),
+            source: Source::Linear,
+            event_type: EventType::Issue,
+            actor: "Ada".to_owned(),
+            payload: json!({
+                "type": "Issue",
+                "object_type": "Issue",
+                "action": "create",
+                "identifier": "OPS-123",
+                "title": "Fix ingestion",
+                "status": "Todo",
+                "assignee": "Grace",
+                "priority": "High",
+                "team": "OPS",
+                "body": "See https://github.com/Quazmoz/memoryops/issues/1"
+            }),
+            idempotency_key: "linear:test".to_owned(),
+            occurred_at: Utc::now(),
+            ingested_at: Utc::now(),
+        };
+
+        let text = match extract_text(&event) {
+            Ok(text) => text,
+            Err(error) => panic!("Linear issue text should extract: {error}"),
+        };
+        let entities = extract_entities(&event, &text);
+
+        assert!(text.contains("OPS-123"));
+        assert!(entities
+            .iter()
+            .any(|entity| { entity.entity_type == EntityType::Person && entity.value == "Grace" }));
+        assert!(entities
+            .iter()
+            .any(|entity| { entity.entity_type == EntityType::Team && entity.value == "OPS" }));
+        assert!(entities.iter().any(|entity| {
+            entity.entity_type == EntityType::Repo && entity.value == "Quazmoz/memoryops"
+        }));
+    }
+
+    #[test]
+    fn extract_jira_issue_content_and_entities() {
+        let event = RawEvent {
+            id: Uuid::now_v7(),
+            workspace_id: Uuid::now_v7(),
+            source: Source::Jira,
+            event_type: EventType::Issue,
+            actor: "Ada".to_owned(),
+            payload: json!({
+                "type": "jira:issue_created",
+                "issue_key": "OPS-123",
+                "summary": "Fix ingestion",
+                "status": "To Do",
+                "assignee": "Grace",
+                "priority": "Critical",
+                "project_key": "OPS",
+                "project_name": "Operations",
+                "description": "See https://github.com/Quazmoz/memoryops/issues/1",
+                "actor": "Ada"
+            }),
+            idempotency_key: "jira:test".to_owned(),
+            occurred_at: Utc::now(),
+            ingested_at: Utc::now(),
+        };
+
+        let text = match extract_text(&event) {
+            Ok(text) => text,
+            Err(error) => panic!("Jira issue text should extract: {error}"),
+        };
+        let entities = extract_entities(&event, &text);
+
+        assert!(text.contains("OPS-123"));
+        assert!(entities
+            .iter()
+            .any(|entity| { entity.entity_type == EntityType::Person && entity.value == "Grace" }));
+        assert!(entities
+            .iter()
+            .any(|entity| { entity.entity_type == EntityType::Team && entity.value == "OPS" }));
         assert!(entities.iter().any(|entity| {
             entity.entity_type == EntityType::Repo && entity.value == "Quazmoz/memoryops"
         }));

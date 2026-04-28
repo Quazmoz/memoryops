@@ -1,4 +1,6 @@
 pub mod github;
+pub mod jira;
+pub mod linear;
 mod queue;
 mod router;
 pub mod slack;

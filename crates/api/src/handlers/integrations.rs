@@ -23,7 +23,8 @@ const MAX_PAYLOAD_SUMMARY_CHARS: usize = 240;
 #[derive(Debug, Deserialize)]
 pub struct CreateIntegrationRequest {
     pub source: Source,
-    pub webhook_secret: String,
+    #[serde(default)]
+    pub webhook_secret: Option<String>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -63,17 +64,21 @@ pub async fn create_integration(
     Json(request): Json<CreateIntegrationRequest>,
 ) -> AppResult<Json<IntegrationResponse>> {
     require_workspace(&auth, id)?;
-    if request.webhook_secret.is_empty() {
+    let webhook_secret = request
+        .webhook_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|secret| !secret.is_empty())
+        .map(ToOwned::to_owned);
+    if webhook_secret.is_none() && request.source != Source::Linear {
         return Err(AppError::Validation(
             "webhook_secret is required".to_owned(),
         ));
     }
 
-    let secret_hash = hash_secret(&request.webhook_secret)?;
-    let webhook_secret = if request.source == Source::Slack {
-        Some(request.webhook_secret.as_str())
-    } else {
-        None
+    let secret_hash = match webhook_secret.as_deref() {
+        Some(secret) => Some(hash_secret(secret)?),
+        None => None,
     };
     sqlx::query(
         r#"
@@ -87,8 +92,8 @@ pub async fn create_integration(
     )
     .bind(id)
     .bind(request.source)
-    .bind(secret_hash)
-    .bind(webhook_secret)
+    .bind(secret_hash.as_deref())
+    .bind(webhook_secret.as_deref())
     .execute(&state.db)
     .await
     .map_err(AppError::Database)?;

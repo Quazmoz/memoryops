@@ -1,6 +1,6 @@
 # MemoryOps — Feature List
 
-**Version:** 0.9.0  
+**Version:** 0.10.0  
 **Last Updated:** 2026-04-28
 
 This document tracks all planned features across the platform with current status and target milestone.
@@ -30,6 +30,9 @@ This document tracks all planned features across the platform with current statu
 | M7 | Slow path worker, embeddings, Qdrant writes, scheduler | 🟢 Complete |
 | M8 | Promotion pipeline | 🟢 Complete |
 | M9 | Slack ingestion | 🟢 Complete |
+| M10 | Linear + Jira ingestion | 🔴 Not started |
+| M11 | MCP server | 🔴 Not started |
+| M12 | Lifecycle configuration | 🔴 Not started |
 
 ---
 
@@ -64,6 +67,10 @@ This document tracks all planned features across the platform with current statu
 | Slack webhook receiver | 🟢 | M9 | Slack Events API receiver at POST /v1/ingest/slack |
 | Slack message ingestion | 🟢 | M9 | message, message.edited, app_mention |
 | Slack reaction ingestion | 🟢 | M9 | reaction_added with channel + message timestamp lineage |
+| Linear webhook receiver | 🔴 | M10 | X-Linear-Signature HMAC-SHA256 |
+| Linear event normalization | 🔴 | M10 | Issue, Comment, Project, Cycle → RawEvent |
+| Jira webhook receiver | 🔴 | M10 | X-Hub-Signature HMAC-SHA256 |
+| Jira event normalization | 🔴 | M10 | issue_created/updated/deleted, comment → RawEvent |
 
 ---
 
@@ -85,6 +92,8 @@ This document tracks all planned features across the platform with current statu
 | Promotion pipeline (episodic → semantic) | 🟢 | M8 | Cluster → threshold → summarize → promote |
 | Configurable promotion threshold | 🟢 | M8 | Per workspace |
 | Memory deduplication | 🟢 | M8 | Cosine similarity threshold |
+| Per-workspace decay half-life | 🔴 | M12 | decay_half_life_days in WorkspaceConfig |
+| Configurable pruning threshold | 🔴 | M12 | soft-delete threshold per workspace |
 
 ---
 
@@ -160,6 +169,19 @@ This document tracks all planned features across the platform with current statu
 | DELETE /v1/workspaces/:id/dlq/:job_id | 🟢 | M6 | |
 | GET /v1/workspaces/:id/export | 🟢 | M7 | JSONL streaming, cursor-paginated |
 | POST /v1/workspaces/:id/promote | 🟢 | M8 | Manual promotion pass with workspace lock |
+
+---
+
+## MCP Server
+
+| Feature | Status | Milestone | Notes |
+|---------|--------|-----------|-------|
+| MCP server crate scaffold | 🔴 | M11 | new crate: crates/mcp/ |
+| memory_retrieve tool | 🔴 | M11 | wraps POST /v1/retrieve |
+| memory_search tool | 🔴 | M11 | wraps POST /v1/memory/search |
+| memory_store tool | 🔴 | M11 | ingest a memory unit directly |
+| stdio + HTTP SSE transports | 🔴 | M11 | MCP 2025-06-18 spec |
+| MCP endpoint in docker-compose | 🔴 | M11 | |
 
 ---
 

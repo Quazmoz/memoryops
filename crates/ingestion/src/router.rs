@@ -2,7 +2,7 @@ use axum::{routing::post, Router};
 use common::AppState;
 use tower_http::trace::TraceLayer;
 
-use crate::{github, slack};
+use crate::{github, jira, linear, slack};
 
 pub fn ingestion_router() -> Router<AppState> {
     Router::new()
@@ -14,6 +14,11 @@ pub fn ingestion_router() -> Router<AppState> {
             "/v1/ingest/slack",
             post(slack::handler::handle_slack_webhook),
         )
+        .route(
+            "/v1/ingest/linear",
+            post(linear::handler::handle_linear_webhook),
+        )
+        .route("/v1/ingest/jira", post(jira::handler::handle_jira_webhook))
         .layer(TraceLayer::new_for_http())
 }
 

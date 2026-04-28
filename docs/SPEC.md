@@ -1,6 +1,6 @@
 # MemoryOps — Technical Specification
 
-**Version:** 0.9.0  
+**Version:** 0.10.0  
 **Status:** Active  
 **Last Updated:** 2026-04-28
 
@@ -31,11 +31,12 @@
 21. [Frontend Architecture](#21-frontend-architecture)
 22. [Audit Log](#22-audit-log)
 23. [Integration Health & DLQ](#23-integration-health--dlq)
-24. [Export & Backup](#24-export--backup)
-25. [Code Quality Standards](#25-code-quality-standards)
-26. [Non-Goals](#26-non-goals)
-27. [Risks & Mitigations](#27-risks--mitigations)
-28. [Milestones](#28-milestones)
+24. [MCP Server](#24-mcp-server)
+25. [Export & Backup](#25-export--backup)
+26. [Code Quality Standards](#26-code-quality-standards)
+27. [Non-Goals](#27-non-goals)
+28. [Risks & Mitigations](#28-risks--mitigations)
+29. [Milestones](#29-milestones)
 
 ---
 
@@ -1288,7 +1289,36 @@ pub struct IntegrationHealth {
 
 ---
 
-## 24. Export & Backup
+## 24. MCP Server
+
+M11 introduces a dedicated `crates/mcp/` server crate that exposes MemoryOps retrieval and storage workflows through the Model Context Protocol 2025-06-18 specification. The crate remains a scaffold during M10 and is not part of the runtime path until M11.
+
+### 24.1 Tools
+
+| Tool | Purpose | Backend Contract |
+|------|---------|------------------|
+| `memory_retrieve` | Return token-packed memory context with trace data | Wraps `POST /v1/retrieve` |
+| `memory_search` | Search memory units without token packing | Wraps `POST /v1/memory/search` |
+| `memory_store` | Store one memory unit directly for agent-authored memories | Writes through the ingestion/memory path with workspace ownership |
+
+Tool inputs must include enough scope information to resolve the target workspace and optional agent/user/repo scope. Tool outputs mirror the REST response schemas where practical so clients can share DTO handling.
+
+### 24.2 Transports
+
+| Transport | Status | Notes |
+|-----------|--------|-------|
+| stdio | Planned for local agent runtimes and editor-launched processes | MCP request/response over stdin/stdout |
+| HTTP SSE | Planned for daemonized deployments | HTTP endpoint with server-sent event stream per MCP 2025-06-18 |
+
+The docker-compose MCP endpoint is planned for M11 and should run separately from the REST API process while sharing the same Postgres, Redis, Qdrant, provider config, and workspace auth model.
+
+### 24.3 Auth
+
+MCP clients authenticate with a workspace API key during the MCP `initialize` handshake. The client passes the key as a Bearer token, and the MCP server validates it against the same workspace API key store used by REST requests. The resolved workspace becomes the default workspace context for all subsequent MCP tool calls on that session. Tools must reject cross-workspace IDs that do not match the initialized workspace.
+
+---
+
+## 25. Export & Backup
 
 - `GET /v1/workspaces/:id/export` — streams JSONL, one memory unit per line
 - Uses chunked transfer encoding — no in-memory buffer for large workspaces
@@ -1296,7 +1326,7 @@ pub struct IntegrationHealth {
 
 ---
 
-## 25. Code Quality Standards
+## 26. Code Quality Standards
 
 ### 25.1 Rust
 
@@ -1323,7 +1353,7 @@ pub struct IntegrationHealth {
 
 ---
 
-## 26. Non-Goals (v0.1)
+## 27. Non-Goals (v0.1)
 
 - Generic "second brain" or consumer product
 - Full agent runtime or framework
@@ -1337,7 +1367,7 @@ pub struct IntegrationHealth {
 
 ---
 
-## 27. Risks & Mitigations
+## 28. Risks & Mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|-----------|
@@ -1351,7 +1381,7 @@ pub struct IntegrationHealth {
 
 ---
 
-## 28. Milestones
+## 29. Milestones
 
 | # | Deliverable | Key Acceptance Criteria | Status |
 |---|-------------|------------------------|--------|
@@ -1364,4 +1394,6 @@ pub struct IntegrationHealth {
 | M7 | Slow path worker + embeddings + Qdrant write | MemoryUnit gets `embedding_id`; Qdrant point queryable; vector leg of hybrid search active | ✅ Complete |
 | M8 | Promotion pipeline (batch clustering) | Episodic cluster → Semantic MemoryUnit after threshold | ✅ Complete |
 | M9 | Slack ingestion | Slack message → MemoryUnit via same pipeline | ✅ Complete |
-| M10 | Demo | Agent failure → memory fix → trace walkthrough recorded | 🔴 Planned |
+| M10 | Linear + Jira ingestion | Linear/Jira webhooks validate signatures, normalize supported events to RawEvent, enqueue processor jobs, and produce MemoryUnits with source-specific scoring/entities | 🔴 Planned |
+| M11 | MCP server | `crates/mcp/` exposes `memory_retrieve`, `memory_search`, and `memory_store` over stdio and HTTP SSE with workspace API key auth | 🔴 Planned |
+| M12 | Lifecycle configuration | Workspace config controls decay half-life and pruning threshold per workspace | 🔴 Planned |
