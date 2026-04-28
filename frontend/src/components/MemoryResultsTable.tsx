@@ -20,14 +20,16 @@ type MemoryResultsTableProps = {
   rows: MemoryRow[];
   loading: boolean;
   pendingMemoryIds: string[];
-  onTogglePinned: (memory: MemoryUnit) => void;
+  onTogglePinned?: (memory: MemoryUnit) => void;
+  showPinControls?: boolean;
 };
 
-export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePinned }: MemoryResultsTableProps) {
+export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePinned, showPinControls = true }: MemoryResultsTableProps) {
   const navigate = useNavigate();
   const pendingIds = useMemo(() => new Set(pendingMemoryIds), [pendingMemoryIds]);
   const columns = useMemo<ColumnDef<MemoryRow>[]>(
-    () => [
+    () => {
+      const tableColumns: ColumnDef<MemoryRow>[] = [
       {
         id: "content",
         header: "Memory",
@@ -74,7 +76,10 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
         header: "Updated",
         cell: ({ row }) => <span className="whitespace-nowrap text-xs text-ink/65">{formatDateTime(row.original.updated_at)}</span>,
       },
-      {
+      ];
+
+      if (showPinControls) {
+        tableColumns.push({
         id: "pin",
         header: "Pin",
         cell: ({ row }) => {
@@ -90,16 +95,19 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
               disabled={pendingIds.has(memory.id)}
               onClick={(event) => {
                 event.stopPropagation();
-                onTogglePinned(memory);
+                onTogglePinned?.(memory);
               }}
             >
               <Icon className="h-4 w-4" aria-hidden="true" />
             </Button>
           );
         },
-      },
-    ],
-    [onTogglePinned, pendingIds],
+        });
+      }
+
+      return tableColumns;
+    },
+    [onTogglePinned, pendingIds, showPinControls],
   );
   const table = useReactTable({ data: rows, columns, getCoreRowModel: getCoreRowModel() });
 

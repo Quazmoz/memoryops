@@ -124,7 +124,14 @@ pub async fn update_workspace_config(
             promotion_threshold = $3,
             dedup_cosine_threshold = $4
         WHERE id = $1 AND deleted_at IS NULL
-        RETURNING id, name, config, promotion_threshold, dedup_cosine_threshold, created_at, updated_at, deleted_at
+        RETURNING id,
+                  name,
+                  config,
+                  promotion_threshold::REAL AS promotion_threshold,
+                  dedup_cosine_threshold::REAL AS dedup_cosine_threshold,
+                  created_at,
+                  updated_at,
+                  deleted_at
         "#,
     )
     .bind(id)
@@ -203,7 +210,14 @@ pub async fn promote(
 async fn get_workspace_by_id(state: &AppState, id: Uuid) -> AppResult<Option<Workspace>> {
     sqlx::query_as::<_, Workspace>(
         r#"
-        SELECT id, name, config, promotion_threshold, dedup_cosine_threshold, created_at, updated_at, deleted_at
+        SELECT id,
+               name,
+               config,
+               promotion_threshold::REAL AS promotion_threshold,
+               dedup_cosine_threshold::REAL AS dedup_cosine_threshold,
+               created_at,
+               updated_at,
+               deleted_at
         FROM workspaces
         WHERE id = $1 AND deleted_at IS NULL
         "#,

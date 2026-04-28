@@ -20,6 +20,8 @@ mod handlers;
 mod middleware;
 mod security;
 
+const DEV_WEBHOOK_SECRET: &str = "dev-placeholder";
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_owned());
@@ -77,8 +79,8 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
     let redis_url = std::env::var("REDIS_URL").map_err(|_| anyhow::anyhow!("REDIS_URL not set"))?;
     let qdrant_url =
         std::env::var("QDRANT_URL").map_err(|_| anyhow::anyhow!("QDRANT_URL not set"))?;
-    let github_webhook_secret = std::env::var("GITHUB_WEBHOOK_SECRET")
-        .map_err(|_| anyhow::anyhow!("GITHUB_WEBHOOK_SECRET not set"))?;
+    let app_env = std::env::var("APP_ENV").unwrap_or_else(|_| "production".to_owned());
+    let github_webhook_secret = webhook_secret_from_env("GITHUB_WEBHOOK_SECRET", &app_env)?;
 
     let db = PgPoolOptions::new()
         .max_connections(config.database.max_connections)
@@ -102,6 +104,17 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         config: Arc::new(config),
         github_webhook_secret,
     })
+}
+
+fn webhook_secret_from_env(name: &'static str, app_env: &str) -> anyhow::Result<String> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Ok(value),
+        _ if app_env == "development" => {
+            tracing::warn!("{name} not set — using dev placeholder. Do not use in production.");
+            Ok(DEV_WEBHOOK_SECRET.to_owned())
+        }
+        _ => Err(anyhow::anyhow!("{name} not set")),
+    }
 }
 
 fn build_embedding_provider(config: &AppConfig) -> Arc<dyn EmbeddingProvider> {

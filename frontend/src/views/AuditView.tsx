@@ -17,11 +17,13 @@ const PAGE_SIZE = 50;
 
 export function AuditView() {
   const workspaceId = useAppStore((state) => state.workspaceId);
+  const apiKey = useAppStore((state) => state.apiKey);
   const [offset, setOffset] = useState(0);
+  const authReady = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
   const audit = useQuery({
     queryKey: ["workspace", workspaceId, "audit", offset],
     queryFn: () => listAuditEvents(workspaceId, PAGE_SIZE, offset),
-    enabled: workspaceId.trim().length > 0,
+    enabled: authReady,
     staleTime: 30_000,
     refetchInterval: 30_000,
   });

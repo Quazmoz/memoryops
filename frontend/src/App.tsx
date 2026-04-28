@@ -6,10 +6,11 @@ import { AuditView } from "./views/AuditView";
 import { Dashboard } from "./views/Dashboard";
 import { Ingest } from "./views/Ingest";
 import { IntegrationsView } from "./views/IntegrationsView";
+import { LifecycleView } from "./views/LifecycleView";
 import { MemoryDetail } from "./views/MemoryDetail";
 import { MemoryExplorer } from "./views/MemoryExplorer";
+import { RetrievalTraceView } from "./views/RetrievalTraceView";
 import { SettingsView } from "./views/SettingsView";
-import { StubView } from "./views/StubView";
 
 export default function App() {
   return (
@@ -21,8 +22,8 @@ export default function App() {
           <Route path="/memory/:id" element={<MemoryDetail />} />
           <Route path="/ingest" element={<Ingest />} />
           <Route path="/settings" element={<SettingsView />} />
-          <Route path="/trace" element={<StubView title="Retrieval Trace" message="Promotion traces available in M8" />} />
-          <Route path="/lifecycle" element={<StubView title="Lifecycle" message="Promotion timeline available in M8" />} />
+          <Route path="/trace" element={<RetrievalTraceView />} />
+          <Route path="/lifecycle" element={<LifecycleView />} />
           <Route path="/integrations" element={<IntegrationsView />} />
           <Route path="/audit" element={<AuditView />} />
           <Route path="*" element={<Navigate to="/" replace />} />

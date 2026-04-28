@@ -5,6 +5,9 @@ import type {
   MemoryTypeFilter,
   MemoryUnit,
   ReadinessResponse,
+  RetrieveRequest,
+  RetrieveResponse,
+  RetrievalTrace,
   SearchRequest,
   SearchResponse,
   SortDirection,
@@ -75,6 +78,17 @@ export function searchMemory(request: SearchRequest): Promise<SearchResponse> {
     method: "POST",
     body: request,
   });
+}
+
+export function retrieveMemory(request: RetrieveRequest): Promise<RetrieveResponse> {
+  return apiRequest<RetrieveResponse>("/v1/retrieve", {
+    method: "POST",
+    body: request,
+  });
+}
+
+export function getRetrievalTrace(workspaceId: string, queryId: string): Promise<RetrievalTrace> {
+  return apiRequest<RetrievalTrace>(`/v1/retrieve/trace/${queryId}${queryString({ workspace_id: workspaceId })}`);
 }
 
 export function buildSearchRequest(workspaceId: string, criteria: SearchCriteria): SearchRequest {

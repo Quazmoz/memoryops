@@ -82,6 +82,58 @@ export type SearchResponse = {
   query_id: string;
 };
 
+export type RetrieveRequest = {
+  query: string;
+  workspace_id: string;
+  scope?: MemoryScope;
+  token_budget?: number;
+  mode?: SearchMode;
+  include_trace?: boolean;
+};
+
+export type ScoreBreakdown = {
+  semantic_similarity: number;
+  keyword_rank: number;
+  importance: number;
+  recency: number;
+  source_authority: number;
+};
+
+export type PackedMemory = {
+  id: string;
+  content: string;
+  memory_type: MemoryType | string;
+  importance_score: number;
+  decay_score: number;
+  entities: MemoryEntity[];
+  score_breakdown: ScoreBreakdown;
+};
+
+export type RetrievalTraceEntry = {
+  memory_id: string;
+  score: number;
+  included: boolean;
+  exclusion_reason?: string | null;
+  score_breakdown: ScoreBreakdown;
+};
+
+export type RetrievalTrace = {
+  query_id: string;
+  query: string;
+  mode: SearchMode;
+  candidates_evaluated: number;
+  included_count: number;
+  excluded_count: number;
+  entries: RetrievalTraceEntry[];
+};
+
+export type RetrieveResponse = {
+  query_id: string;
+  memories: PackedMemory[];
+  total_tokens: number;
+  trace?: RetrievalTrace | null;
+};
+
 export type UpdateMemoryRequest = {
   pinned?: boolean;
   tags?: string[];

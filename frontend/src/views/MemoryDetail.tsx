@@ -17,7 +17,7 @@ import { validateImportanceScore } from "../lib/validation";
 import { useAppStore } from "../store/app-store";
 
 export function MemoryDetail() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useParams<{ id?: string }>();
   const workspaceId = useAppStore((state) => state.workspaceId);
   const memoryQuery = useMemoryDetail(workspaceId, id);
   const updateMemory = useUpdateMemory(workspaceId);
@@ -35,6 +35,10 @@ export function MemoryDetail() {
       setImportanceError(null);
     }
   }, [memory]);
+
+  if (!id) {
+    return null;
+  }
 
   function addTag(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

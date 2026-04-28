@@ -2,7 +2,6 @@ import { Activity, Database, GitBranch, Home, KeyRound, PlugZap, ScrollText, Set
 import type { ComponentType, ReactNode, SVGProps } from "react";
 import { NavLink } from "react-router-dom";
 
-import { Badge } from "../ui/badge";
 import { cn } from "../../lib/utils";
 
 type AppShellProps = {
@@ -12,15 +11,12 @@ type AppShellProps = {
 const primaryLinks = [
   { to: "/", label: "Dashboard", icon: Home, testId: "nav-dashboard" },
   { to: "/memory", label: "Memory", icon: Database, testId: "nav-memory" },
+  { to: "/trace", label: "Traces", icon: Activity, testId: "nav-trace" },
+  { to: "/lifecycle", label: "Lifecycle", icon: GitBranch, testId: "nav-lifecycle" },
   { to: "/ingest", label: "Ingest", icon: Send, testId: "nav-ingest" },
   { to: "/integrations", label: "Integrations", icon: PlugZap, testId: "nav-integrations" },
   { to: "/audit", label: "Audit", icon: ScrollText, testId: "nav-audit" },
   { to: "/settings", label: "Settings", icon: Settings, testId: "nav-settings" },
-];
-
-const stubLinks = [
-  { to: "/trace", label: "Traces", icon: Activity, badge: "M8", testId: "nav-trace" },
-  { to: "/lifecycle", label: "Lifecycle", icon: GitBranch, badge: "M8", testId: "nav-lifecycle" },
 ];
 
 export function AppShell({ children }: AppShellProps) {
@@ -42,15 +38,6 @@ export function AppShell({ children }: AppShellProps) {
             <SidebarLink key={link.to} {...link} />
           ))}
         </nav>
-
-        <div className="border-t border-line px-3 py-3">
-          <p className="mb-2 hidden px-2 text-xs font-medium uppercase text-ink/45 lg:block">Later milestones</p>
-          <div className="flex gap-2 overflow-x-auto lg:flex-col lg:gap-1 lg:overflow-visible">
-            {stubLinks.map((link) => (
-              <SidebarLink key={link.to} {...link} />
-            ))}
-          </div>
-        </div>
       </aside>
 
       <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">{children}</main>
@@ -61,12 +48,11 @@ export function AppShell({ children }: AppShellProps) {
 type SidebarLinkProps = {
   to: string;
   label: string;
-  badge?: string;
   testId: string;
   icon: ComponentType<SVGProps<SVGSVGElement>>;
 };
 
-function SidebarLink({ to, label, badge, testId, icon: Icon }: SidebarLinkProps) {
+function SidebarLink({ to, label, testId, icon: Icon }: SidebarLinkProps) {
   return (
     <NavLink
       to={to}
@@ -81,11 +67,6 @@ function SidebarLink({ to, label, badge, testId, icon: Icon }: SidebarLinkProps)
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden={true} />
       <span className="truncate">{label}</span>
-      {badge ? (
-        <Badge className="ml-auto" variant="muted">
-          {badge}
-        </Badge>
-      ) : null}
     </NavLink>
   );
 }

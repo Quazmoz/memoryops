@@ -15,18 +15,20 @@ import { useAppStore } from "../store/app-store";
 
 export function IntegrationsView() {
   const workspaceId = useAppStore((state) => state.workspaceId);
+  const apiKey = useAppStore((state) => state.apiKey);
   const queryClient = useQueryClient();
+  const authReady = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
   const integrationsQueryKey = ["workspace", workspaceId, "integrations"];
   const dlqQueryKey = ["workspace", workspaceId, "dlq"];
   const integrations = useQuery({
     queryKey: integrationsQueryKey,
     queryFn: () => listIntegrations(workspaceId),
-    enabled: workspaceId.trim().length > 0,
+    enabled: authReady,
   });
   const dlq = useQuery({
     queryKey: dlqQueryKey,
     queryFn: () => listDlq(workspaceId),
-    enabled: workspaceId.trim().length > 0,
+    enabled: authReady,
   });
   const retryMutation = useMutation({
     mutationFn: (jobId: string) => retryDlqJob(workspaceId, jobId),
@@ -59,7 +61,7 @@ export function IntegrationsView() {
           <p className="text-sm font-medium text-accent-strong">Operations</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Integrations</h1>
         </div>
-        <Button type="button" variant="secondary" size="sm" onClick={() => void Promise.all([integrations.refetch(), dlq.refetch()])}>
+        <Button type="button" variant="secondary" size="sm" onClick={() => void Promise.all([integrations.refetch(), dlq.refetch()])} disabled={!authReady}>
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
           Refresh
         </Button>

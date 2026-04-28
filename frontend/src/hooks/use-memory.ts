@@ -18,6 +18,7 @@ import {
 } from "../api/memory";
 import type { ListMemoryResponse, MemoryUnit, SearchResponse, UpdateMemoryRequest } from "../api/types";
 import { validateImportanceScore } from "../lib/validation";
+import { useAppStore } from "../store/app-store";
 
 export const memoryKeys = {
   workspace: (workspaceId: string) => ["workspace", workspaceId] as const,
@@ -43,25 +44,32 @@ export function useReadiness(workspaceId: string) {
 }
 
 export function useMemoryList(workspaceId: string, params: MemoryListParams) {
+  const apiKey = useAppStore((state) => state.apiKey);
+
   return useQuery({
     queryKey: memoryKeys.list(workspaceId, params),
     queryFn: () => listMemory(workspaceId, params),
+    enabled: hasWorkspaceAuth(workspaceId, apiKey),
   });
 }
 
 export function useMemoryDetail(workspaceId: string, id: string | undefined) {
+  const apiKey = useAppStore((state) => state.apiKey);
+
   return useQuery({
     queryKey: memoryKeys.detail(workspaceId, id ?? "missing"),
     queryFn: () => getMemory(workspaceId, id ?? ""),
-    enabled: Boolean(id),
+    enabled: hasWorkspaceAuth(workspaceId, apiKey) && Boolean(id?.trim()),
   });
 }
 
 export function useMemorySearch(workspaceId: string, criteria: SearchCriteria) {
+  const apiKey = useAppStore((state) => state.apiKey);
+
   return useQuery({
     queryKey: memoryKeys.search(workspaceId, criteria),
     queryFn: () => searchMemory(buildSearchRequest(workspaceId, criteria)),
-    enabled: criteria.query.trim().length > 0,
+    enabled: hasWorkspaceAuth(workspaceId, apiKey) && criteria.query.trim().length > 0,
   });
 }
 
@@ -164,4 +172,8 @@ function validatePatch(patch: UpdateMemoryRequest): void {
   if (message) {
     throw new Error(message);
   }
+}
+
+function hasWorkspaceAuth(workspaceId: string, apiKey: string): boolean {
+  return workspaceId.trim().length > 0 && apiKey.trim().length > 0;
 }
