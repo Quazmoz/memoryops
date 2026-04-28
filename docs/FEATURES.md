@@ -34,6 +34,7 @@ This document tracks all planned features across the platform with current statu
 | M11 | MCP server | 🟢 Complete |
 | M12 | Lifecycle configuration | 🟢 Complete |
 | M13 | Workspace stats endpoint + Dashboard KPIs | 🟢 Complete |
+| M14 | Retrieval Trace view (live data) | 🟢 Complete |
 
 ---
 
@@ -226,7 +227,7 @@ This document tracks all planned features across the platform with current statu
 | Pin / Tag / Importance override actions | 🟢 | M5 | PATCH /v1/memory/:id (optimistic cache update) |
 | Webhook tester (fire real GitHub payloads) | 🟢 | M5 | POST /v1/ingest/github |
 | Settings view (workspace config, read-only) | 🟢 | M5 | |
-| Retrieval Trace view (stubbed) | 🟢 | M5 | Wired in M8 |
+| Retrieval Trace view (live query + trace drill-down) | 🟢 | M14 | Replaces M5 stub |
 | Lifecycle / Promotion Timeline (stubbed) | 🟢 | M5 | Wired in M8 |
 | Integration Status view (stubbed) | 🟢 | M5 | |
 | Audit Log view (stubbed) | 🟢 | M5 | |

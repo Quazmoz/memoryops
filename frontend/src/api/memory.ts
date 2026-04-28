@@ -1,6 +1,7 @@
 import { apiRequest, parseResponse, queryString } from "./client";
 import type {
   ListMemoryResponse,
+  JsonValue,
   MemoryType,
   MemoryTypeFilter,
   MemoryUnit,
@@ -80,15 +81,46 @@ export function searchMemory(request: SearchRequest): Promise<SearchResponse> {
   });
 }
 
-export function retrieveMemory(request: RetrieveRequest): Promise<RetrieveResponse> {
+export function postRetrieve(workspaceId: string, request: RetrieveRequest): Promise<RetrieveResponse> {
   return apiRequest<RetrieveResponse>("/v1/retrieve", {
     method: "POST",
-    body: request,
+    body: retrieveRequestBody(workspaceId, request),
   });
+}
+
+export function retrieveMemory(request: RetrieveRequest & { workspace_id: string }): Promise<RetrieveResponse> {
+  const { workspace_id: workspaceId, ...retrieveRequest } = request;
+  return postRetrieve(workspaceId, retrieveRequest);
 }
 
 export function getRetrievalTrace(workspaceId: string, queryId: string): Promise<RetrievalTrace> {
   return apiRequest<RetrievalTrace>(`/v1/retrieve/trace/${queryId}${queryString({ workspace_id: workspaceId })}`);
+}
+
+function retrieveRequestBody(workspaceId: string, request: RetrieveRequest): Record<string, JsonValue> {
+  const body: Record<string, JsonValue> = {
+    query: request.query,
+    workspace_id: workspaceId,
+    mode: request.mode ?? request.search_mode ?? "hybrid",
+  };
+
+  if (request.limit !== undefined) {
+    body.limit = request.limit;
+  }
+
+  if (request.token_budget !== undefined) {
+    body.token_budget = request.token_budget;
+  }
+
+  if (request.include_trace !== undefined) {
+    body.include_trace = request.include_trace;
+  }
+
+  if (request.scope !== undefined) {
+    body.scope = request.scope as JsonValue;
+  }
+
+  return body;
 }
 
 export function buildSearchRequest(workspaceId: string, criteria: SearchCriteria): SearchRequest {

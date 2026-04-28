@@ -84,9 +84,10 @@ export type SearchResponse = {
 
 export type RetrieveRequest = {
   query: string;
-  workspace_id: string;
+  limit?: number;
   scope?: MemoryScope;
   token_budget?: number;
+  search_mode?: SearchMode;
   mode?: SearchMode;
   include_trace?: boolean;
 };
@@ -100,37 +101,65 @@ export type ScoreBreakdown = {
 };
 
 export type PackedMemory = {
-  id: string;
+  id?: string;
+  memory_id?: string;
   content: string;
   memory_type: MemoryType | string;
   importance_score: number;
   decay_score: number;
-  entities: MemoryEntity[];
-  score_breakdown: ScoreBreakdown;
+  rrf_score?: number;
+  token_count?: number | null;
+  tags?: string[];
+  created_at?: string;
+  entities?: MemoryEntity[];
+  score_breakdown?: ScoreBreakdown;
 };
 
-export type RetrievalTraceEntry = {
+export type TraceCandidate = {
   memory_id: string;
-  score: number;
+  content_snippet?: string;
+  memory_type?: MemoryType | string;
+  keyword_score?: number | null;
+  vector_score?: number | null;
+  rrf_score?: number;
+  decay_score?: number;
+  importance_score?: number;
+  final_score?: number;
+  token_count?: number | null;
+  score?: number;
   included: boolean;
   exclusion_reason?: string | null;
-  score_breakdown: ScoreBreakdown;
+  score_breakdown?: ScoreBreakdown;
 };
+
+export type RetrievalTraceEntry = TraceCandidate;
 
 export type RetrievalTrace = {
   query_id: string;
-  query: string;
-  mode: SearchMode;
-  candidates_evaluated: number;
+  query?: string;
+  query_text?: string;
+  mode?: SearchMode;
+  search_mode?: string;
+  created_at?: string;
+  elapsed_ms?: number;
+  total_candidates?: number;
+  candidates_evaluated?: number;
   included_count: number;
-  excluded_count: number;
-  entries: RetrievalTraceEntry[];
+  excluded_count?: number;
+  token_budget?: number;
+  token_count?: number;
+  entries?: RetrievalTraceEntry[];
+  candidates?: TraceCandidate[];
 };
 
 export type RetrieveResponse = {
   query_id: string;
-  memories: PackedMemory[];
-  total_tokens: number;
+  memories?: PackedMemory[];
+  items?: PackedMemory[];
+  total_tokens?: number;
+  total_candidates?: number;
+  token_count?: number;
+  elapsed_ms?: number;
   trace?: RetrievalTrace | null;
 };
 
