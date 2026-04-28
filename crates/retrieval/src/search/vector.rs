@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use common::{
     error::{AppResult, ProviderError},
-    models::{MemoryScope, MemoryType},
+    models::MemoryType,
     providers::EmbeddingProvider,
     AppError, AppState,
 };
@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{
     dto::{
         memory_type_as_str, normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto,
-        SearchRequest, MIN_SCORE_THRESHOLD,
+        ScopeFilter, SearchRequest, MIN_SCORE_THRESHOLD,
     },
     store,
 };
@@ -34,7 +34,7 @@ pub async fn vector_search(
     embedding_provider: &Arc<dyn EmbeddingProvider>,
     workspace_id: Uuid,
     query: &str,
-    scope: Option<&MemoryScope>,
+    scope: Option<&ScopeFilter>,
     memory_types: Option<&[String]>,
     limit: u64,
 ) -> AppResult<Vec<ScoredCandidate>> {
@@ -80,12 +80,13 @@ pub async fn vector_search_results(
     limit: u32,
 ) -> AppResult<Vec<MemoryResult>> {
     let memory_types = normalized_memory_types(req)?;
+    let scope = merged_scope_filter(req);
     let candidates = vector_search(
         &state.qdrant,
         &state.embedding_provider,
         req.workspace_id,
         &req.query,
-        None,
+        scope.as_ref(),
         memory_types.as_deref(),
         VECTOR_CANDIDATE_LIMIT.max(u64::from(limit)),
     )
@@ -125,7 +126,7 @@ pub async fn vector_search_results(
 
 pub fn build_vector_filter(
     workspace_id: Uuid,
-    scope: Option<&MemoryScope>,
+    scope: Option<&ScopeFilter>,
     memory_types: Option<&[String]>,
 ) -> Filter {
     let mut conditions = vec![Condition::matches("workspace_id", workspace_id.to_string())];
@@ -147,6 +148,28 @@ pub fn build_vector_filter(
     }
 
     Filter::must(conditions)
+}
+
+fn merged_scope_filter(req: &SearchRequest) -> Option<ScopeFilter> {
+    let request_scope = req.scope.as_ref();
+    let filters = req.filters.as_ref();
+    let merged = ScopeFilter {
+        agent_id: request_scope
+            .and_then(|scope| scope.agent_id.clone())
+            .or_else(|| filters.and_then(|filters| filters.agent_id.clone())),
+        user_id: request_scope
+            .and_then(|scope| scope.user_id.clone())
+            .or_else(|| filters.and_then(|filters| filters.user_id.clone())),
+        repo: request_scope
+            .and_then(|scope| scope.repo.clone())
+            .or_else(|| filters.and_then(|filters| filters.repo.clone())),
+    };
+
+    if merged.is_empty() {
+        None
+    } else {
+        Some(merged)
+    }
 }
 
 fn scored_point_uuid(point: &ScoredPoint) -> Option<Uuid> {
@@ -171,8 +194,7 @@ mod tests {
     #[test]
     fn vector_filter_includes_workspace_id() {
         let workspace_id = Uuid::now_v7();
-        let scope = MemoryScope {
-            workspace_id,
+        let scope = ScopeFilter {
             agent_id: Some("agent".to_owned()),
             user_id: Some("user".to_owned()),
             repo: Some("Quazmoz/memoryops".to_owned()),

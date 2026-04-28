@@ -11,6 +11,7 @@ import type {
   RetrievalTrace,
   SearchRequest,
   SearchResponse,
+  ScopeFilter,
   SortDirection,
   SortField,
   UpdateMemoryRequest,
@@ -22,6 +23,9 @@ export type MemoryListParams = {
   memoryType?: MemoryTypeFilter;
   pinned?: boolean;
   minImportance?: number;
+  agentId?: string;
+  userId?: string;
+  repo?: string;
   sort?: SortField;
   direction?: SortDirection;
 };
@@ -32,6 +36,9 @@ export type SearchCriteria = {
   pinned: boolean;
   minImportance: number;
   tags: string[];
+  agentId?: string;
+  userId?: string;
+  repo?: string;
   limit: number;
   offset: number;
 };
@@ -56,6 +63,9 @@ export function listMemory(workspaceId: string, params: MemoryListParams): Promi
     memory_type: memoryType,
     pinned: params.pinned,
     min_importance: params.minImportance && params.minImportance > 0 ? params.minImportance : undefined,
+    agent_id: optionalText(params.agentId),
+    user_id: optionalText(params.userId),
+    repo: optionalText(params.repo),
     sort: params.sort,
     direction: params.direction,
   });
@@ -143,6 +153,17 @@ export function buildSearchRequest(workspaceId: string, criteria: SearchCriteria
     filters.tags = criteria.tags;
   }
 
+  const scope = scopeFilter(criteria.agentId, criteria.userId, criteria.repo);
+  if (scope.agent_id !== undefined) {
+    filters.agent_id = scope.agent_id;
+  }
+  if (scope.user_id !== undefined) {
+    filters.user_id = scope.user_id;
+  }
+  if (scope.repo !== undefined) {
+    filters.repo = scope.repo;
+  }
+
   const request: SearchRequest = {
     query,
     workspace_id: workspaceId,
@@ -193,6 +214,30 @@ function sortableValue(memory: MemoryUnit, field: SortField): number {
   const raw = field === "created_at" ? memory.created_at : memory.updated_at;
   const timestamp = Date.parse(raw);
   return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function scopeFilter(agentId: string | undefined, userId: string | undefined, repo: string | undefined): ScopeFilter {
+  const filter: ScopeFilter = {};
+  const normalizedAgentId = optionalText(agentId);
+  const normalizedUserId = optionalText(userId);
+  const normalizedRepo = optionalText(repo);
+
+  if (normalizedAgentId !== undefined) {
+    filter.agent_id = normalizedAgentId;
+  }
+  if (normalizedUserId !== undefined) {
+    filter.user_id = normalizedUserId;
+  }
+  if (normalizedRepo !== undefined) {
+    filter.repo = normalizedRepo;
+  }
+
+  return filter;
+}
+
+function optionalText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function isReadinessPayload(value: unknown): value is Omit<ReadinessResponse, "httpStatus"> {

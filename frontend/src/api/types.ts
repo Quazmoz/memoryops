@@ -22,6 +22,12 @@ export type MemoryScope = {
   repo?: string | null;
 };
 
+export type ScopeFilter = {
+  agent_id?: string;
+  user_id?: string;
+  repo?: string;
+};
+
 export type MemoryUnit = {
   id: string;
   workspace_id: string;
@@ -58,6 +64,9 @@ export type SearchFilters = {
   min_importance?: number;
   pinned?: boolean;
   tags?: string[];
+  agent_id?: string;
+  user_id?: string;
+  repo?: string;
 };
 
 export type SearchRequest = {
@@ -67,6 +76,7 @@ export type SearchRequest = {
   limit?: number;
   offset?: number;
   filters?: SearchFilters;
+  scope?: ScopeFilter;
   memory_types?: MemoryType[];
 };
 
@@ -85,7 +95,7 @@ export type SearchResponse = {
 export type RetrieveRequest = {
   query: string;
   limit?: number;
-  scope?: MemoryScope;
+  scope?: ScopeFilter;
   token_budget?: number;
   search_mode?: SearchMode;
   mode?: SearchMode;
@@ -237,6 +247,18 @@ export type WorkspaceStats = {
   oldest_memory_at: string | null;
   newest_memory_at: string | null;
 };
+
+export interface StatsHistoryPoint {
+  date: string;
+  created: number;
+  promoted: number;
+  soft_deleted: number;
+}
+
+export interface StatsHistory {
+  days: number;
+  series: StatsHistoryPoint[];
+}
 
 export type PromotionReport = {
   clusters_found: number;

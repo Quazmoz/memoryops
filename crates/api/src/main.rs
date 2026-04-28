@@ -376,6 +376,15 @@ mod tests {
     }
 
     async fn insert_memory(pool: &PgPool, workspace_id: Uuid, content: &str) -> Uuid {
+        insert_memory_with_repo(pool, workspace_id, content, "Quazmoz/memoryops").await
+    }
+
+    async fn insert_memory_with_repo(
+        pool: &PgPool,
+        workspace_id: Uuid,
+        content: &str,
+        repo: &str,
+    ) -> Uuid {
         let memory_id = Uuid::now_v7();
         let result = sqlx::query(
             r#"
@@ -398,7 +407,7 @@ mod tests {
             "workspace_id": workspace_id,
             "agent_id": null,
             "user_id": null,
-            "repo": "Quazmoz/memoryops"
+            "repo": repo
         }))
         .bind(MemoryType::Episodic)
         .bind(content)
@@ -597,6 +606,64 @@ mod tests {
             trace.get("query_id").and_then(Value::as_str),
             Some(query_id_text.as_str())
         );
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn retrieve_scope_filter_isolates_by_repo(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let memory_a = insert_memory_with_repo(
+            &pool,
+            workspace_id,
+            "alpha deployment memory for repo scope",
+            "Quazmoz/memoryops",
+        )
+        .await;
+        let memory_b = insert_memory_with_repo(
+            &pool,
+            workspace_id,
+            "alpha deployment memory for other repo",
+            "Quazmoz/other",
+        )
+        .await;
+        let app = router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::POST,
+                "/v1/retrieve".to_owned(),
+                Some(&api_key),
+                json!({
+                    "query": "alpha deployment memory",
+                    "workspace_id": workspace_id,
+                    "mode": "keyword",
+                    "scope": { "repo": "Quazmoz/memoryops" },
+                    "token_budget": 8096
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("scoped retrieve request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let memories = match body.get("memories").and_then(Value::as_array) {
+            Some(memories) => memories,
+            None => panic!("retrieve response should include memories array"),
+        };
+        let memory_a_text = memory_a.to_string();
+        let memory_b_text = memory_b.to_string();
+
+        assert_eq!(memories.len(), 1);
+        assert!(memories.iter().any(|memory| {
+            memory.get("id").and_then(Value::as_str) == Some(memory_a_text.as_str())
+        }));
+        assert!(!memories.iter().any(|memory| {
+            memory.get("id").and_then(Value::as_str) == Some(memory_b_text.as_str())
+        }));
     }
 
     #[sqlx::test(migrations = "../../migrations")]

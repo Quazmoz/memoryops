@@ -102,10 +102,23 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
             <div className="grid gap-4">
               <div className="rounded-md border border-line bg-soft px-3 py-2 font-mono text-xs text-ink/70">{workspaceId}</div>
               {!plaintextKey ? (
-                <Button type="button" onClick={() => keyMutation.mutate()} disabled={keyMutation.isPending || workspaceId.trim().length === 0}>
-                  {keyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
-                  {keyMutation.isPending ? "Creating" : "Create API Key"}
-                </Button>
+                <div className="grid gap-4">
+                  <Button type="button" onClick={() => keyMutation.mutate()} disabled={keyMutation.isPending || workspaceId.trim().length === 0}>
+                    {keyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
+                    {keyMutation.isPending ? "Creating" : "Create API Key"}
+                  </Button>
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-line" /></div>
+                    <div className="relative flex justify-center text-xs uppercase"><span className="bg-soft px-2 text-ink/45">Or use existing</span></div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input id="existing-key-input" placeholder="Paste API key (mops_...)" />
+                    <Button type="button" variant="secondary" onClick={() => {
+                      const val = (document.getElementById("existing-key-input") as HTMLInputElement)?.value.trim();
+                      if (val) setWorkspace(workspaceId, val);
+                    }}>Submit</Button>
+                  </div>
+                </div>
               ) : (
                 <div className="grid gap-3">
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">

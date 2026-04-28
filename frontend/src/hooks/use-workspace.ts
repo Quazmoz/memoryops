@@ -17,7 +17,7 @@ export function useWorkspaceStats(workspaceId: string) {
   });
 }
 
-export function useWorkspaceStatsHistory(workspaceId: string, days = 30) {
+export function useStatsHistory(workspaceId: string, days = 30) {
   const apiKey = useAppStore((state) => state.apiKey);
 
   return useQuery({
@@ -26,6 +26,10 @@ export function useWorkspaceStatsHistory(workspaceId: string, days = 30) {
     enabled: workspaceId.trim().length > 0 && apiKey.trim().length > 0,
     staleTime: 5 * 60 * 1000,
   });
+}
+
+export function useWorkspaceStatsHistory(workspaceId: string, days = 30) {
+  return useStatsHistory(workspaceId, days);
 }
 
 export function useRetrieve() {

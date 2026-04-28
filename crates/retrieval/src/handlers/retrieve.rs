@@ -9,7 +9,7 @@ use chrono::{Duration, Utc};
 use common::{
     auth::AuthContext,
     error::AppResult,
-    models::{Entity, MemoryScope, MemoryUnit},
+    models::{Entity, MemoryUnit},
     AppError, AppState,
 };
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    dto::{MemoryResult, SearchMode, SearchRequest, MAX_LIMIT},
+    dto::{MemoryResult, ScopeFilter, SearchMode, SearchRequest, MAX_LIMIT},
     search::{hybrid, keyword, vector},
     store,
 };
@@ -30,7 +30,7 @@ const DEFAULT_TRACE_TTL_DAYS: i64 = 30;
 pub struct RetrieveRequest {
     pub query: String,
     pub workspace_id: Uuid,
-    pub scope: Option<MemoryScope>,
+    pub scope: Option<ScopeFilter>,
     pub token_budget: Option<usize>,
     pub mode: Option<SearchMode>,
     pub include_trace: Option<bool>,
@@ -116,6 +116,7 @@ pub async fn handle_retrieve(
         limit: Some(MAX_LIMIT),
         offset: None,
         filters: None,
+        scope: request.scope.clone(),
         memory_types: None,
     };
 
@@ -203,7 +204,7 @@ async fn hydrate_candidates(
     state: &AppState,
     workspace_id: Uuid,
     search_results: Vec<MemoryResult>,
-    scope: Option<&MemoryScope>,
+    scope: Option<&ScopeFilter>,
     mode: SearchMode,
 ) -> AppResult<Vec<CandidateMemory>> {
     let ids = search_results
@@ -312,7 +313,7 @@ fn score_breakdown(unit: &MemoryUnit, score: f32, mode: SearchMode) -> ScoreBrea
     }
 }
 
-fn scope_matches(unit_scope: &MemoryScope, requested_scope: &MemoryScope) -> bool {
+fn scope_matches(unit_scope: &common::models::MemoryScope, requested_scope: &ScopeFilter) -> bool {
     if let Some(agent_id) = &requested_scope.agent_id {
         if unit_scope.agent_id.as_ref() != Some(agent_id) {
             return false;

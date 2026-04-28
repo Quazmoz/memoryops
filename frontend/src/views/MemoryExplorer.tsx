@@ -1,5 +1,5 @@
 import { ArrowDownAZ, ArrowUpAZ, Filter, Search, Send, X } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import type { MemoryListParams } from "../api/memory";
@@ -20,6 +20,19 @@ const sortFields: Array<{ value: SortField; label: string }> = [
   { value: "updated_at", label: "Updated" },
   { value: "created_at", label: "Created" },
 ];
+const FILTER_DEBOUNCE_MS = 300;
+
+type ScopeFilterDraft = {
+  agentId: string;
+  userId: string;
+  repo: string;
+};
+
+const emptyScopeFilter: ScopeFilterDraft = {
+  agentId: "",
+  userId: "",
+  repo: "",
+};
 
 export function MemoryExplorer() {
   const workspaceId = useAppStore((state) => state.workspaceId);
@@ -30,15 +43,30 @@ export function MemoryExplorer() {
   const [memoryType, setMemoryType] = useState<MemoryTypeFilter>("all");
   const [pinned, setPinned] = useState(false);
   const [minImportance, setMinImportance] = useState(0);
+  const [scopeDraft, setScopeDraft] = useState<ScopeFilterDraft>(emptyScopeFilter);
+  const [debouncedScope, setDebouncedScope] = useState<ScopeFilterDraft>(emptyScopeFilter);
+  const [offset, setOffset] = useState(0);
   const [sortField, setSortField] = useState<SortField>("importance_score");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedScope(scopeDraft);
+    }, FILTER_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [scopeDraft]);
+
   const listParams = useMemo<MemoryListParams>(
     () => {
       const params: MemoryListParams = {
         limit: 50,
-        offset: 0,
+        offset,
         memoryType,
         minImportance,
+        agentId: debouncedScope.agentId,
+        userId: debouncedScope.userId,
+        repo: debouncedScope.repo,
         sort: sortField,
         direction: sortDirection,
       };
@@ -49,7 +77,7 @@ export function MemoryExplorer() {
 
       return params;
     },
-    [memoryType, minImportance, pinned, sortDirection, sortField],
+    [debouncedScope, memoryType, minImportance, offset, pinned, sortDirection, sortField],
   );
   const searchCriteria = useMemo(
     () => ({
@@ -57,11 +85,14 @@ export function MemoryExplorer() {
       memoryType,
       pinned,
       minImportance,
+      agentId: debouncedScope.agentId,
+      userId: debouncedScope.userId,
+      repo: debouncedScope.repo,
       tags: [] as string[],
       limit: 50,
-      offset: 0,
+      offset,
     }),
-    [memoryType, minImportance, pinned, submittedQuery],
+    [debouncedScope, memoryType, minImportance, offset, pinned, submittedQuery],
   );
   const listQuery = useMemoryList(workspaceId, listParams);
   const searchQuery = useMemorySearch(workspaceId, searchCriteria);
@@ -77,6 +108,7 @@ export function MemoryExplorer() {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = query.trim();
+    setOffset(0);
     setSubmittedQuery(trimmed);
     setSearchParams(trimmed ? { q: trimmed } : {});
   }
@@ -84,7 +116,38 @@ export function MemoryExplorer() {
   function handleClearSearch() {
     setQuery("");
     setSubmittedQuery("");
+    setOffset(0);
     setSearchParams({});
+  }
+
+  function selectMemoryType(type: MemoryTypeFilter) {
+    setMemoryType(type);
+    setOffset(0);
+  }
+
+  function togglePinnedFilter() {
+    setPinned((value) => !value);
+    setOffset(0);
+  }
+
+  function changeMinImportance(value: number) {
+    setMinImportance(value);
+    setOffset(0);
+  }
+
+  function changeSortField(value: SortField) {
+    setSortField(value);
+    setOffset(0);
+  }
+
+  function toggleSortDirection() {
+    setSortDirection((direction) => (direction === "asc" ? "desc" : "asc"));
+    setOffset(0);
+  }
+
+  function changeScopeFilter(field: keyof ScopeFilterDraft, value: string) {
+    setScopeDraft((current) => ({ ...current, [field]: value }));
+    setOffset(0);
   }
 
   function handleTogglePinned(memory: MemoryUnit) {
@@ -123,42 +186,50 @@ export function MemoryExplorer() {
       </header>
 
       <section className="grid gap-3 rounded-lg border border-line bg-white p-4 xl:grid-cols-[1fr_auto] xl:items-end">
-        <div className="grid gap-4 lg:grid-cols-[auto_auto_1fr] lg:items-center">
-          <div className="flex flex-wrap gap-2" aria-label="Memory type filters">
-            {(["all", "episodic", "semantic"] as MemoryTypeFilter[]).map((type) => (
-              <button
-                key={type}
-                type="button"
-                data-testid={`filter-type-${type}`}
-                onClick={() => setMemoryType(type)}
-                className={filterButtonClass(memoryType === type)}
-              >
-                {type}
-              </button>
-            ))}
+        <div className="grid gap-4">
+          <div className="grid gap-4 lg:grid-cols-[auto_auto_1fr] lg:items-center">
+            <div className="flex flex-wrap gap-2" aria-label="Memory type filters">
+              {(["all", "episodic", "semantic"] as MemoryTypeFilter[]).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  data-testid={`filter-type-${type}`}
+                  onClick={() => selectMemoryType(type)}
+                  className={filterButtonClass(memoryType === type)}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+
+            <button type="button" data-testid="filter-pinned" onClick={togglePinnedFilter} className={filterButtonClass(pinned)}>
+              <Filter className="h-3.5 w-3.5" aria-hidden="true" />
+              Pinned
+            </button>
+
+            <label className="grid min-w-[16rem] gap-2 text-sm text-ink/70">
+              <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
+                <span>Min importance</span>
+                <span>{minImportance.toFixed(2)}</span>
+              </span>
+              <input
+                data-testid="filter-min-importance"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={minImportance}
+                onChange={(event) => changeMinImportance(Number(event.target.value))}
+                className="accent-accent"
+              />
+            </label>
           </div>
 
-          <button type="button" data-testid="filter-pinned" onClick={() => setPinned((value) => !value)} className={filterButtonClass(pinned)}>
-            <Filter className="h-3.5 w-3.5" aria-hidden="true" />
-            Pinned
-          </button>
-
-          <label className="grid min-w-[16rem] gap-2 text-sm text-ink/70">
-            <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
-              <span>Min importance</span>
-              <span>{minImportance.toFixed(2)}</span>
-            </span>
-            <input
-              data-testid="filter-min-importance"
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={minImportance}
-              onChange={(event) => setMinImportance(Number(event.target.value))}
-              className="accent-accent"
-            />
-          </label>
+          <div className="grid gap-3 md:grid-cols-3">
+            <ScopeFilterInput label="Agent ID" value={scopeDraft.agentId} onChange={(value) => changeScopeFilter("agentId", value)} />
+            <ScopeFilterInput label="User ID" value={scopeDraft.userId} onChange={(value) => changeScopeFilter("userId", value)} />
+            <ScopeFilterInput label="Repo" value={scopeDraft.repo} onChange={(value) => changeScopeFilter("repo", value)} placeholder="owner/repo" />
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -167,7 +238,7 @@ export function MemoryExplorer() {
             <select
               data-testid="sort-field-select"
               value={sortField}
-              onChange={(event) => setSortField(event.target.value as SortField)}
+              onChange={(event) => changeSortField(event.target.value as SortField)}
               className="h-10 rounded-md border border-line bg-white px-3 text-sm normal-case text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
             >
               {sortFields.map((field) => (
@@ -181,7 +252,7 @@ export function MemoryExplorer() {
             type="button"
             variant="secondary"
             data-testid="sort-direction-toggle"
-            onClick={() => setSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))}
+            onClick={toggleSortDirection}
           >
             {sortDirection === "asc" ? <ArrowUpAZ className="h-4 w-4" aria-hidden="true" /> : <ArrowDownAZ className="h-4 w-4" aria-hidden="true" />}
             {sortDirection}
@@ -269,6 +340,15 @@ function filterButtonClass(active: boolean): string {
   return cn(
     "inline-flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-medium capitalize transition focus:outline-none focus:ring-2 focus:ring-accent",
     active ? "border-accent bg-accent/10 text-accent-strong" : "border-line bg-white text-ink/70 hover:bg-soft",
+  );
+}
+
+function ScopeFilterInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+  return (
+    <label className="grid gap-1 text-xs font-medium uppercase text-ink/45">
+      {label}
+      <Input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="normal-case text-ink" />
+    </label>
   );
 }
 

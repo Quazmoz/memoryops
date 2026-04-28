@@ -1,7 +1,7 @@
 import { ArrowRight, Loader2, Search } from "lucide-react";
 import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
 
-import type { PackedMemory, RetrievalTrace, RetrievalTraceEntry, RetrieveResponse, SearchMode, TraceCandidate } from "../api/types";
+import type { PackedMemory, RetrievalTrace, RetrievalTraceEntry, RetrieveRequest, RetrieveResponse, ScopeFilter, SearchMode, TraceCandidate } from "../api/types";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -33,6 +33,9 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
   const [mode, setMode] = useState<SearchMode>("hybrid");
   const [limit, setLimit] = useState("20");
   const [tokenBudget, setTokenBudget] = useState("4000");
+  const [agentId, setAgentId] = useState("");
+  const [userId, setUserId] = useState("");
+  const [repo, setRepo] = useState("");
   const [activeQueryId, setActiveQueryId] = useState(initialActiveQueryId);
   const [submittedBudget, setSubmittedBudget] = useState(4000);
   const [lastElapsedMs, setLastElapsedMs] = useState<number | null>(null);
@@ -59,15 +62,21 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
     setTokenBudget(String(nextBudget));
     setSubmittedBudget(nextBudget);
     setActiveQueryId("");
+    const scope = buildScopeFilter(agentId, userId, repo);
+    const request: RetrieveRequest = {
+      query: trimmed,
+      limit: nextLimit,
+      token_budget: nextBudget,
+      mode,
+      include_trace: true,
+    };
+
+    if (scope !== undefined) {
+      request.scope = scope;
+    }
 
     retrieve.mutate(
-      {
-        query: trimmed,
-        limit: nextLimit,
-        token_budget: nextBudget,
-        mode,
-        include_trace: true,
-      },
+      request,
       {
         onSuccess: (response) => {
           setLastElapsedMs(response.elapsed_ms ?? Math.max(0, Math.round(nowMs() - startedAt)));
@@ -106,6 +115,13 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
                 />
               </div>
             </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <ScopeInput id="trace-agent-id-input" label="Agent ID" value={agentId} onChange={setAgentId} />
+              <ScopeInput id="trace-user-id-input" label="User ID" value={userId} onChange={setUserId} />
+              <ScopeInput id="trace-repo-input" label="Repo" value={repo} onChange={setRepo} placeholder="owner/repo" />
+            </div>
+            <p className="text-xs text-ink/55">Leave blank to retrieve across all scopes</p>
 
             <div className="grid gap-3 md:grid-cols-[minmax(8rem,0.8fr)_minmax(7rem,0.6fr)_minmax(9rem,0.7fr)_auto] md:items-end">
               <div className="grid gap-2">
@@ -307,6 +323,15 @@ function TraceMeta({ label, value, wide = false }: { label: string; value: strin
   );
 }
 
+function ScopeInput({ id, label, value, onChange, placeholder }: { id: string; label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+  return (
+    <label className="grid gap-2 text-sm font-medium text-ink" htmlFor={id}>
+      {label}
+      <Input id={id} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+    </label>
+  );
+}
+
 function TraceCandidateRow({ candidate }: { candidate: RetrievalTraceEntry }) {
   const reason = candidate.exclusion_reason ?? "";
 
@@ -357,6 +382,30 @@ function retrieveCandidateCount(response: RetrieveResponse | undefined, items: P
 
 function traceCandidates(trace: RetrievalTrace): TraceCandidate[] {
   return trace.candidates ?? trace.entries ?? [];
+}
+
+function buildScopeFilter(agentId: string, userId: string, repo: string): ScopeFilter | undefined {
+  const scope: ScopeFilter = {};
+  const normalizedAgentId = optionalText(agentId);
+  const normalizedUserId = optionalText(userId);
+  const normalizedRepo = optionalText(repo);
+
+  if (normalizedAgentId !== undefined) {
+    scope.agent_id = normalizedAgentId;
+  }
+  if (normalizedUserId !== undefined) {
+    scope.user_id = normalizedUserId;
+  }
+  if (normalizedRepo !== undefined) {
+    scope.repo = normalizedRepo;
+  }
+
+  return Object.keys(scope).length > 0 ? scope : undefined;
+}
+
+function optionalText(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function boundedNumber(value: string, fallback: number, min: number, max: number): number {

@@ -154,6 +154,18 @@ pub async fn list_memory_units(
         builder.push(" AND importance_score >= ");
         builder.push_bind(min_importance);
     }
+    if let Some(agent_id) = &params.agent_id {
+        builder.push(" AND scope->>'agent_id' = ");
+        builder.push_bind(agent_id.clone());
+    }
+    if let Some(user_id) = &params.user_id {
+        builder.push(" AND scope->>'user_id' = ");
+        builder.push_bind(user_id.clone());
+    }
+    if let Some(repo) = &params.repo {
+        builder.push(" AND scope->>'repo' = ");
+        builder.push_bind(repo.clone());
+    }
 
     builder.push(" ORDER BY ");
     builder.push(sort_column(params.resolved_sort()));
@@ -601,6 +613,27 @@ mod tests {
         content: &str,
         importance_score: f32,
     ) -> Uuid {
+        insert_scoped_memory(
+            pool,
+            workspace_id,
+            content,
+            importance_score,
+            None,
+            None,
+            Some("Quazmoz/memoryops"),
+        )
+        .await
+    }
+
+    async fn insert_scoped_memory(
+        pool: &PgPool,
+        workspace_id: Uuid,
+        content: &str,
+        importance_score: f32,
+        agent_id: Option<&str>,
+        user_id: Option<&str>,
+        repo: Option<&str>,
+    ) -> Uuid {
         let id = Uuid::now_v7();
         let result = sqlx::query(
             r#"
@@ -621,9 +654,9 @@ mod tests {
         .bind(workspace_id)
         .bind(json!({
             "workspace_id": workspace_id,
-            "agent_id": null,
-            "user_id": null,
-            "repo": "Quazmoz/memoryops",
+            "agent_id": agent_id,
+            "user_id": user_id,
+            "repo": repo,
             "source": "github"
         }))
         .bind(MemoryType::Episodic)
@@ -674,6 +707,9 @@ mod tests {
             memory_type: None,
             pinned: None,
             min_importance: None,
+            agent_id: None,
+            user_id: None,
+            repo: None,
             sort: None,
             direction: None,
         };
@@ -686,6 +722,175 @@ mod tests {
         assert_eq!(total, 3);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, second_id);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
+    async fn list_memory_units_filters_by_agent_id(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+        let memory_a = insert_scoped_memory(
+            &pool,
+            workspace_id,
+            "agent one memory",
+            0.9,
+            Some("agent-1"),
+            None,
+            None,
+        )
+        .await;
+        insert_scoped_memory(
+            &pool,
+            workspace_id,
+            "agent two memory",
+            0.8,
+            Some("agent-2"),
+            None,
+            None,
+        )
+        .await;
+        insert_scoped_memory(
+            &pool,
+            workspace_id,
+            "workspace memory",
+            0.7,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        let params = list_query_with_scope(workspace_id, Some("agent-1"), None, None);
+        let (items, total) = match list_memory_units(&pool, &params, workspace_id).await {
+            Ok(result) => result,
+            Err(error) => panic!("agent scope list should succeed: {error}"),
+        };
+
+        assert_eq!(total, 1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, memory_a);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
+    async fn list_memory_units_filters_by_repo(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+        let repo_memory = insert_scoped_memory(
+            &pool,
+            workspace_id,
+            "repo scoped memory",
+            0.9,
+            None,
+            None,
+            Some("Quazmoz/memoryops"),
+        )
+        .await;
+        insert_scoped_memory(
+            &pool,
+            workspace_id,
+            "workspace memory",
+            0.8,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        let params = list_query_with_scope(workspace_id, None, None, Some("Quazmoz/memoryops"));
+        let (items, total) = match list_memory_units(&pool, &params, workspace_id).await {
+            Ok(result) => result,
+            Err(error) => panic!("repo scope list should succeed: {error}"),
+        };
+
+        assert_eq!(total, 1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, repo_memory);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
+    async fn list_memory_units_scope_filter_is_workspace_isolated(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        let other_workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+        insert_workspace(&pool, other_workspace_id).await;
+        let scoped_memory = insert_scoped_memory(
+            &pool,
+            workspace_id,
+            "workspace one agent memory",
+            0.9,
+            Some("agent-x"),
+            None,
+            None,
+        )
+        .await;
+        insert_scoped_memory(
+            &pool,
+            other_workspace_id,
+            "workspace two agent memory",
+            0.8,
+            Some("agent-x"),
+            None,
+            None,
+        )
+        .await;
+
+        let params = list_query_with_scope(workspace_id, Some("agent-x"), None, None);
+        let (items, total) = match list_memory_units(&pool, &params, workspace_id).await {
+            Ok(result) => result,
+            Err(error) => panic!("workspace-isolated scope list should succeed: {error}"),
+        };
+
+        assert_eq!(total, 1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, scoped_memory);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
+    async fn list_memory_units_null_scope_filter_returns_all(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+        insert_scoped_memory(
+            &pool,
+            workspace_id,
+            "agent one memory",
+            0.9,
+            Some("agent-1"),
+            None,
+            None,
+        )
+        .await;
+        insert_scoped_memory(
+            &pool,
+            workspace_id,
+            "agent two memory",
+            0.8,
+            Some("agent-2"),
+            None,
+            Some("Quazmoz/memoryops"),
+        )
+        .await;
+        insert_scoped_memory(
+            &pool,
+            workspace_id,
+            "workspace memory",
+            0.7,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        let params = list_query_with_scope(workspace_id, None, None, None);
+        let (items, total) = match list_memory_units(&pool, &params, workspace_id).await {
+            Ok(result) => result,
+            Err(error) => panic!("unscoped list should succeed: {error}"),
+        };
+
+        assert_eq!(total, 3);
+        assert_eq!(items.len(), 3);
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -728,5 +933,26 @@ mod tests {
         };
 
         assert_eq!(promoted.memory_type, MemoryType::Semantic);
+    }
+
+    fn list_query_with_scope(
+        workspace_id: Uuid,
+        agent_id: Option<&str>,
+        user_id: Option<&str>,
+        repo: Option<&str>,
+    ) -> ListQuery {
+        ListQuery {
+            workspace_id: Some(workspace_id),
+            limit: Some(20),
+            offset: Some(0),
+            memory_type: None,
+            pinned: None,
+            min_importance: None,
+            agent_id: agent_id.map(str::to_owned),
+            user_id: user_id.map(str::to_owned),
+            repo: repo.map(str::to_owned),
+            sort: None,
+            direction: None,
+        }
     }
 }

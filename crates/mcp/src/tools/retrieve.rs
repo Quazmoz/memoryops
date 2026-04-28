@@ -55,6 +55,7 @@ pub async fn run(
         limit: Some(limit),
         offset: None,
         filters: None,
+        scope: None,
         memory_types: None,
     };
     let results = hybrid::hybrid_search(state, &request, limit).await?;

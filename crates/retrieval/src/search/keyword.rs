@@ -64,6 +64,14 @@ async fn keyword_hits(
     if let Some(filters) = &req.filters {
         push_search_filters(&mut builder, filters);
     }
+    if let Some(scope) = &req.scope {
+        push_scope_filter(
+            &mut builder,
+            scope.agent_id.as_deref(),
+            scope.user_id.as_deref(),
+            scope.repo.as_deref(),
+        );
+    }
     if let Some(memory_types) = normalized_memory_types(req)? {
         builder.push(" AND memory_type::text = ANY(");
         builder.push_bind(memory_types);
@@ -104,5 +112,31 @@ fn push_search_filters<'a>(builder: &mut QueryBuilder<'a, Postgres>, filters: &'
             builder.push(" AND tags @> ");
             builder.push_bind(tags.clone());
         }
+    }
+    push_scope_filter(
+        builder,
+        filters.agent_id.as_deref(),
+        filters.user_id.as_deref(),
+        filters.repo.as_deref(),
+    );
+}
+
+fn push_scope_filter<'a>(
+    builder: &mut QueryBuilder<'a, Postgres>,
+    agent_id: Option<&'a str>,
+    user_id: Option<&'a str>,
+    repo: Option<&'a str>,
+) {
+    if let Some(agent_id) = agent_id {
+        builder.push(" AND scope->>'agent_id' = ");
+        builder.push_bind(agent_id);
+    }
+    if let Some(user_id) = user_id {
+        builder.push(" AND scope->>'user_id' = ");
+        builder.push_bind(user_id);
+    }
+    if let Some(repo) = repo {
+        builder.push(" AND scope->>'repo' = ");
+        builder.push_bind(repo);
     }
 }

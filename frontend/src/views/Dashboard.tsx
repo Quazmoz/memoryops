@@ -1,10 +1,8 @@
 import { ArrowRight, BarChart2, BookMarked, Database, GitCommit, Pin, Search, Send, Settings2, TrendingUp } from "lucide-react";
-import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Legend, Line, LineChart, ResponsiveContainer, Tooltip } from "recharts";
 
-import { EmptyState } from "../components/EmptyState";
 import { InlineError } from "../components/InlineError";
+import { MemoryTrendChart } from "../components/MemoryTrendChart";
 import { StatusPill } from "../components/StatusPill";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -12,15 +10,13 @@ import { Skeleton } from "../components/ui/skeleton";
 import { formatCount, formatRelativeTime, formatScore } from "../lib/format";
 import { useAppStore } from "../store/app-store";
 import { useReadiness } from "../hooks/use-memory";
-import { useWorkspaceStats, useWorkspaceStatsHistory } from "../hooks/use-workspace";
+import { useWorkspaceStats } from "../hooks/use-workspace";
 
 export function Dashboard() {
   const workspaceId = useAppStore((state) => state.workspaceId);
-  const [days, setDays] = useState(30);
   const readiness = useReadiness(workspaceId);
   const stats = useWorkspaceStats(workspaceId);
-  const history = useWorkspaceStatsHistory(workspaceId, days);
-  const hasHistoryActivity = history.data?.series.some((point) => point.created > 0 || point.promoted > 0 || point.soft_deleted > 0) ?? false;
+  const hasWorkspace = workspaceId.trim().length > 0;
 
   const readinessStatus = readiness.isLoading
     ? "checking"
@@ -60,42 +56,13 @@ export function Dashboard() {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[1fr_22rem]">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
-            <CardTitle>30-day activity</CardTitle>
-            <select
-              aria-label="Activity range"
-              value={days}
-              onChange={(event) => setDays(Number(event.target.value))}
-              className="h-9 rounded-md border border-line bg-white px-2 text-sm text-ink outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
-            >
-              <option value={7}>7</option>
-              <option value={14}>14</option>
-              <option value={30}>30</option>
-              <option value={90}>90</option>
-            </select>
-          </CardHeader>
-          <CardContent>
-            {history.isLoading ? <Skeleton className="h-52 w-full" /> : null}
-            {history.isError ? <InlineError message={errorMessage(history.error)} /> : null}
-            {!history.isLoading && !history.isError && !hasHistoryActivity ? (
-              <EmptyState title="No activity yet" message="Charts will populate after your first memories are created." />
-            ) : null}
-            {!history.isLoading && !history.isError && hasHistoryActivity ? (
-              <div className="h-52" data-testid="dashboard-activity-chart">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={history.data?.series ?? []} margin={{ top: 10, right: 14, bottom: 0, left: 0 }}>
-                    <Tooltip labelFormatter={(label) => `Activity ${label}`} />
-                    <Legend verticalAlign="bottom" height={32} />
-                    <Line type="monotone" dataKey="created" name="Created" stroke="#19736a" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="promoted" name="Promoted" stroke="#6366f1" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="soft_deleted" name="Soft deleted" stroke="#ef4444" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
+        <div className="grid gap-3">
+          <div>
+            <p className="text-sm font-medium text-accent-strong">Trend</p>
+            <h2 className="mt-1 text-xl font-semibold tracking-normal text-ink">Memory Activity (30 days)</h2>
+          </div>
+          {hasWorkspace ? <MemoryTrendChart workspaceId={workspaceId} days={30} /> : null}
+        </div>
 
         <Card>
           <CardHeader>

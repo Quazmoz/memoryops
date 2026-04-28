@@ -538,7 +538,172 @@ fn validate_threshold(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Method, Request, StatusCode},
+    };
+    use common::{
+        config::AppConfig,
+        models::MemoryType,
+        providers::{FastEmbedProvider, OllamaProvider},
+    };
+    use qdrant_client::Qdrant;
+    use redis::aio::ConnectionManager;
+    use serde_json::Value;
+    use sqlx::PgPool;
+    use tower::ServiceExt;
+
     use super::*;
+
+    async fn test_state(pool: PgPool) -> AppState {
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:16379".to_owned());
+        let redis_client = match redis::Client::open(redis_url) {
+            Ok(client) => client,
+            Err(error) => panic!("test Redis URL should be valid: {error}"),
+        };
+        let redis = match ConnectionManager::new(redis_client).await {
+            Ok(connection) => connection,
+            Err(error) => panic!("test Redis should be reachable: {error}"),
+        };
+        let qdrant_url =
+            std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:16333".to_owned());
+        let qdrant = match Qdrant::from_url(&qdrant_url).build() {
+            Ok(client) => client,
+            Err(error) => panic!("test Qdrant URL should be valid: {error}"),
+        };
+        let config = match AppConfig::from_toml_str(include_str!("../../../../config.toml")) {
+            Ok(config) => config,
+            Err(error) => panic!("checked-in config should parse: {error}"),
+        };
+
+        AppState {
+            db: pool,
+            redis,
+            qdrant,
+            embedding_provider: Arc::new(FastEmbedProvider::new("test-embedding")),
+            llm_provider: Arc::new(OllamaProvider::new("http://127.0.0.1:9", "test-llm", 1)),
+            config: Arc::new(config),
+            github_webhook_secret: "test-secret".to_owned(),
+        }
+    }
+
+    async fn insert_workspace(pool: &PgPool) -> Uuid {
+        let workspace_id = Uuid::now_v7();
+        let result = sqlx::query("INSERT INTO workspaces (id, name, config) VALUES ($1, $2, $3)")
+            .bind(workspace_id)
+            .bind(format!("workspace-{workspace_id}"))
+            .bind(serde_json::json!({}))
+            .execute(pool)
+            .await;
+
+        if let Err(error) = result {
+            panic!("test workspace insert should succeed: {error}");
+        }
+
+        workspace_id
+    }
+
+    async fn insert_api_key(pool: &PgPool, workspace_id: Uuid) -> String {
+        let key_id = Uuid::now_v7();
+        let (plaintext, prefix) = crate::security::generate_api_key(workspace_id);
+        let key_hash = match crate::security::hash_secret(&plaintext) {
+            Ok(hash) => hash,
+            Err(error) => panic!("test key hash should be generated: {error}"),
+        };
+        let result = sqlx::query(
+            r#"
+            INSERT INTO api_keys (id, workspace_id, name, key_hash, prefix, revoked, revoked_at)
+            VALUES ($1, $2, $3, $4, $5, false, NULL)
+            "#,
+        )
+        .bind(key_id)
+        .bind(workspace_id)
+        .bind("test key")
+        .bind(key_hash)
+        .bind(prefix)
+        .execute(pool)
+        .await;
+
+        if let Err(error) = result {
+            panic!("test API key insert should succeed: {error}");
+        }
+
+        plaintext
+    }
+
+    async fn insert_memory(pool: &PgPool, workspace_id: Uuid, content: &str) -> Uuid {
+        let memory_id = Uuid::now_v7();
+        let result = sqlx::query(
+            r#"
+            INSERT INTO memory_units (
+                id,
+                workspace_id,
+                scope,
+                memory_type,
+                content,
+                entities,
+                importance_score,
+                tags
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(memory_id)
+        .bind(workspace_id)
+        .bind(serde_json::json!({
+            "workspace_id": workspace_id,
+            "agent_id": null,
+            "user_id": null,
+            "repo": null
+        }))
+        .bind(MemoryType::Episodic)
+        .bind(content)
+        .bind(serde_json::json!([]))
+        .bind(0.8_f32)
+        .bind(Vec::<String>::new())
+        .execute(pool)
+        .await;
+
+        if let Err(error) = result {
+            panic!("test memory insert should succeed: {error}");
+        }
+
+        memory_id
+    }
+
+    fn request(method: Method, uri: String, api_key: &str) -> Request<Body> {
+        let builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("x-api-key", api_key);
+
+        match builder.body(Body::from(Value::Null.to_string())) {
+            Ok(request) => request,
+            Err(error) => panic!("test request should build: {error}"),
+        }
+    }
+
+    async fn response_json(response: axum::response::Response) -> Value {
+        let bytes = match to_bytes(response.into_body(), usize::MAX).await {
+            Ok(bytes) => bytes,
+            Err(error) => panic!("response body should be readable: {error}"),
+        };
+        match serde_json::from_slice::<Value>(&bytes) {
+            Ok(value) => value,
+            Err(error) => panic!("response body should be JSON: {error}"),
+        }
+    }
+
+    fn history_series(body: &Value) -> &[Value] {
+        match body.get("series").and_then(Value::as_array) {
+            Some(series) => series.as_slice(),
+            None => panic!("stats history response should include series array"),
+        }
+    }
 
     fn update_request(
         decay_half_life_days: Option<u32>,
@@ -616,7 +781,12 @@ mod tests {
 
     #[test]
     fn stats_history_days_defaults_to_thirty() {
-        assert_eq!(stats_history_days(None).expect("default days"), 30);
+        let days = match stats_history_days(None) {
+            Ok(days) => days,
+            Err(error) => panic!("default stats history days should be valid: {error}"),
+        };
+
+        assert_eq!(days, 30);
     }
 
     #[test]
@@ -629,5 +799,141 @@ mod tests {
         assert!(
             matches!(error, AppError::Validation(message) if message == "days must be less than or equal to 90")
         );
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn stats_history_returns_empty_series_for_new_workspace(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id).await;
+        let app = crate::router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::GET,
+                format!("/v1/workspaces/{workspace_id}/stats/history"),
+                &api_key,
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("stats history request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let series = history_series(&body);
+
+        assert_eq!(series.len(), 30);
+        assert!(series.iter().all(|point| {
+            point.get("created").and_then(Value::as_i64) == Some(0)
+                && point.get("promoted").and_then(Value::as_i64) == Some(0)
+                && point.get("soft_deleted").and_then(Value::as_i64) == Some(0)
+        }));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn stats_history_respects_days_param(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id).await;
+        let app = crate::router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::GET,
+                format!("/v1/workspaces/{workspace_id}/stats/history?days=7"),
+                &api_key,
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("stats history request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let series = history_series(&body);
+
+        assert_eq!(series.len(), 7);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn stats_history_rejects_days_above_ninety(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id).await;
+        let app = crate::router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::GET,
+                format!("/v1/workspaces/{workspace_id}/stats/history?days=91"),
+                &api_key,
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("stats history request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn stats_history_rejects_days_zero(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id).await;
+        let app = crate::router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::GET,
+                format!("/v1/workspaces/{workspace_id}/stats/history?days=0"),
+                &api_key,
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("stats history request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn stats_history_counts_created_memories(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let other_workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id).await;
+        insert_memory(&pool, workspace_id, "first workspace memory").await;
+        insert_memory(&pool, workspace_id, "second workspace memory").await;
+        insert_memory(&pool, other_workspace_id, "other workspace memory").await;
+        let app = crate::router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::GET,
+                format!("/v1/workspaces/{workspace_id}/stats/history?days=1"),
+                &api_key,
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("stats history request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let series = history_series(&body);
+        let today = match series.first() {
+            Some(point) => point,
+            None => panic!("one-day stats history should include one point"),
+        };
+
+        assert_eq!(series.len(), 1);
+        assert_eq!(today.get("created").and_then(Value::as_i64), Some(2));
     }
 }

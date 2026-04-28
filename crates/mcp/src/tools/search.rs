@@ -78,6 +78,7 @@ pub async fn run(
         limit: Some(limit),
         offset: None,
         filters: search_filters(input.filters)?,
+        scope: None,
         memory_types: None,
     };
 
@@ -107,6 +108,9 @@ fn search_filters(input: Option<SearchInputFilters>) -> AppResult<Option<SearchF
         min_importance: None,
         pinned: None,
         tags: input.tags,
+        agent_id: None,
+        user_id: None,
+        repo: None,
     }))
 }
 

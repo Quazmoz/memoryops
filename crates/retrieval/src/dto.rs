@@ -13,6 +13,19 @@ pub const MAX_LIMIT: u32 = 100;
 pub const DEFAULT_OFFSET: u32 = 0;
 pub const MIN_SCORE_THRESHOLD: f32 = 0.70;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScopeFilter {
+    pub agent_id: Option<String>,
+    pub user_id: Option<String>,
+    pub repo: Option<String>,
+}
+
+impl ScopeFilter {
+    pub fn is_empty(&self) -> bool {
+        self.agent_id.is_none() && self.user_id.is_none() && self.repo.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct SearchRequest {
     #[validate(length(min = 1, max = 2000))]
@@ -24,6 +37,7 @@ pub struct SearchRequest {
     pub limit: Option<u32>,
     pub offset: Option<u32>,
     pub filters: Option<SearchFilters>,
+    pub scope: Option<ScopeFilter>,
     pub memory_types: Option<Vec<String>>,
 }
 
@@ -43,6 +57,9 @@ pub struct SearchFilters {
     pub min_importance: Option<f32>,
     pub pinned: Option<bool>,
     pub tags: Option<Vec<String>>,
+    pub agent_id: Option<String>,
+    pub user_id: Option<String>,
+    pub repo: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -118,6 +135,9 @@ pub struct ListQuery {
     pub memory_type: Option<String>,
     pub pinned: Option<bool>,
     pub min_importance: Option<f32>,
+    pub agent_id: Option<String>,
+    pub user_id: Option<String>,
+    pub repo: Option<String>,
     pub sort: Option<SortField>,
     pub direction: Option<SortDirection>,
 }

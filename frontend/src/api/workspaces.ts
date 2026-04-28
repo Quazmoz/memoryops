@@ -5,6 +5,7 @@ import type {
   CreateWorkspaceResponse,
   JsonValue,
   PromotionReport,
+  StatsHistory,
   WorkspaceConfig,
   WorkspaceDetail,
   WorkspaceSummary,
@@ -51,18 +52,6 @@ export function getWorkspace(workspaceId: string): Promise<WorkspaceDetail> {
 export function getWorkspaceStats(workspaceId: string): Promise<WorkspaceStats> {
   return apiRequest<WorkspaceStats>(`/v1/workspaces/${workspaceId}/stats`);
 }
-
-export type StatsHistoryPoint = {
-  date: string;
-  created: number;
-  promoted: number;
-  soft_deleted: number;
-};
-
-export type StatsHistory = {
-  days: number;
-  series: StatsHistoryPoint[];
-};
 
 export function getWorkspaceStatsHistory(workspaceId: string, days = 30): Promise<StatsHistory> {
   return apiRequest<StatsHistory>(`/v1/workspaces/${workspaceId}/stats/history?days=${days}`);
