@@ -44,6 +44,24 @@ services:
       timeout: 5s
       retries: 10
 
+  mcp:
+    build:
+      context: .
+    command: ["mcp"]
+    ports:
+      - "3003:3003"
+    environment:
+      DATABASE_URL: postgres://memoryops:memoryops@postgres:5432/memoryops
+      REDIS_URL: redis://redis:6379
+      QDRANT_URL: http://qdrant:6333
+      MCP_PORT: "3003"
+      MCP_TRANSPORT: "sse"
+    depends_on:
+      - postgres
+      - redis
+    profiles:
+      - mcp
+
 volumes:
   postgres-data:
   redis-data:

@@ -11,10 +11,13 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+argon2.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+bs58.workspace = true
 chrono.workspace = true
 qdrant-client.workspace = true
+rand.workspace = true
 redis.workspace = true
 reqwest.workspace = true
 serde.workspace = true

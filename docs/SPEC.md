@@ -1,6 +1,6 @@
 # MemoryOps — Technical Specification
 
-**Version:** 0.10.0  
+**Version:** 0.11.0  
 **Status:** Active  
 **Last Updated:** 2026-04-28
 
@@ -1293,30 +1293,151 @@ pub struct IntegrationHealth {
 
 ## 24. MCP Server
 
-M11 introduces a dedicated `crates/mcp/` server crate that exposes MemoryOps retrieval and storage workflows through the Model Context Protocol 2025-06-18 specification. The crate remains a scaffold during M10 and is not part of the runtime path until M11.
+M11 introduces a dedicated `crates/mcp/` server crate that exposes MemoryOps retrieval and storage workflows through the Model Context Protocol 2025-06-18 specification. MCP is a separate transport from the REST API and is not represented in `docs/openapi.yaml`.
 
-### 24.1 Tools
+### 24.1 Runtime
 
-| Tool | Purpose | Backend Contract |
-|------|---------|------------------|
-| `memory_retrieve` | Return token-packed memory context with trace data | Wraps `POST /v1/retrieve` |
-| `memory_search` | Search memory units without token packing | Wraps `POST /v1/memory/search` |
-| `memory_store` | Store one memory unit directly for agent-authored memories | Writes through the ingestion/memory path with workspace ownership |
-
-Tool inputs must include enough scope information to resolve the target workspace and optional agent/user/repo scope. Tool outputs mirror the REST response schemas where practical so clients can share DTO handling.
+| Concern | Decision |
+|---------|----------|
+| Default port | `3003` |
+| Port env var | `MCP_PORT` |
+| Transport env var | `MCP_TRANSPORT=stdio\|sse`, default `sse` |
+| Dependency boundary | `mcp` depends on `common`, `retrieval`, and `processor`; it must not depend on the `api` crate |
 
 ### 24.2 Transports
 
-| Transport | Status | Notes |
-|-----------|--------|-------|
-| stdio | Planned for local agent runtimes and editor-launched processes | MCP request/response over stdin/stdout |
-| HTTP SSE | Planned for daemonized deployments | HTTP endpoint with server-sent event stream per MCP 2025-06-18 |
-
-The docker-compose MCP endpoint is planned for M11 and should run separately from the REST API process while sharing the same Postgres, Redis, Qdrant, provider config, and workspace auth model.
+| Transport | Use Case | Contract |
+|-----------|----------|----------|
+| stdio | Local agents and editor-launched processes | Newline-delimited JSON-RPC 2.0 over stdin/stdout; stdout is flushed after every response |
+| HTTP SSE | Remote or hosted MCP clients | `POST /mcp` accepts JSON-RPC requests and returns JSON responses; `GET /mcp/sse` opens an SSE event stream for server-initiated messages |
 
 ### 24.3 Auth
 
-MCP clients authenticate with a workspace API key during the MCP `initialize` handshake. The client passes the key as a Bearer token, and the MCP server validates it against the same workspace API key store used by REST requests. The resolved workspace becomes the default workspace context for all subsequent MCP tool calls on that session. Tools must reject cross-workspace IDs that do not match the initialized workspace.
+MCP clients authenticate during the `initialize` request by passing a workspace API key as a Bearer token in `_meta.auth.token`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-06-18",
+    "_meta": {
+      "auth": {
+        "token": "Bearer mops_workspace_example"
+      }
+    }
+  }
+}
+```
+
+The MCP crate validates the key against the same `api_keys` table and Argon2id verification logic used by REST middleware. On success, the resolved `workspace_id` is stored in session context and injected into subsequent tool calls. Missing, invalid, or revoked keys return JSON-RPC error code `-32001` with message `Unauthorized`.
+
+For HTTP SSE transport, `POST /mcp` also accepts `Authorization: Bearer <api-key>` so browser-based and hosted MCP clients can authenticate each request without relying on a long-lived stdio session.
+
+### 24.4 Tools
+
+The MCP server exposes exactly three tools. Tool inputs never accept `workspace_id`; the workspace is always taken from the authenticated MCP session.
+
+#### `memory_retrieve`
+
+Retrieves token-packed memory context using in-process hybrid retrieval.
+
+Input schema:
+
+```json
+{
+  "type": "object",
+  "required": ["query"],
+  "properties": {
+    "query": { "type": "string" },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
+    "min_score": { "type": "number", "minimum": 0.0, "default": 0.0 }
+  },
+  "description": "workspace_id is injected from the authenticated MCP session."
+}
+```
+
+Output schema:
+
+```json
+{
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "content", "memory_type", "tags", "score", "importance_score", "created_at", "source"],
+    "properties": {
+      "id": { "type": "string", "format": "uuid" },
+      "content": { "type": "string" },
+      "memory_type": { "type": "string", "enum": ["episodic", "semantic"] },
+      "tags": { "type": "array", "items": { "type": "string" } },
+      "score": { "type": "number" },
+      "importance_score": { "type": "number" },
+      "created_at": { "type": "string", "format": "date-time" },
+      "source": { "type": "string" }
+    }
+  }
+}
+```
+
+#### `memory_search`
+
+Searches memory units without token packing.
+
+Input schema:
+
+```json
+{
+  "type": "object",
+  "required": ["query"],
+  "properties": {
+    "query": { "type": "string" },
+    "search_type": { "type": "string", "enum": ["hybrid", "keyword", "vector"], "default": "hybrid" },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 },
+    "filters": {
+      "type": "object",
+      "properties": {
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "memory_type": { "type": "string", "enum": ["episodic", "semantic"] }
+      }
+    }
+  }
+}
+```
+
+Output schema: same memory unit array shape as `memory_retrieve`.
+
+#### `memory_store`
+
+Stores an agent-authored episodic memory and enqueues slow-path processing through the same Redis stream used by ingestion.
+
+Input schema:
+
+```json
+{
+  "type": "object",
+  "required": ["content"],
+  "properties": {
+    "content": { "type": "string" },
+    "source": { "type": "string", "default": "mcp" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "importance": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 }
+  }
+}
+```
+
+Output schema:
+
+```json
+{
+  "type": "object",
+  "required": ["id", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
+```
 
 ---
 
