@@ -525,12 +525,18 @@ export async function fireWebhook(workspaceId: string, fixture: WebhookFixture, 
   const headers = requestHeaders();
   headers.set("x-workspace-id", workspaceId);
 
-  const endpoint = applySourceHeaders(headers, fixture);
+  const bodyString = JSON.stringify(payload);
+  const endpoint = await applySourceHeaders(headers, fixture, bodyString);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+  
   const response = await fetch(endpoint, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: bodyString,
+    signal: controller.signal,
   });
+  clearTimeout(timeoutId);
   const data = await parseResponse(response);
 
   if (!response.ok) {
@@ -549,7 +555,7 @@ export async function fireWebhook(workspaceId: string, fixture: WebhookFixture, 
   };
 }
 
-function applySourceHeaders(headers: Headers, fixture: WebhookFixture): string {
+async function applySourceHeaders(headers: Headers, fixture: WebhookFixture, payloadString: string): Promise<string> {
   switch (fixture.source) {
     case "github": {
       if (!fixture.githubEvent) {
@@ -558,6 +564,8 @@ function applySourceHeaders(headers: Headers, fixture: WebhookFixture): string {
 
       headers.set("x-github-event", fixture.githubEvent);
       headers.set("x-github-delivery", crypto.randomUUID());
+      const signature = await generateGitHubSignature(payloadString);
+      headers.set("x-hub-signature-256", signature);
       return "/v1/ingest/github";
     }
     case "slack": {
@@ -579,4 +587,20 @@ function applySourceHeaders(headers: Headers, fixture: WebhookFixture): string {
 
 function dummyHexSignature(): string {
   return "0".repeat(64);
+}
+
+async function generateGitHubSignature(payload: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode("dev-placeholder"),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+  const hex = Array.from(new Uint8Array(signature))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+  return `sha256=${hex}`;
 }

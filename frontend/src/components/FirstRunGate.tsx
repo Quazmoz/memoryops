@@ -90,9 +90,9 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
             <form className="grid gap-4" onSubmit={submitWorkspace}>
               <label className="grid gap-2 text-sm font-medium text-ink/70">
                 Name
-                <Input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} />
+                <Input data-testid="workspace-name-input" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} />
               </label>
-              <Button type="submit" disabled={workspaceMutation.isPending || workspaceName.trim().length === 0}>
+              <Button type="submit" data-testid="create-workspace-button" disabled={workspaceMutation.isPending || workspaceName.trim().length === 0}>
                 {workspaceMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
                 {workspaceMutation.isPending ? "Creating" : "Create Workspace"}
               </Button>
@@ -103,7 +103,7 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
               <div className="rounded-md border border-line bg-soft px-3 py-2 font-mono text-xs text-ink/70">{workspaceId}</div>
               {!plaintextKey ? (
                 <div className="grid gap-4">
-                  <Button type="button" onClick={() => keyMutation.mutate()} disabled={keyMutation.isPending || workspaceId.trim().length === 0}>
+                  <Button type="button" data-testid="create-api-key-button" onClick={() => keyMutation.mutate()} disabled={keyMutation.isPending || workspaceId.trim().length === 0}>
                     {keyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
                     {keyMutation.isPending ? "Creating" : "Create API Key"}
                   </Button>
@@ -112,8 +112,8 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
                     <div className="relative flex justify-center text-xs uppercase"><span className="bg-soft px-2 text-ink/45">Or use existing</span></div>
                   </div>
                   <div className="flex gap-2">
-                    <Input id="existing-key-input" placeholder="Paste API key (mops_...)" />
-                    <Button type="button" variant="secondary" onClick={() => {
+                    <Input data-testid="existing-key-input" id="existing-key-input" placeholder="Paste API key (mops_...)" />
+                    <Button type="button" variant="secondary" data-testid="existing-key-submit" onClick={() => {
                       const val = (document.getElementById("existing-key-input") as HTMLInputElement)?.value.trim();
                       if (val) setWorkspace(workspaceId, val);
                     }}>Submit</Button>
@@ -126,18 +126,37 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
                   </div>
                   <div className="flex min-w-0 items-center gap-2 rounded-md border border-line bg-white p-2">
                     <code className="min-w-0 flex-1 truncate text-xs text-ink/75">{plaintextKey}</code>
-                    <Button type="button" variant="secondary" size="sm" onClick={copyKey} aria-label="Copy API key">
+                    <Button type="button" variant="secondary" size="sm" data-testid="copy-key-button" onClick={copyKey} aria-label="Copy API key">
                       {copied ? <Check className="h-4 w-4" aria-hidden="true" /> : <Clipboard className="h-4 w-4" aria-hidden="true" />}
                       {copied ? "Copied" : "Copy"}
                     </Button>
                   </div>
-                  <Button type="button" onClick={finishSetup}>Continue</Button>
+                  <Button type="button" data-testid="finish-setup-button" onClick={finishSetup}>Continue</Button>
                 </div>
               )}
               {keyMutation.isError ? <InlineError message={keyMutation.error.message} /> : null}
             </div>
           )}
-        </CardContent>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-line" /></div>
+            <div className="relative flex justify-center text-xs uppercase"><span className="bg-panel px-2 text-ink/45">Or connect existing</span></div>
+          </div>
+          <div className="grid gap-3">
+            <label className="grid gap-2 text-sm font-medium text-ink/70">
+              Workspace ID
+              <Input data-testid="workspace-id-input" placeholder="Paste workspace ID" />
+            </label>
+            <label className="grid gap-2 text-sm font-medium text-ink/70">
+              API Key
+              <Input data-testid="api-key-input" type="password" placeholder="mops_..." />
+            </label>
+            <Button type="button" data-testid="connect-button" variant="secondary" onClick={() => {
+              const wsId = (document.querySelector('[data-testid="workspace-id-input"]') as HTMLInputElement)?.value.trim();
+              const key = (document.querySelector('[data-testid="api-key-input"]') as HTMLInputElement)?.value.trim();
+              if (wsId && key) setWorkspace(wsId, key);
+            }}>Connect</Button>
+          </div>        </CardContent>
       </Card>
     </div>
   );

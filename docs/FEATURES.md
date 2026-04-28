@@ -44,7 +44,7 @@ This document tracks all planned features across the platform with current statu
 | M21 | Import / restore (JSONL round-trip with export) | 🟢 Complete |
 | M22 | Metrics dashboard (OTel summary endpoint + UI panel) | 🟢 Complete |
 | M23 | Property-based tests for token packing (proptest) | 🟢 Complete |
-| M24 | Playwright E2E test suite | 🔴 Not started |
+| M24 | Playwright E2E test suite | 🟢 Complete |
 | M25 | HTTP Skills (agent-callable skill registry) | 🔴 Not started |
 | M26 | Contradiction detection | 🔴 Not started |
 | M27 | Provenance graph + lineage API | 🔴 Not started |
@@ -328,9 +328,9 @@ This document tracks all planned features across the platform with current statu
 | Feature | Status | Milestone | Notes |
 |---------|--------|-----------|-------|
 | proptest token packing invariants | 🟢 | M23 | packed ≤ budget; dedup threshold respected; all excluded in trace |
-| Playwright E2E — ingest → process → search flow | 🔴 | M24 | |
-| Playwright E2E — promotion via repeated access | 🔴 | M24 | |
-| Playwright E2E — DLQ retry flow | 🔴 | M24 | |
+| Playwright E2E — ingest → process → search flow | 🟢 | M24 | |
+| Playwright E2E — promotion via repeated access | 🟢 | M24 | |
+| Playwright E2E — DLQ retry flow | 🟢 | M24 | |
 
 ---
 

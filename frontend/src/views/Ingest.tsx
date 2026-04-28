@@ -90,6 +90,7 @@ export function Ingest() {
                     key={source.source}
                     type="button"
                     role="tab"
+                    data-testid={`source-tab-${source.source}`}
                     aria-selected={active}
                     onClick={() => selectSource(source.source)}
                     className={cn(
@@ -154,7 +155,7 @@ export function Ingest() {
           <CardTitle>Response</CardTitle>
           <div className="flex items-center gap-2">
             <Badge variant="muted" className="capitalize">{fixture.source}</Badge>
-            {response ? <Badge variant={response.ok ? "accent" : "rust"}>{response.status}</Badge> : null}
+            {response ? <Badge data-testid="webhook-response-status" variant={response.ok ? "accent" : "rust"}>{response.status}</Badge> : null}
           </div>
         </CardHeader>
         <CardContent>

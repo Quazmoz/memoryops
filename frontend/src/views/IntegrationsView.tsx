@@ -184,7 +184,7 @@ export function IntegrationsView() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card data-testid="dlq-panel">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div className="flex items-center gap-2">
             <CardTitle>Dead Letter Queue</CardTitle>
@@ -259,6 +259,7 @@ export function IntegrationsView() {
                                 type="button"
                                 variant="secondary"
                                 size="icon"
+                                data-testid="dlq-retry-button"
                                 onClick={() => retryMutation.mutate(job.id)}
                                 disabled={rowBusy}
                                 aria-label="Retry failed job"

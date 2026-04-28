@@ -144,7 +144,8 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
                 key={row.id}
                 tabIndex={0}
                 role="button"
-                data-testid={`memory-row-${row.original.id}`}
+                data-testid="memory-result-row"
+                data-memory-id={row.original.id}
                 className="cursor-pointer border-b border-line/80 transition last:border-b-0 hover:bg-soft/70 focus:bg-soft focus:outline-none"
                 onClick={() => navigate(`/memory/${row.original.id}`)}
                 onKeyDown={(event) => {

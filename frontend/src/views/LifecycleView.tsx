@@ -138,7 +138,7 @@ export function LifecycleView() {
             onChange={setDedupThreshold}
             disabled={!authReady || workspaceQuery.isLoading}
           />
-          <Button type="button" onClick={() => promotionMutation.mutate()} disabled={!authReady || promotionMutation.isPending}>
+          <Button type="button" data-testid="manual-promote-button" onClick={() => promotionMutation.mutate()} disabled={!authReady || promotionMutation.isPending}>
             {promotionMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
             Run Promotion Pass
           </Button>
@@ -146,7 +146,7 @@ export function LifecycleView() {
       </Card>
 
       {promotionReport ? (
-        <section className="grid gap-4 md:grid-cols-3" aria-label="Promotion report">
+        <section className="grid gap-4 md:grid-cols-3" aria-label="Promotion report" data-testid="promote-status">
           <ReportCard title="clusters_found" value={promotionReport.clusters_found} />
           <ReportCard title="units_promoted" value={promotionReport.units_promoted} />
           <ReportCard title="units_skipped" value={promotionReport.units_skipped} />
