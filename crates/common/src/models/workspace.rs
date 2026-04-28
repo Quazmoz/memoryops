@@ -36,6 +36,10 @@ pub struct WorkspaceConfig {
     pub llm_provider: Option<String>,
     pub embedding_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub decay_half_life_days: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pruning_threshold: Option<f32>,
@@ -52,6 +56,8 @@ impl Default for WorkspaceConfig {
             decay_rate_semantic: default_decay_rate_semantic(),
             llm_provider: None,
             embedding_provider: None,
+            llm_model: None,
+            embedding_model: None,
             decay_half_life_days: None,
             pruning_threshold: None,
         }
@@ -127,6 +133,8 @@ mod tests {
         let config = WorkspaceConfig {
             decay_half_life_days: Some(14),
             pruning_threshold: Some(0.05),
+            llm_model: Some("llama3".to_owned()),
+            embedding_model: Some("BAAI/bge-small-en-v1.5".to_owned()),
             ..WorkspaceConfig::default()
         };
 
@@ -150,6 +158,11 @@ mod tests {
 
         assert_eq!(decoded.decay_half_life_days, Some(14));
         assert_eq!(decoded.pruning_threshold, Some(0.05));
+        assert_eq!(decoded.llm_model, Some("llama3".to_owned()));
+        assert_eq!(
+            decoded.embedding_model,
+            Some("BAAI/bge-small-en-v1.5".to_owned())
+        );
     }
 
     #[test]

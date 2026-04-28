@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: MemoryOps API
-  version: 0.12.0
+  version: 0.15.0
   description: Control plane API for AI-agent memory ingestion, lifecycle management, retrieval, and audit.
   contact:
     name: MemoryOps
@@ -452,6 +452,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Workspace'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/stats/history:
+    get:
+      tags: [Workspaces]
+      operationId: getWorkspaceStatsHistory
+      summary: Get workspace stats history
+      description: Returns daily created, promoted, and soft-deleted memory counts for the authenticated workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 30
+      responses:
+        '200':
+          description: Workspace activity history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceStatsHistory'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -1338,7 +1367,11 @@ components:
           format: float
         llm_provider:
           type: [string, 'null']
+        llm_model:
+          type: [string, 'null']
         embedding_provider:
+          type: [string, 'null']
+        embedding_model:
           type: [string, 'null']
         decay_half_life_days:
           type: integer
@@ -1359,6 +1392,35 @@ components:
             Decay score below which a memory is soft-deleted.
             Defaults to 0.10 when null.
           example: 0.10
+    WorkspaceStatsHistory:
+      type: object
+      required: [days, series]
+      properties:
+        days:
+          type: integer
+          minimum: 1
+          maximum: 90
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceStatsHistoryPoint'
+    WorkspaceStatsHistoryPoint:
+      type: object
+      required: [date, created, promoted, soft_deleted]
+      properties:
+        date:
+          type: string
+          format: date
+          example: '2026-03-29'
+        created:
+          type: integer
+          minimum: 0
+        promoted:
+          type: integer
+          minimum: 0
+        soft_deleted:
+          type: integer
+          minimum: 0
     IntegrationRequest:
       type: object
       required: [source]

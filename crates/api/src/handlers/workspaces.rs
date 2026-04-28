@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use anyhow::anyhow;
-use axum::{extract::Path, extract::State, Extension, Json};
-use chrono::{DateTime, Utc};
+use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
+use chrono::{DateTime, NaiveDate, Utc};
 use common::{
     audit::spawn_audit_log,
     auth::AuthContext,
@@ -51,6 +51,25 @@ pub struct WorkspaceStats {
     pub memories_created_30d: i64,
     pub oldest_memory_at: Option<DateTime<Utc>>,
     pub newest_memory_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StatsHistoryQuery {
+    pub days: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceStatsHistory {
+    pub days: u32,
+    pub series: Vec<WorkspaceStatsHistoryPoint>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct WorkspaceStatsHistoryPoint {
+    pub date: NaiveDate,
+    pub created: i64,
+    pub promoted: i64,
+    pub soft_deleted: i64,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -149,6 +168,68 @@ pub async fn get_stats(
     .map_err(AppError::Database)?;
 
     Ok(Json(workspace_stats_from_row(row)))
+}
+
+#[axum::debug_handler]
+pub async fn get_stats_history(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<StatsHistoryQuery>,
+) -> AppResult<Json<WorkspaceStatsHistory>> {
+    require_workspace(&auth, id)?;
+    let days = stats_history_days(query.days)?;
+    let rows = sqlx::query_as::<_, WorkspaceStatsHistoryPoint>(
+        r#"
+        WITH bounds AS (
+            SELECT
+                (TIMEZONE('UTC', NOW())::DATE - (($2::INTEGER - 1) * INTERVAL '1 day'))::DATE AS start_date,
+                TIMEZONE('UTC', NOW())::DATE AS end_date
+        ),
+        dates AS (
+            SELECT GENERATE_SERIES(start_date, end_date, INTERVAL '1 day')::DATE AS date
+            FROM bounds
+        ),
+        created AS (
+            SELECT DATE(created_at AT TIME ZONE 'UTC') AS date, COUNT(*) AS created
+            FROM memory_units
+            WHERE workspace_id = $1
+            GROUP BY 1
+        ),
+        promoted AS (
+            SELECT DATE(updated_at AT TIME ZONE 'UTC') AS date, COUNT(*) AS promoted
+            FROM memory_units
+            WHERE workspace_id = $1
+              AND memory_type = 'semantic'
+              AND importance_score > 0
+            GROUP BY 1
+        ),
+        soft_deleted AS (
+            SELECT DATE(deleted_at AT TIME ZONE 'UTC') AS date, COUNT(*) AS soft_deleted
+            FROM memory_units
+            WHERE workspace_id = $1
+              AND deleted_at IS NOT NULL
+            GROUP BY 1
+        )
+        SELECT
+            dates.date,
+            COALESCE(created.created, 0)::BIGINT AS created,
+            COALESCE(promoted.promoted, 0)::BIGINT AS promoted,
+            COALESCE(soft_deleted.soft_deleted, 0)::BIGINT AS soft_deleted
+        FROM dates
+        LEFT JOIN created ON created.date = dates.date
+        LEFT JOIN promoted ON promoted.date = dates.date
+        LEFT JOIN soft_deleted ON soft_deleted.date = dates.date
+        ORDER BY dates.date ASC
+        "#,
+    )
+    .bind(auth.workspace_id)
+    .bind(i64::from(days))
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(Json(WorkspaceStatsHistory { days, series: rows }))
 }
 
 #[axum::debug_handler]
@@ -306,6 +387,22 @@ fn workspace_stats_from_row(row: WorkspaceStatsRow) -> WorkspaceStats {
         oldest_memory_at: row.oldest_memory_at,
         newest_memory_at: row.newest_memory_at,
     }
+}
+
+fn stats_history_days(days: Option<u32>) -> AppResult<u32> {
+    let days = days.unwrap_or(30);
+
+    if days == 0 {
+        return Err(AppError::Validation("days must be at least 1".to_owned()));
+    }
+
+    if days > 90 {
+        return Err(AppError::Validation(
+            "days must be less than or equal to 90".to_owned(),
+        ));
+    }
+
+    Ok(days)
 }
 
 async fn fetch_workspace_promotion_config(
@@ -515,5 +612,22 @@ mod tests {
 
         assert_eq!(stats.oldest_memory_at, None);
         assert_eq!(stats.newest_memory_at, None);
+    }
+
+    #[test]
+    fn stats_history_days_defaults_to_thirty() {
+        assert_eq!(stats_history_days(None).expect("default days"), 30);
+    }
+
+    #[test]
+    fn stats_history_days_rejects_more_than_ninety() {
+        let error = match stats_history_days(Some(91)) {
+            Ok(_) => panic!("days above max should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            matches!(error, AppError::Validation(message) if message == "days must be less than or equal to 90")
+        );
     }
 }

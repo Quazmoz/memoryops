@@ -45,18 +45,34 @@ export async function createApiKey(workspaceId: string, name: string): Promise<C
 }
 
 export function getWorkspace(workspaceId: string): Promise<WorkspaceDetail> {
-  return apiRequest<WorkspaceDetail>(`/v1/workspaces/${workspaceId}`);
+  return apiRequest<WorkspaceDetail>(`/v1/workspaces/${workspaceId}`).then(normalizeWorkspaceDetail);
 }
 
 export function getWorkspaceStats(workspaceId: string): Promise<WorkspaceStats> {
   return apiRequest<WorkspaceStats>(`/v1/workspaces/${workspaceId}/stats`);
 }
 
-export function updateWorkspaceConfig(workspaceId: string, patch: WorkspaceConfig): Promise<WorkspaceDetail> {
+export type StatsHistoryPoint = {
+  date: string;
+  created: number;
+  promoted: number;
+  soft_deleted: number;
+};
+
+export type StatsHistory = {
+  days: number;
+  series: StatsHistoryPoint[];
+};
+
+export function getWorkspaceStatsHistory(workspaceId: string, days = 30): Promise<StatsHistory> {
+  return apiRequest<StatsHistory>(`/v1/workspaces/${workspaceId}/stats/history?days=${days}`);
+}
+
+export function updateWorkspaceConfig(workspaceId: string, patch: Partial<WorkspaceConfig>): Promise<WorkspaceDetail> {
   return apiRequest<WorkspaceDetail>(`/v1/workspaces/${workspaceId}/config`, {
     method: "PATCH",
     body: configPatchBody(patch),
-  });
+  }).then(normalizeWorkspaceDetail);
 }
 
 export function triggerPromotion(workspaceId: string): Promise<PromotionReport> {
@@ -78,7 +94,7 @@ export async function exportMemories(workspaceId: string): Promise<Blob> {
   return response.blob();
 }
 
-function configPatchBody(patch: WorkspaceConfig): { [key: string]: JsonValue } {
+function configPatchBody(patch: Partial<WorkspaceConfig>): { [key: string]: JsonValue } {
   const body: { [key: string]: JsonValue } = {};
 
   Object.entries(patch).forEach(([key, value]) => {
@@ -88,4 +104,52 @@ function configPatchBody(patch: WorkspaceConfig): { [key: string]: JsonValue } {
   });
 
   return body;
+}
+
+function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
+  const config = configRecord(workspace.config);
+  const normalized: WorkspaceDetail = { ...workspace };
+  const decayHalfLifeDays = numberConfig(config.decay_half_life_days);
+  const pruningThreshold = numberConfig(config.pruning_threshold);
+  const llmProvider = stringConfig(config.llm_provider);
+  const llmModel = stringConfig(config.llm_model);
+  const embeddingProvider = stringConfig(config.embedding_provider);
+  const embeddingModel = stringConfig(config.embedding_model);
+
+  if (decayHalfLifeDays !== undefined) {
+    normalized.decay_half_life_days = decayHalfLifeDays;
+  }
+  if (pruningThreshold !== undefined) {
+    normalized.pruning_threshold = pruningThreshold;
+  }
+  if (llmProvider !== undefined) {
+    normalized.llm_provider = llmProvider;
+  }
+  if (llmModel !== undefined) {
+    normalized.llm_model = llmModel;
+  }
+  if (embeddingProvider !== undefined) {
+    normalized.embedding_provider = embeddingProvider;
+  }
+  if (embeddingModel !== undefined) {
+    normalized.embedding_model = embeddingModel;
+  }
+
+  return normalized;
+}
+
+function configRecord(config: WorkspaceDetail["config"]): Record<string, JsonValue | undefined> {
+  if (config && typeof config === "object" && !Array.isArray(config)) {
+    return config as Record<string, JsonValue | undefined>;
+  }
+
+  return {};
+}
+
+function numberConfig(value: JsonValue | undefined): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+function stringConfig(value: JsonValue | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }

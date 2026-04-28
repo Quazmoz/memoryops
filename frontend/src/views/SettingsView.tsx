@@ -1,26 +1,15 @@
 import { Download, GitMerge, KeyRound, Loader2, Play, ServerCog, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import type { ProviderDefaults, PromotionReport, WorkspaceConfig } from "../api/types";
+import type { PromotionReport, WorkspaceConfig } from "../api/types";
 import { exportMemories, getWorkspace, triggerPromotion, updateWorkspaceConfig } from "../api/workspaces";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Input } from "../components/ui/input";
 import { useAppStore } from "../store/app-store";
-
-const providerDefaults: ProviderDefaults = {
-  embedding: {
-    provider: "fastembed",
-    model: "BAAI/bge-small-en-v1.5",
-  },
-  llm: {
-    provider: "ollama",
-    model: "llama3",
-    baseUrl: "http://localhost:11434",
-  },
-};
 
 export function SettingsView() {
   const workspaceId = useAppStore((state) => state.workspaceId);
@@ -32,6 +21,14 @@ export function SettingsView() {
   const [promotionResult, setPromotionResult] = useState<PromotionReport | null>(null);
   const [promotionThreshold, setPromotionThreshold] = useState(0.72);
   const [dedupThreshold, setDedupThreshold] = useState(0.92);
+  const [decayHalfLife, setDecayHalfLife] = useState(30);
+  const [pruningThreshold, setPruningThreshold] = useState(0.10);
+  const [embeddingProvider, setEmbeddingProvider] = useState("fastembed");
+  const [embeddingModel, setEmbeddingModel] = useState("BAAI/bge-small-en-v1.5");
+  const [llmProvider, setLlmProvider] = useState("ollama");
+  const [llmModel, setLlmModel] = useState("llama3");
+  const embeddingModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const llmModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasApiKey = apiKey.trim().length > 0;
   const workspaceQuery = useQuery({
     queryKey: ["workspace", workspaceId, "settings"],
@@ -49,11 +46,17 @@ export function SettingsView() {
   });
   const configMutation = useMutation({
     mutationKey: ["workspace", workspaceId, "config"],
-    mutationFn: (patch: WorkspaceConfig) => updateWorkspaceConfig(workspaceId, patch),
+    mutationFn: (patch: Partial<WorkspaceConfig>) => updateWorkspaceConfig(workspaceId, patch),
     onSuccess: (workspace) => {
       setConfigError(null);
       setPromotionThreshold(workspace.promotion_threshold);
       setDedupThreshold(workspace.dedup_cosine_threshold);
+      setDecayHalfLife(workspace.decay_half_life_days ?? 30);
+      setPruningThreshold(workspace.pruning_threshold ?? 0.10);
+      setEmbeddingProvider(workspace.embedding_provider ?? "fastembed");
+      setEmbeddingModel(workspace.embedding_model ?? "BAAI/bge-small-en-v1.5");
+      setLlmProvider(workspace.llm_provider ?? "ollama");
+      setLlmModel(workspace.llm_model ?? "llama3");
     },
     onError: (error: Error) => setConfigError(error.message),
   });
@@ -75,8 +78,25 @@ export function SettingsView() {
     if (workspaceQuery.data) {
       setPromotionThreshold(workspaceQuery.data.promotion_threshold);
       setDedupThreshold(workspaceQuery.data.dedup_cosine_threshold);
+      setDecayHalfLife(workspaceQuery.data.decay_half_life_days ?? 30);
+      setPruningThreshold(workspaceQuery.data.pruning_threshold ?? 0.10);
+      setEmbeddingProvider(workspaceQuery.data.embedding_provider ?? "fastembed");
+      setEmbeddingModel(workspaceQuery.data.embedding_model ?? "BAAI/bge-small-en-v1.5");
+      setLlmProvider(workspaceQuery.data.llm_provider ?? "ollama");
+      setLlmModel(workspaceQuery.data.llm_model ?? "llama3");
     }
   }, [workspaceQuery.data]);
+
+  useEffect(() => {
+    return () => {
+      if (embeddingModelTimeoutRef.current) {
+        clearTimeout(embeddingModelTimeoutRef.current);
+      }
+      if (llmModelTimeoutRef.current) {
+        clearTimeout(llmModelTimeoutRef.current);
+      }
+    };
+  }, []);
 
   function savePromotionThreshold(value: number) {
     setPromotionThreshold(value);
@@ -86,6 +106,46 @@ export function SettingsView() {
   function saveDedupThreshold(value: number) {
     setDedupThreshold(value);
     configMutation.mutate({ dedup_cosine_threshold: value });
+  }
+
+  function saveDecayHalfLife(value: number) {
+    setDecayHalfLife(value);
+    configMutation.mutate({ decay_half_life_days: value });
+  }
+
+  function savePruningThreshold(value: number) {
+    setPruningThreshold(value);
+    configMutation.mutate({ pruning_threshold: value });
+  }
+
+  function saveEmbeddingProvider(value: string) {
+    setEmbeddingProvider(value);
+    configMutation.mutate({ embedding_provider: value });
+  }
+
+  function saveLlmProvider(value: string) {
+    setLlmProvider(value);
+    configMutation.mutate({ llm_provider: value });
+  }
+
+  function saveEmbeddingModel(value: string) {
+    setEmbeddingModel(value);
+    if (embeddingModelTimeoutRef.current) {
+      clearTimeout(embeddingModelTimeoutRef.current);
+    }
+    embeddingModelTimeoutRef.current = setTimeout(() => {
+      configMutation.mutate({ embedding_model: value });
+    }, 600);
+  }
+
+  function saveLlmModel(value: string) {
+    setLlmModel(value);
+    if (llmModelTimeoutRef.current) {
+      clearTimeout(llmModelTimeoutRef.current);
+    }
+    llmModelTimeoutRef.current = setTimeout(() => {
+      configMutation.mutate({ llm_model: value });
+    }, 600);
   }
 
   return (
@@ -135,38 +195,72 @@ export function SettingsView() {
           <CardTitle>Promotion</CardTitle>
           <GitMerge className="h-4 w-4 text-accent-strong" aria-hidden="true" />
         </CardHeader>
-        <CardContent className="grid gap-5 xl:grid-cols-[1fr_1fr_auto] xl:items-end">
-          <label className="grid gap-2 text-sm text-ink/70">
-            <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
-              <span>Promotion threshold: {promotionThreshold.toFixed(2)}</span>
-              {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
-            </span>
-            <input
-              type="range"
-              min="0.5"
-              max="1"
-              step="0.01"
-              value={promotionThreshold}
-              onChange={(event) => savePromotionThreshold(Number(event.target.value))}
-              className="accent-accent"
-            />
-          </label>
+        <CardContent className="grid gap-5">
+          <div className="grid gap-5 xl:grid-cols-2">
+            <label className="grid gap-2 text-sm text-ink/70">
+              <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
+                <span>Promotion threshold: {promotionThreshold.toFixed(2)}</span>
+                {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
+              </span>
+              <input
+                type="range"
+                min="0.5"
+                max="1"
+                step="0.01"
+                value={promotionThreshold}
+                onChange={(event) => savePromotionThreshold(Number(event.target.value))}
+                className="accent-accent"
+              />
+            </label>
 
-          <label className="grid gap-2 text-sm text-ink/70">
-            <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
-              <span>Dedup cosine threshold: {dedupThreshold.toFixed(2)}</span>
-              {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
-            </span>
-            <input
-              type="range"
-              min="0.8"
-              max="0.99"
-              step="0.01"
-              value={dedupThreshold}
-              onChange={(event) => saveDedupThreshold(Number(event.target.value))}
-              className="accent-accent"
-            />
-          </label>
+            <label className="grid gap-2 text-sm text-ink/70">
+              <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
+                <span>Dedup cosine threshold: {dedupThreshold.toFixed(2)}</span>
+                {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
+              </span>
+              <input
+                type="range"
+                min="0.8"
+                max="0.99"
+                step="0.01"
+                value={dedupThreshold}
+                onChange={(event) => saveDedupThreshold(Number(event.target.value))}
+                className="accent-accent"
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm text-ink/70">
+              <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
+                <span>Decay half-life: {decayHalfLife}d</span>
+                {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
+              </span>
+              <input
+                type="range"
+                min="1"
+                max="365"
+                step="1"
+                value={decayHalfLife}
+                onChange={(event) => saveDecayHalfLife(Number(event.target.value))}
+                className="accent-accent"
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm text-ink/70">
+              <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
+                <span>Prune below: {pruningThreshold.toFixed(2)}</span>
+                {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
+              </span>
+              <input
+                type="range"
+                min="0.01"
+                max="0.50"
+                step="0.01"
+                value={pruningThreshold}
+                onChange={(event) => savePruningThreshold(Number(event.target.value))}
+                className="accent-accent"
+              />
+            </label>
+          </div>
 
           <div className="grid gap-2">
             <Button
@@ -189,11 +283,55 @@ export function SettingsView() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle>Provider config</CardTitle>
-          <ServerCog className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+          {configMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin text-accent-strong" aria-hidden="true" /> : <ServerCog className="h-4 w-4 text-accent-strong" aria-hidden="true" />}
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <ProviderBlock title="Embedding" rows={[providerDefaults.embedding.provider, providerDefaults.embedding.model]} />
-          <ProviderBlock title="LLM" rows={[providerDefaults.llm.provider, providerDefaults.llm.model, providerDefaults.llm.baseUrl]} />
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <label className="text-xs font-medium uppercase text-ink/45" htmlFor="embedding-provider">
+                Embedding provider
+              </label>
+              <select
+                id="embedding-provider"
+                value={embeddingProvider}
+                onChange={(event) => saveEmbeddingProvider(event.target.value)}
+                className="h-10 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+              >
+                <option value="fastembed">fastembed</option>
+                <option value="openai">openai</option>
+              </select>
+            </div>
+            <div className="grid gap-2">
+              <label className="text-xs font-medium uppercase text-ink/45" htmlFor="embedding-model">
+                Embedding model
+              </label>
+              <Input id="embedding-model" value={embeddingModel} onChange={(event) => saveEmbeddingModel(event.target.value)} />
+            </div>
+          </div>
+
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-provider">
+                LLM provider
+              </label>
+              <select
+                id="llm-provider"
+                value={llmProvider}
+                onChange={(event) => saveLlmProvider(event.target.value)}
+                className="h-10 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+              >
+                <option value="ollama">ollama</option>
+                <option value="openai">openai</option>
+                <option value="anthropic">anthropic</option>
+              </select>
+            </div>
+            <div className="grid gap-2">
+              <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-model">
+                LLM model
+              </label>
+              <Input id="llm-model" value={llmModel} onChange={(event) => saveLlmModel(event.target.value)} />
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -205,21 +343,6 @@ function Field({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-xs font-medium uppercase text-ink/45">{label}</p>
       <p className="mt-1 break-all rounded-md border border-line bg-soft px-3 py-2 font-mono text-sm">{value}</p>
-    </div>
-  );
-}
-
-function ProviderBlock({ title, rows }: { title: string; rows: string[] }) {
-  return (
-    <div className="rounded-lg border border-line bg-soft p-4">
-      <p className="text-sm font-semibold">{title}</p>
-      <div className="mt-3 grid gap-2">
-        {rows.map((row) => (
-          <p key={row} className="break-all font-mono text-xs text-ink/70">
-            {row}
-          </p>
-        ))}
-      </div>
     </div>
   );
 }

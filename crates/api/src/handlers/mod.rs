@@ -19,6 +19,10 @@ pub fn protected_router() -> Router<AppState> {
     Router::new()
         .route("/v1/workspaces/{id}", get(workspaces::get_workspace))
         .route("/v1/workspaces/{id}/stats", get(workspaces::get_stats))
+        .route(
+            "/v1/workspaces/{id}/stats/history",
+            get(workspaces::get_stats_history),
+        )
         .route("/v1/workspaces/{id}/export", get(export::export_workspace))
         .route(
             "/v1/workspaces/{id}/config",

@@ -191,18 +191,6 @@ export type IngestResult = {
   detail?: string;
 };
 
-export type ProviderDefaults = {
-  embedding: {
-    provider: string;
-    model: string;
-  };
-  llm: {
-    provider: string;
-    model: string;
-    baseUrl: string;
-  };
-};
-
 export type CreateWorkspaceResponse = {
   id?: string;
   name?: string;
@@ -217,10 +205,17 @@ export type WorkspaceSummary = {
 export type WorkspaceConfig = {
   promotion_threshold?: number;
   dedup_cosine_threshold?: number;
+  decay_half_life_days?: number;
+  pruning_threshold?: number;
+  llm_provider?: string;
+  llm_model?: string;
+  embedding_provider?: string;
+  embedding_model?: string;
   [key: string]: JsonValue | undefined;
 };
 
-export type WorkspaceDetail = WorkspaceSummary & {
+export type WorkspaceDetail = WorkspaceSummary &
+  WorkspaceConfig & {
   config: WorkspaceConfig | JsonValue;
   promotion_threshold: number;
   dedup_cosine_threshold: number;

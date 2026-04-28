@@ -1,6 +1,6 @@
 # MemoryOps — Feature List
 
-**Version:** 0.14.0  
+**Version:** 0.15.0
 **Last Updated:** 2026-04-28
 
 This document tracks all planned features across the platform with current status and target milestone.
@@ -37,8 +37,8 @@ This document tracks all planned features across the platform with current statu
 | M14 | Retrieval Trace view (live data) | 🟢 Complete |
 | M15 | Webhook Tester — multi-source (Slack, Linear, Jira) | 🟢 Complete |
 | M16 | DLQ management UI (retry + discard from the Integration view) | 🟢 Complete |
-| M17 | Settings view — write mode (config sliders + provider selection) | 🔴 Not started |
-| M18 | Workspace stats time-series endpoint + trend charts | 🔴 Not started |
+| M17 | Settings view — write mode (config sliders + provider selection) | 🟢 Complete |
+| M18 | Workspace stats time-series endpoint + trend charts | 🟢 Complete |
 | M19 | Scope-filtered retrieval (agent_id, user_id, repo on search + retrieve) | 🔴 Not started |
 | M20 | Tag management API + UI (enumerate, count, bulk-retag) | 🔴 Not started |
 | M21 | Import / restore (JSONL round-trip with export) | 🔴 Not started |
@@ -183,7 +183,7 @@ This document tracks all planned features across the platform with current statu
 | GET /v1/workspaces/:id/export | 🟢 | M7 | JSONL streaming, cursor-paginated |
 | POST /v1/workspaces/:id/promote | 🟢 | M8 | Manual promotion pass with workspace lock |
 | GET /v1/workspaces/:id/stats | 🟢 | M13 | Aggregate memory stats per workspace |
-| GET /v1/workspaces/:id/stats/history | 🔴 | M18 | Daily aggregate: created, promoted, soft-deleted per day |
+| GET /v1/workspaces/:id/stats/history | 🟢 | M18 | Daily aggregate: created, promoted, soft-deleted per day |
 | GET /v1/workspaces/:id/tags | 🔴 | M20 | Tag name + count enumeration |
 | POST /v1/workspaces/:id/import | 🔴 | M21 | JSONL import; idempotent on id |
 
@@ -263,9 +263,9 @@ This document tracks all planned features across the platform with current statu
 | DLQ retry action (from Integration view) | 🟢 | M16 | POST /v1/workspaces/:id/dlq/:job_id/retry |
 | DLQ discard action (from Integration view) | 🟢 | M16 | DELETE /v1/workspaces/:id/dlq/:job_id |
 | DLQ error detail expand (raw payload + error message) | 🟢 | M16 | Inline expandable row in DLQ panel |
-| Settings view — config write (decay, pruning, promotion sliders) | 🔴 | M17 | PATCH /v1/workspaces/:id/config |
-| Settings view — provider selector (LLM + embedding) | 🔴 | M17 | Dropdown saved via PATCH /v1/workspaces/:id/config |
-| Dashboard trend charts (30-day memory activity) | 🔴 | M18 | GET /v1/workspaces/:id/stats/history |
+| Settings view — config write (decay, pruning, promotion sliders) | 🟢 | M17 | PATCH /v1/workspaces/:id/config |
+| Settings view — provider selector (LLM + embedding) | 🟢 | M17 | Dropdown saved via PATCH /v1/workspaces/:id/config |
+| Dashboard trend charts (30-day memory activity) | 🟢 | M18 | GET /v1/workspaces/:id/stats/history |
 | Tag browser (enumerate + filter by tag) | 🔴 | M20 | GET /v1/workspaces/:id/tags |
 
 ---
