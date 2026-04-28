@@ -3,24 +3,37 @@ import { useMutation } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { fireGithubWebhook, fixtureFor, webhookFixtures, type WebhookEventKind, type WebhookFixture } from "../api/ingest";
+import {
+  fireWebhook as submitWebhook,
+  firstFixtureForSource,
+  fixturesForSource,
+  webhookSources,
+  type WebhookFixture,
+  type WebhookFixtureKind,
+  type WebhookSource,
+} from "../api/ingest";
 import type { IngestResult, JsonValue } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
+
+const defaultSource: WebhookSource = "github";
 
 export function Ingest() {
   const workspaceId = useAppStore((state) => state.workspaceId);
-  const [selectedKind, setSelectedKind] = useState<WebhookEventKind>("pull_request_opened");
-  const fixture = useMemo(() => fixtureFor(selectedKind), [selectedKind]);
+  const [selectedSource, setSelectedSource] = useState<WebhookSource>(defaultSource);
+  const [selectedKind, setSelectedKind] = useState<WebhookFixtureKind>(() => firstFixtureForSource(defaultSource).kind);
+  const sourceFixtures = useMemo(() => fixturesForSource(selectedSource), [selectedSource]);
+  const fixture = useMemo(() => sourceFixtures.find((option) => option.kind === selectedKind) ?? firstFixtureForSource(selectedSource), [selectedKind, selectedSource, sourceFixtures]);
   const [payloadText, setPayloadText] = useState(formatPayload(fixture.payload));
   const [parseError, setParseError] = useState<string | null>(null);
   const mutation = useMutation<IngestResult, Error, { fixture: WebhookFixture; payload: JsonValue }>({
-    mutationKey: ["workspace", workspaceId, "ingest", "github"],
-    mutationFn: ({ fixture: selectedFixture, payload }) => fireGithubWebhook(workspaceId, selectedFixture, payload),
+    mutationKey: ["workspace", workspaceId, "ingest", selectedSource],
+    mutationFn: ({ fixture: selectedFixture, payload }) => submitWebhook(workspaceId, selectedFixture, payload),
   });
 
   useEffect(() => {
@@ -29,7 +42,20 @@ export function Ingest() {
     mutation.reset();
   }, [fixture]);
 
-  function fireWebhook() {
+  function selectSource(source: WebhookSource) {
+    if (source === selectedSource) {
+      return;
+    }
+
+    const nextFixture = firstFixtureForSource(source);
+    setSelectedSource(source);
+    setSelectedKind(nextFixture.kind);
+    setPayloadText(formatPayload(nextFixture.payload));
+    setParseError(null);
+    mutation.reset();
+  }
+
+  function handleFireWebhook() {
     setParseError(null);
     const parsed = parsePayload(payloadText);
     if ("error" in parsed) {
@@ -42,6 +68,8 @@ export function Ingest() {
 
   const response = mutation.data;
   const accepted = response?.ok === true && response.status === 202;
+  const acceptedEventId = response ? eventId(response) : null;
+  const showExplorerLink = accepted && fixture.source === "github" && acceptedEventId !== null;
 
   return (
     <div className="mx-auto grid max-w-7xl gap-5">
@@ -52,8 +80,28 @@ export function Ingest() {
 
       <section className="grid gap-4 xl:grid-cols-[22rem_1fr]">
         <Card>
-          <CardHeader>
+          <CardHeader className="pb-0">
             <CardTitle>Event</CardTitle>
+            <div className="mt-3 flex border-b border-line" role="tablist" aria-label="Webhook source">
+              {webhookSources.map((source) => {
+                const active = selectedSource === source.source;
+                return (
+                  <button
+                    key={source.source}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => selectSource(source.source)}
+                    className={cn(
+                      "border-b-2 px-3 pb-2 pt-1 text-sm font-medium transition-colors",
+                      active ? "border-accent text-accent-strong" : "border-transparent text-ink/55 hover:border-line hover:text-ink",
+                    )}
+                  >
+                    {source.label}
+                  </button>
+                );
+              })}
+            </div>
           </CardHeader>
           <CardContent className="grid gap-4">
             <label className="grid gap-2 text-sm font-medium text-ink/70">
@@ -61,10 +109,10 @@ export function Ingest() {
               <select
                 data-testid="webhook-event-select"
                 value={selectedKind}
-                onChange={(event) => setSelectedKind(event.target.value as WebhookEventKind)}
+                onChange={(event) => setSelectedKind(event.target.value as WebhookFixtureKind)}
                 className="h-10 rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
               >
-                {webhookFixtures.map((option) => (
+                {sourceFixtures.map((option) => (
                   <option key={option.kind} value={option.kind}>
                     {option.label}
                   </option>
@@ -77,7 +125,7 @@ export function Ingest() {
               <p className="mt-1 font-mono">{fixture.actor}</p>
             </div>
 
-            <Button type="button" data-testid="fire-webhook-button" onClick={fireWebhook} disabled={mutation.isPending}>
+            <Button type="button" data-testid="fire-webhook-button" onClick={handleFireWebhook} disabled={mutation.isPending}>
               <Send className="h-4 w-4" aria-hidden="true" />
               {mutation.isPending ? "Firing" : "Fire Webhook"}
             </Button>
@@ -104,7 +152,10 @@ export function Ingest() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle>Response</CardTitle>
-          {response ? <Badge variant={response.ok ? "accent" : "rust"}>{response.status}</Badge> : null}
+          <div className="flex items-center gap-2">
+            <Badge variant="muted" className="capitalize">{fixture.source}</Badge>
+            {response ? <Badge variant={response.ok ? "accent" : "rust"}>{response.status}</Badge> : null}
+          </div>
         </CardHeader>
         <CardContent>
           {!response && !mutation.isPending ? (
@@ -121,12 +172,14 @@ export function Ingest() {
           {accepted ? (
             <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
               <Sparkles className="h-4 w-4" aria-hidden="true" />
-              <span>202 Accepted{eventId(response) ? ` · ${eventId(response)}` : ""}</span>
-              <Button asChild variant="secondary" size="sm">
-                <Link to={`/memory?q=${encodeURIComponent(fixture.actor)}`} data-testid="view-in-explorer-link">
-                  View in Explorer
-                </Link>
-              </Button>
+              <span>202 Accepted{acceptedEventId ? ` · ${acceptedEventId}` : ""}</span>
+              {showExplorerLink ? (
+                <Button asChild variant="secondary" size="sm">
+                  <Link to={`/memory?q=${encodeURIComponent(fixture.actor)}`} data-testid="view-in-explorer-link">
+                    View in Explorer
+                  </Link>
+                </Button>
+              ) : null}
             </div>
           ) : null}
         </CardContent>

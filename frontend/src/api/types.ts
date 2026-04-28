@@ -290,22 +290,3 @@ export type IntegrationResponse = {
   status: IntegrationStatus;
 };
 
-export type DlqEntryResponse = {
-  job_id: string;
-  workspace_id?: string;
-  payload_summary: string;
-  error?: string;
-  error_message?: string;
-  retry_count?: number;
-  attempts?: number;
-  failed_at?: string | null;
-  created_at?: string | null;
-};
-
-export type DlqEntry = {
-  job_id: string;
-  workspace_id: string;
-  error_message: string;
-  attempts: number;
-  created_at?: string | null;
-};
