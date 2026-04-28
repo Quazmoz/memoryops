@@ -1728,6 +1728,7 @@ dependencies = [
  "qdrant-client",
  "redis",
  "reqwest",
+ "serde",
  "serde_json",
  "sqlx",
  "tiktoken-rs",

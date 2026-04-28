@@ -105,6 +105,10 @@ export function buildSearchRequest(workspaceId: string, criteria: SearchCriteria
     offset: criteria.offset,
   };
 
+  if (criteria.memoryType !== "all") {
+    request.memory_types = [criteria.memoryType];
+  }
+
   if (Object.keys(filters).length > 0) {
     request.filters = filters;
   }

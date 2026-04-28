@@ -12,7 +12,7 @@ use crate::dto::{
     parse_memory_type, ListQuery, SortDirection, SortField, UpdateMemoryRequest, MAX_LIMIT,
 };
 
-const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, deleted_at, last_accessed_at, created_at, updated_at";
+const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
 const DEFAULT_DECAY_HALF_LIFE_SECS: f64 = 30.0 * 86_400.0;
 
 #[derive(Debug, sqlx::FromRow)]
@@ -32,6 +32,9 @@ struct MemoryUnitWithTotal {
     pinned: bool,
     tags: Vec<String>,
     version: i32,
+    promoted_at: Option<DateTime<Utc>>,
+    source_episode_ids: Vec<Uuid>,
+    corroboration_count: i32,
     deleted_at: Option<DateTime<Utc>>,
     last_accessed_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
@@ -57,6 +60,9 @@ impl From<MemoryUnitWithTotal> for MemoryUnit {
             pinned: row.pinned,
             tags: row.tags,
             version: row.version,
+            promoted_at: row.promoted_at,
+            source_episode_ids: row.source_episode_ids,
+            corroboration_count: row.corroboration_count,
             deleted_at: row.deleted_at,
             last_accessed_at: row.last_accessed_at,
             created_at: row.created_at,

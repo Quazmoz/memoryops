@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use crate::{
     dto::{
-        memory_type_as_str, rank_from_index, MemoryResult, MemoryUnitDto, SearchRequest,
-        MIN_SCORE_THRESHOLD,
+        memory_type_as_str, normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto,
+        SearchRequest, MIN_SCORE_THRESHOLD,
     },
     store,
 };
@@ -35,6 +35,7 @@ pub async fn vector_search(
     workspace_id: Uuid,
     query: &str,
     scope: Option<&MemoryScope>,
+    memory_types: Option<&[String]>,
     limit: u64,
 ) -> AppResult<Vec<ScoredCandidate>> {
     let embedding = match embedding_provider.embed(query).await {
@@ -48,7 +49,7 @@ pub async fn vector_search(
 
     let request = SearchPointsBuilder::new(COLLECTION_NAME, embedding, limit)
         .score_threshold(MIN_SCORE_THRESHOLD)
-        .filter(build_vector_filter(workspace_id, scope));
+        .filter(build_vector_filter(workspace_id, scope, memory_types));
 
     let response = match qdrant.search_points(request).await {
         Ok(response) => response,
@@ -78,12 +79,14 @@ pub async fn vector_search_results(
     req: &SearchRequest,
     limit: u32,
 ) -> AppResult<Vec<MemoryResult>> {
+    let memory_types = normalized_memory_types(req)?;
     let candidates = vector_search(
         &state.qdrant,
         &state.embedding_provider,
         req.workspace_id,
         &req.query,
         None,
+        memory_types.as_deref(),
         VECTOR_CANDIDATE_LIMIT.max(u64::from(limit)),
     )
     .await?;
@@ -98,12 +101,11 @@ pub async fn vector_search_results(
         .into_iter()
         .map(|unit| (unit.id, unit))
         .collect::<HashMap<_, _>>();
-    let memory_type_filter = req.filters.as_ref().and_then(|filters| filters.memory_type);
 
     let mut results = Vec::with_capacity(scored_ids.len());
     for (id, score) in scored_ids {
         if let Some(unit) = units_by_id.remove(&id) {
-            if !matches_memory_type(unit.memory_type, memory_type_filter) {
+            if !matches_memory_type(unit.memory_type, memory_types.as_deref()) {
                 continue;
             }
             let rank = rank_from_index(results.len());
@@ -121,8 +123,17 @@ pub async fn vector_search_results(
     Ok(results)
 }
 
-pub fn build_vector_filter(workspace_id: Uuid, scope: Option<&MemoryScope>) -> Filter {
+pub fn build_vector_filter(
+    workspace_id: Uuid,
+    scope: Option<&MemoryScope>,
+    memory_types: Option<&[String]>,
+) -> Filter {
     let mut conditions = vec![Condition::matches("workspace_id", workspace_id.to_string())];
+    if let Some(memory_types) = memory_types {
+        if !memory_types.is_empty() {
+            conditions.push(Condition::matches("memory_type", memory_types.to_vec()));
+        }
+    }
     if let Some(scope) = scope {
         if let Some(agent_id) = &scope.agent_id {
             conditions.push(Condition::matches("agent_id", agent_id.clone()));
@@ -145,8 +156,12 @@ fn scored_point_uuid(point: &ScoredPoint) -> Option<Uuid> {
     }
 }
 
-fn matches_memory_type(memory_type: MemoryType, filter: Option<MemoryType>) -> bool {
-    filter.is_none_or(|filter| memory_type_as_str(memory_type) == memory_type_as_str(filter))
+fn matches_memory_type(memory_type: MemoryType, filters: Option<&[String]>) -> bool {
+    filters.is_none_or(|filters| {
+        filters
+            .iter()
+            .any(|filter| filter == memory_type_as_str(memory_type))
+    })
 }
 
 #[cfg(test)]
@@ -163,12 +178,24 @@ mod tests {
             repo: Some("Quazmoz/memoryops".to_owned()),
         };
 
-        let filter = build_vector_filter(workspace_id, Some(&scope));
+        let filter = build_vector_filter(workspace_id, Some(&scope), None);
         let debug = format!("{filter:?}");
 
         assert!(debug.contains("workspace_id"));
         assert!(debug.contains(&workspace_id.to_string()));
         assert!(debug.contains("agent_id"));
         assert!(debug.contains("repo"));
+    }
+
+    #[test]
+    fn vector_filter_includes_memory_types_when_supplied() {
+        let workspace_id = Uuid::now_v7();
+        let memory_types = vec!["semantic".to_owned()];
+
+        let filter = build_vector_filter(workspace_id, None, Some(&memory_types));
+        let debug = format!("{filter:?}");
+
+        assert!(debug.contains("memory_type"));
+        assert!(debug.contains("semantic"));
     }
 }

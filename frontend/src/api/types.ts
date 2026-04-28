@@ -37,6 +37,9 @@ export type MemoryUnit = {
   embedding_id?: string | null;
   token_count?: number | null;
   source_events: string[];
+  source_episode_ids: string[];
+  corroboration_count: number;
+  promoted_at?: string | null;
   access_count?: number;
   created_at: string;
   updated_at: string;
@@ -64,6 +67,7 @@ export type SearchRequest = {
   limit?: number;
   offset?: number;
   filters?: SearchFilters;
+  memory_types?: MemoryType[];
 };
 
 export type SearchResult = {
@@ -127,6 +131,27 @@ export type CreateWorkspaceResponse = {
 export type WorkspaceSummary = {
   id: string;
   name: string;
+};
+
+export type WorkspaceConfig = {
+  promotion_threshold?: number;
+  dedup_cosine_threshold?: number;
+  [key: string]: JsonValue | undefined;
+};
+
+export type WorkspaceDetail = WorkspaceSummary & {
+  config: WorkspaceConfig | JsonValue;
+  promotion_threshold: number;
+  dedup_cosine_threshold: number;
+  created_at?: string;
+  updated_at?: string;
+  deleted_at?: string | null;
+};
+
+export type PromotionReport = {
+  clusters_found: number;
+  units_promoted: number;
+  units_skipped: number;
 };
 
 export type CreateApiKeyResponse = {

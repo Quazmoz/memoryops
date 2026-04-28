@@ -25,10 +25,23 @@ pub struct MemoryUnit {
     pub pinned: bool,
     pub tags: Vec<String>,
     pub version: i32,
+    pub promoted_at: Option<DateTime<Utc>>,
+    pub source_episode_ids: Vec<Uuid>,
+    pub corroboration_count: i32,
     pub deleted_at: Option<DateTime<Utc>>,
     pub last_accessed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl MemoryUnit {
+    pub fn is_semantic(&self) -> bool {
+        self.memory_type == MemoryType::Semantic
+    }
+
+    pub fn is_episodic(&self) -> bool {
+        self.memory_type == MemoryType::Episodic
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]

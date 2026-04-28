@@ -116,6 +116,7 @@ pub async fn handle_retrieve(
         limit: Some(MAX_LIMIT),
         offset: None,
         filters: None,
+        memory_types: None,
     };
 
     let search_results = search_candidates(&state, &search_request, mode).await?;

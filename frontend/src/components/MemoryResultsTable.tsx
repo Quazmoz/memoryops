@@ -37,7 +37,12 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
             <div className="min-w-[18rem] space-y-2">
               <div className="flex flex-wrap items-center gap-2">
                 {memory.rank ? <Badge variant="muted">#{memory.rank}</Badge> : null}
-                <Badge variant={memory.memory_type === "semantic" ? "accent" : "rust"}>{memory.memory_type}</Badge>
+                <Badge variant={memory.memory_type === "semantic" ? "teal" : "rust"}>{memoryTypeLabel(memory)}</Badge>
+                {memory.memory_type === "semantic" && memory.corroboration_count > 1 ? (
+                  <Badge variant="purple" title={`${memory.source_episode_ids.length || memory.corroboration_count} source episodes`}>
+                    ⬡ {memory.corroboration_count} sources
+                  </Badge>
+                ) : null}
                 {memory.pinned ? <Badge variant="amber">Pinned</Badge> : null}
               </div>
               <p className="text-sm font-medium text-ink">{previewText(memory.content)}</p>
@@ -145,6 +150,10 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
       </div>
     </div>
   );
+}
+
+function memoryTypeLabel(memory: MemoryUnit): string {
+  return memory.memory_type === "semantic" ? "Semantic" : "Episodic";
 }
 
 function EntityTagList({ memory }: { memory: MemoryUnit }) {

@@ -45,7 +45,7 @@ impl QdrantPayload {
         }
     }
 
-    fn into_qdrant_payload(self) -> HashMap<String, serde_json::Value> {
+    pub(crate) fn into_qdrant_payload(self) -> HashMap<String, serde_json::Value> {
         HashMap::from([
             (
                 "workspace_id".to_owned(),

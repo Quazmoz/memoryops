@@ -2,6 +2,7 @@ pub mod dlq;
 pub mod embedder;
 pub mod extractor;
 pub mod pipeline;
+pub mod promoter;
 pub mod scheduler;
 pub mod scope;
 pub mod store;

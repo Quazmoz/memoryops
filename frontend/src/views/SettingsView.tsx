@@ -1,9 +1,10 @@
-import { AlertCircle, Download, KeyRound, Loader2, ServerCog, ShieldCheck, X } from "lucide-react";
-import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { AlertCircle, Download, GitMerge, KeyRound, Loader2, Play, ServerCog, ShieldCheck, SlidersHorizontal, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 
-import type { ProviderDefaults } from "../api/types";
-import { exportMemories } from "../api/workspaces";
+import type { ProviderDefaults, PromotionReport, WorkspaceConfig } from "../api/types";
+import { exportMemories, getWorkspace, triggerPromotion, updateWorkspaceConfig } from "../api/workspaces";
+import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -24,8 +25,19 @@ const providerDefaults: ProviderDefaults = {
 export function SettingsView() {
   const workspaceId = useAppStore((state) => state.workspaceId);
   const apiKey = useAppStore((state) => state.apiKey);
+  const queryClient = useQueryClient();
   const [exportError, setExportError] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [promotionError, setPromotionError] = useState<string | null>(null);
+  const [promotionResult, setPromotionResult] = useState<PromotionReport | null>(null);
+  const [promotionThreshold, setPromotionThreshold] = useState(0.72);
+  const [dedupThreshold, setDedupThreshold] = useState(0.92);
   const hasApiKey = apiKey.trim().length > 0;
+  const workspaceQuery = useQuery({
+    queryKey: ["workspace", workspaceId, "settings"],
+    queryFn: () => getWorkspace(workspaceId),
+    enabled: hasApiKey && workspaceId.trim().length > 0,
+  });
   const exportMutation = useMutation({
     mutationKey: ["workspace", workspaceId, "export"],
     mutationFn: () => exportMemories(workspaceId),
@@ -35,6 +47,46 @@ export function SettingsView() {
     },
     onError: (error: Error) => setExportError(error.message),
   });
+  const configMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "config"],
+    mutationFn: (patch: WorkspaceConfig) => updateWorkspaceConfig(workspaceId, patch),
+    onSuccess: (workspace) => {
+      setConfigError(null);
+      setPromotionThreshold(workspace.promotion_threshold);
+      setDedupThreshold(workspace.dedup_cosine_threshold);
+    },
+    onError: (error: Error) => setConfigError(error.message),
+  });
+  const promotionMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "promotion"],
+    mutationFn: () => triggerPromotion(workspaceId),
+    onSuccess: (report) => {
+      setPromotionError(null);
+      setPromotionResult(report);
+      void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "memory"] });
+    },
+    onError: (error: Error) => {
+      setPromotionResult(null);
+      setPromotionError(error.message);
+    },
+  });
+
+  useEffect(() => {
+    if (workspaceQuery.data) {
+      setPromotionThreshold(workspaceQuery.data.promotion_threshold);
+      setDedupThreshold(workspaceQuery.data.dedup_cosine_threshold);
+    }
+  }, [workspaceQuery.data]);
+
+  function savePromotionThreshold(value: number) {
+    setPromotionThreshold(value);
+    configMutation.mutate({ promotion_threshold: value });
+  }
+
+  function saveDedupThreshold(value: number) {
+    setDedupThreshold(value);
+    configMutation.mutate({ dedup_cosine_threshold: value });
+  }
 
   return (
     <div className="mx-auto grid max-w-7xl gap-6">
@@ -77,6 +129,62 @@ export function SettingsView() {
           </CardContent>
         </Card>
       </section>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle>Promotion</CardTitle>
+          <GitMerge className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+        </CardHeader>
+        <CardContent className="grid gap-5 xl:grid-cols-[1fr_1fr_auto] xl:items-end">
+          <label className="grid gap-2 text-sm text-ink/70">
+            <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
+              <span>Promotion threshold: {promotionThreshold.toFixed(2)}</span>
+              {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
+            </span>
+            <input
+              type="range"
+              min="0.5"
+              max="1"
+              step="0.01"
+              value={promotionThreshold}
+              onChange={(event) => savePromotionThreshold(Number(event.target.value))}
+              className="accent-accent"
+            />
+          </label>
+
+          <label className="grid gap-2 text-sm text-ink/70">
+            <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
+              <span>Dedup cosine threshold: {dedupThreshold.toFixed(2)}</span>
+              {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
+            </span>
+            <input
+              type="range"
+              min="0.8"
+              max="0.99"
+              step="0.01"
+              value={dedupThreshold}
+              onChange={(event) => saveDedupThreshold(Number(event.target.value))}
+              className="accent-accent"
+            />
+          </label>
+
+          <div className="grid gap-2">
+            <Button
+              type="button"
+              onClick={() => promotionMutation.mutate()}
+              disabled={!hasApiKey || workspaceId.trim().length === 0 || promotionMutation.isPending}
+            >
+              {promotionMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
+              Run Promotion Now
+            </Button>
+            {promotionResult ? (
+              <p className="text-sm text-ink/70">Promoted {promotionResult.units_promoted} semantic memories from {promotionResult.clusters_found} clusters</p>
+            ) : null}
+            {promotionError ? <InlineError title="Promotion failed" message={promotionError} /> : null}
+            {configError ? <InlineError title="Config update failed" message={configError} /> : null}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">

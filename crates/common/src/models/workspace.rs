@@ -9,6 +9,8 @@ pub struct Workspace {
     pub id: Uuid,
     pub name: String,
     pub config: serde_json::Value,
+    pub promotion_threshold: f32,
+    pub dedup_cosine_threshold: f32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -18,6 +20,8 @@ pub struct Workspace {
 pub struct WorkspaceConfig {
     #[serde(default = "default_promotion_threshold")]
     pub promotion_threshold: f32,
+    #[serde(default = "default_dedup_cosine_threshold")]
+    pub dedup_cosine_threshold: f32,
     #[serde(default = "default_access_count_trigger")]
     pub access_count_trigger: u32,
     #[serde(default = "default_half_life_days")]
@@ -34,6 +38,7 @@ impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self {
             promotion_threshold: default_promotion_threshold(),
+            dedup_cosine_threshold: default_dedup_cosine_threshold(),
             access_count_trigger: default_access_count_trigger(),
             half_life_days: default_half_life_days(),
             decay_rate_episodic: default_decay_rate_episodic(),
@@ -45,7 +50,11 @@ impl Default for WorkspaceConfig {
 }
 
 fn default_promotion_threshold() -> f32 {
-    0.85
+    0.72
+}
+
+fn default_dedup_cosine_threshold() -> f32 {
+    0.92
 }
 
 fn default_access_count_trigger() -> u32 {

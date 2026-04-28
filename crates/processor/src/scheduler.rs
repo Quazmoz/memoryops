@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Datelike, Duration as ChronoDuration, Timelike, Utc, Weekday};
 use common::{audit::spawn_audit_log, error::AppResult, models::AuditAction, AppError, AppState};
 use sqlx::FromRow;
 use uuid::Uuid;
 
-use crate::embedder::Embedder;
+use crate::{
+    embedder::Embedder,
+    promoter::{run_promotion_pass, PromoterConfig},
+};
 
 const WORKSPACE_PAGE_SIZE: i64 = 500;
 const PRUNE_THRESHOLD: f32 = 0.10;
@@ -21,27 +24,47 @@ struct MemoryIdentity {
 
 pub async fn run_scheduler(state: Arc<AppState>) {
     loop {
-        let next = next_2am_utc();
+        let next = next_scheduler_tick_utc();
         let sleep_for = next
             .signed_duration_since(Utc::now())
             .to_std()
             .unwrap_or_default();
         tokio::time::sleep_until(tokio::time::Instant::now() + sleep_for).await;
 
-        if let Err(error) = run_decay_pass(&state).await {
-            tracing::error!(error = ?error, "decay pass failed");
+        let now = Utc::now();
+        if now.hour() == 2 {
+            if let Err(error) = run_decay_pass(&state).await {
+                tracing::error!(error = ?error, "decay pass failed");
+            }
+            if let Err(error) = run_pruning_pass(&state).await {
+                tracing::error!(error = ?error, "pruning pass failed");
+            }
+            if let Err(error) = run_hard_delete_pass(&state).await {
+                tracing::error!(error = ?error, "hard delete pass failed");
+            }
         }
-        if let Err(error) = run_pruning_pass(&state).await {
-            tracing::error!(error = ?error, "pruning pass failed");
-        }
-        if let Err(error) = run_hard_delete_pass(&state).await {
-            tracing::error!(error = ?error, "hard delete pass failed");
+
+        let is_sunday_promotion = now.weekday() == Weekday::Sun && now.hour() == 3;
+        if is_sunday_promotion {
+            if let Err(error) = run_scheduled_promotion_pass(&state).await {
+                tracing::error!(error = ?error, "promotion pass failed");
+            }
         }
     }
 }
 
 pub fn next_2am_utc() -> DateTime<Utc> {
     next_scheduled_utc_after(Utc::now(), 2)
+}
+
+pub fn next_scheduler_tick_utc() -> DateTime<Utc> {
+    next_scheduler_tick_after(Utc::now())
+}
+
+pub fn next_scheduler_tick_after(now: DateTime<Utc>) -> DateTime<Utc> {
+    let next_daily = next_scheduled_utc_after(now, 2);
+    let next_promotion = next_sunday_3am_utc_after(now);
+    next_daily.min(next_promotion)
 }
 
 pub fn next_scheduled_utc_after(now: DateTime<Utc>, hour_utc: u8) -> DateTime<Utc> {
@@ -62,6 +85,47 @@ pub fn next_scheduled_utc_after(now: DateTime<Utc>, hour_utc: u8) -> DateTime<Ut
         Some(next_naive) => DateTime::<Utc>::from_naive_utc_and_offset(next_naive, Utc),
         None => now + ChronoDuration::days(1),
     }
+}
+
+fn next_sunday_3am_utc_after(now: DateTime<Utc>) -> DateTime<Utc> {
+    let mut date = now.date_naive();
+    for _ in 0..8 {
+        if let Some(candidate_naive) = date.and_hms_opt(3, 0, 0) {
+            let candidate = DateTime::<Utc>::from_naive_utc_and_offset(candidate_naive, Utc);
+            if candidate > now && candidate.weekday() == Weekday::Sun {
+                return candidate;
+            }
+        }
+        date = date
+            .checked_add_signed(ChronoDuration::days(1))
+            .unwrap_or(date);
+    }
+
+    now + ChronoDuration::days(7)
+}
+
+async fn run_scheduled_promotion_pass(state: &AppState) -> AppResult<()> {
+    for workspace_id in fetch_all_workspace_ids(&state.db).await? {
+        let config = fetch_workspace_promotion_config(&state.db, workspace_id).await?;
+        let report = run_promotion_pass(
+            &state.db,
+            &state.qdrant,
+            state.llm_provider.as_ref(),
+            state.embedding_provider.as_ref(),
+            workspace_id,
+            config,
+        )
+        .await
+        .map_err(AppError::Internal)?;
+        tracing::info!(
+            workspace_id = %report.workspace_id,
+            clusters_found = report.clusters_found,
+            units_promoted = report.units_promoted,
+            "promotion pass complete"
+        );
+    }
+
+    Ok(())
 }
 
 pub async fn run_decay_pass(state: &AppState) -> AppResult<u64> {
@@ -211,6 +275,53 @@ async fn list_workspace_ids_after(
     .fetch_all(&state.db)
     .await
     .map_err(AppError::Database)
+}
+
+async fn fetch_all_workspace_ids(pool: &sqlx::PgPool) -> AppResult<Vec<Uuid>> {
+    sqlx::query_scalar::<_, Uuid>(
+        r#"
+        SELECT id
+        FROM workspaces
+        WHERE deleted_at IS NULL
+        ORDER BY id ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::Database)
+}
+
+async fn fetch_workspace_promotion_config(
+    pool: &sqlx::PgPool,
+    workspace_id: Uuid,
+) -> AppResult<PromoterConfig> {
+    #[derive(Debug, FromRow)]
+    struct Row {
+        promotion_threshold: f64,
+        dedup_cosine_threshold: f64,
+    }
+
+    let row = sqlx::query_as::<_, Row>(
+        r#"
+        SELECT promotion_threshold, dedup_cosine_threshold
+        FROM workspaces
+        WHERE id = $1 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound {
+        resource: format!("workspace:{workspace_id}"),
+    })?;
+
+    Ok(PromoterConfig {
+        promotion_threshold: row.promotion_threshold as f32,
+        dedup_cosine_threshold: row.dedup_cosine_threshold as f32,
+        cluster_min_size: 3,
+        batch_size: 200,
+    })
 }
 
 async fn prune_batch(state: &AppState, limit: i64) -> AppResult<Vec<MemoryIdentity>> {
@@ -368,5 +479,16 @@ mod tests {
 
         assert_eq!(next.date_naive().to_string(), "2026-04-28");
         assert_eq!(next.time().to_string(), "02:00:00");
+    }
+
+    #[test]
+    fn next_scheduler_tick_picks_sunday_three_am() {
+        let Some(now) = Utc.with_ymd_and_hms(2026, 5, 3, 2, 30, 0).single() else {
+            panic!("test timestamp should be valid");
+        };
+        let next = next_scheduler_tick_after(now);
+
+        assert_eq!(next.weekday(), Weekday::Sun);
+        assert_eq!(next.hour(), 3);
     }
 }

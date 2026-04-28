@@ -18,6 +18,7 @@ describe("buildSearchRequest", () => {
       mode: "hybrid",
       limit: 25,
       offset: 10,
+      memory_types: ["semantic"],
       filters: {
         memory_type: "semantic",
         pinned: true,

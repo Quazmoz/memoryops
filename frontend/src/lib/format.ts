@@ -28,6 +28,36 @@ export function formatDateTime(value: string | null | undefined): string {
   }).format(date);
 }
 
+export function formatRelativeTime(value: string | null | undefined): string {
+  if (!value) {
+    return "Pending";
+  }
+
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return "Pending";
+  }
+
+  const seconds = Math.round((timestamp - Date.now()) / 1000);
+  const divisions: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ["year", 31_536_000],
+    ["month", 2_592_000],
+    ["week", 604_800],
+    ["day", 86_400],
+    ["hour", 3_600],
+    ["minute", 60],
+  ];
+  const formatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
+  for (const [unit, amount] of divisions) {
+    if (Math.abs(seconds) >= amount) {
+      return formatter.format(Math.round(seconds / amount), unit);
+    }
+  }
+
+  return formatter.format(seconds, "second");
+}
+
 export function previewText(value: string, length = 72): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= length) {

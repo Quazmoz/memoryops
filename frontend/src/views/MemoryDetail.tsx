@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
 import { useMemoryDetail, useUpdateMemory } from "../hooks/use-memory";
-import { formatCount, formatDateTime, formatScore } from "../lib/format";
+import { formatCount, formatDateTime, formatRelativeTime, formatScore } from "../lib/format";
 import { validateImportanceScore } from "../lib/validation";
 import { useAppStore } from "../store/app-store";
 
@@ -97,9 +97,11 @@ export function MemoryDetail() {
           <header className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={memory.memory_type === "semantic" ? "accent" : "rust"}>{memory.memory_type}</Badge>
+                <Badge variant={memory.memory_type === "semantic" ? "teal" : "rust"}>{memory.memory_type === "semantic" ? "Semantic" : "Episodic"}</Badge>
                 {memory.importance_overridden ? <Badge variant="amber">overridden</Badge> : null}
+                {memory.memory_type === "semantic" && memory.corroboration_count > 1 ? <Badge variant="purple">⬡ {memory.corroboration_count} sources</Badge> : null}
                 <span className="text-sm text-ink/55">Updated {formatDateTime(memory.updated_at)}</span>
+                {memory.promoted_at ? <span className="text-sm text-ink/55">Promoted {formatRelativeTime(memory.promoted_at)}</span> : null}
               </div>
               <h1 className="mt-3 text-2xl font-semibold tracking-normal text-ink">Memory Detail</h1>
             </div>
@@ -129,6 +131,7 @@ export function MemoryDetail() {
                 <ScoreLine label="Importance" value={formatScore(memory.importance_score)} />
                 <ScoreLine label="Decay" value={formatScore(memory.decay_score)} />
                 <ScoreLine label="Access count" value={formatCount(memory.access_count)} />
+                {memory.promoted_at ? <ScoreLine label="Promoted" value={formatRelativeTime(memory.promoted_at)} /> : null}
               </CardContent>
             </Card>
           </section>

@@ -1,4 +1,4 @@
-use std::{env, sync::Arc};
+use std::{collections::HashMap, env, sync::Arc};
 
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, Utc};
@@ -11,12 +11,16 @@ use common::{
 };
 use processor::{
     embedder::{Embedder, COLLECTION_NAME},
+    promoter::{run_promotion_pass, PromoterConfig},
     scheduler::run_decay_pass,
     store::{self, NewMemoryUnit},
     worker::{enqueue_slow_job, process_slow, ProcessorJob},
 };
 use qdrant_client::{
-    qdrant::{point_id::PointIdOptions, Condition, Filter, ScoredPoint, SearchPointsBuilder},
+    qdrant::{
+        point_id::PointIdOptions, Condition, Filter, PointStruct, ScoredPoint, SearchPointsBuilder,
+        UpsertPointsBuilder,
+    },
     Qdrant,
 };
 use redis::aio::ConnectionManager;
@@ -187,6 +191,102 @@ async fn scheduler_decay_pass_updates_scores(pool: PgPool) {
 
     let decay_score = memory_decay_score(&pool, memory_id).await;
     assert!(decay_score < 0.30);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires docker-compose.test.yml services"]
+async fn promotion_pass_creates_semantic_unit(pool: PgPool) {
+    let state = test_state(pool.clone()).await;
+    ensure_collection(&state).await;
+    let workspace_id = insert_workspace(&pool).await;
+    let mut source_ids = Vec::new();
+
+    for index in 0..4 {
+        let memory_id = insert_memory_with_embedding(
+            &pool,
+            workspace_id,
+            &format!("promotion memory {index}"),
+            0.8,
+            0.8,
+        )
+        .await;
+        upsert_memory_vector(&state.qdrant, workspace_id, memory_id, [1.0, 0.0, 0.0]).await;
+        source_ids.push(memory_id);
+    }
+
+    let report = match run_promotion_pass(
+        &pool,
+        &state.qdrant,
+        state.llm_provider.as_ref(),
+        state.embedding_provider.as_ref(),
+        workspace_id,
+        PromoterConfig {
+            promotion_threshold: 0.72,
+            dedup_cosine_threshold: 0.92,
+            cluster_min_size: 3,
+            batch_size: 200,
+        },
+    )
+    .await
+    {
+        Ok(report) => report,
+        Err(error) => panic!("promotion pass should complete: {error}"),
+    };
+
+    assert_eq!(report.clusters_found, 1);
+    assert_eq!(report.units_promoted, 1);
+    assert_eq!(semantic_count(&pool, workspace_id).await, 1);
+    assert_eq!(deleted_source_count(&pool, &source_ids).await, 4);
+
+    let (semantic_id, embedding_id, corroboration_count) = semantic_unit(&pool, workspace_id).await;
+    assert!(embedding_id.is_some());
+    assert_eq!(corroboration_count, 4);
+    assert!(qdrant_contains_point(&state.qdrant, workspace_id, semantic_id).await);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires docker-compose.test.yml services"]
+async fn dedup_cosine_threshold_prevents_false_clusters(pool: PgPool) {
+    let state = test_state(pool.clone()).await;
+    ensure_collection(&state).await;
+    let workspace_id = insert_workspace(&pool).await;
+    let vectors = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+    for (index, vector) in vectors.iter().enumerate() {
+        let memory_id = insert_memory_with_embedding(
+            &pool,
+            workspace_id,
+            &format!("non cluster memory {index}"),
+            0.8,
+            0.8,
+        )
+        .await;
+        upsert_memory_vector(&state.qdrant, workspace_id, memory_id, *vector).await;
+    }
+
+    let report = match run_promotion_pass(
+        &pool,
+        &state.qdrant,
+        state.llm_provider.as_ref(),
+        state.embedding_provider.as_ref(),
+        workspace_id,
+        PromoterConfig {
+            promotion_threshold: 0.72,
+            dedup_cosine_threshold: 0.92,
+            cluster_min_size: 3,
+            batch_size: 200,
+        },
+    )
+    .await
+    {
+        Ok(report) => report,
+        Err(error) => panic!("promotion pass should complete: {error}"),
+    };
+
+    assert_eq!(report.clusters_found, 0);
+    assert_eq!(report.units_promoted, 0);
+    assert_eq!(report.units_skipped, 3);
+    assert_eq!(semantic_count(&pool, workspace_id).await, 0);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -365,6 +465,76 @@ async fn insert_memory_with_created_at(
     memory_id
 }
 
+async fn insert_memory_with_embedding(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    content: &str,
+    importance_score: f32,
+    decay_score: f32,
+) -> Uuid {
+    let memory_id = Uuid::now_v7();
+    let result = sqlx::query(
+        r#"
+        INSERT INTO memory_units (
+            id,
+            workspace_id,
+            scope,
+            memory_type,
+            content,
+            entities,
+            importance_score,
+            decay_score,
+            embedding_id,
+            tags
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        "#,
+    )
+    .bind(memory_id)
+    .bind(workspace_id)
+    .bind(json!({
+        "workspace_id": workspace_id,
+        "agent_id": null,
+        "user_id": null,
+        "repo": "Quazmoz/memoryops"
+    }))
+    .bind(MemoryType::Episodic)
+    .bind(content)
+    .bind(json!([]))
+    .bind(importance_score)
+    .bind(decay_score)
+    .bind(memory_id.to_string())
+    .bind(Vec::<String>::new())
+    .execute(pool)
+    .await;
+
+    if let Err(error) = result {
+        panic!("memory with embedding insert should succeed: {error}");
+    }
+
+    memory_id
+}
+
+async fn upsert_memory_vector(
+    qdrant: &Qdrant,
+    workspace_id: Uuid,
+    memory_id: Uuid,
+    vector: [f32; 3],
+) {
+    let payload = HashMap::from([
+        ("workspace_id".to_owned(), json!(workspace_id.to_string())),
+        ("memory_type".to_owned(), json!("episodic")),
+    ]);
+    let point = PointStruct::new(memory_id.to_string(), vector.to_vec(), payload);
+    let result = qdrant
+        .upsert_points(UpsertPointsBuilder::new(COLLECTION_NAME, vec![point]).wait(true))
+        .await;
+
+    if let Err(error) = result {
+        panic!("test vector upsert should succeed: {error}");
+    }
+}
+
 async fn process_memory(state: &AppState, memory_id: Uuid, workspace_id: Uuid) {
     let job = ProcessorJob {
         stream_id: "integration-test".to_owned(),
@@ -409,6 +579,52 @@ async fn memory_deleted_at_is_null(pool: &PgPool, memory_id: Uuid) -> bool {
     {
         Ok(is_null) => is_null,
         Err(error) => panic!("deleted_at should be queryable: {error}"),
+    }
+}
+
+async fn semantic_count(pool: &PgPool, workspace_id: Uuid) -> i64 {
+    match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM memory_units WHERE workspace_id = $1 AND memory_type = 'semantic' AND deleted_at IS NULL",
+    )
+    .bind(workspace_id)
+    .fetch_one(pool)
+    .await
+    {
+        Ok(count) => count,
+        Err(error) => panic!("semantic count should be queryable: {error}"),
+    }
+}
+
+async fn deleted_source_count(pool: &PgPool, source_ids: &[Uuid]) -> i64 {
+    match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM memory_units WHERE id = ANY($1) AND deleted_at IS NOT NULL",
+    )
+    .bind(source_ids.to_vec())
+    .fetch_one(pool)
+    .await
+    {
+        Ok(count) => count,
+        Err(error) => panic!("deleted source count should be queryable: {error}"),
+    }
+}
+
+async fn semantic_unit(pool: &PgPool, workspace_id: Uuid) -> (Uuid, Option<String>, i32) {
+    match sqlx::query_as::<_, (Uuid, Option<String>, i32)>(
+        r#"
+        SELECT id, embedding_id, corroboration_count
+        FROM memory_units
+        WHERE workspace_id = $1
+          AND memory_type = 'semantic'
+          AND deleted_at IS NULL
+        LIMIT 1
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_one(pool)
+    .await
+    {
+        Ok(row) => row,
+        Err(error) => panic!("semantic unit should be queryable: {error}"),
     }
 }
 

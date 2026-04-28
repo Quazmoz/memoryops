@@ -28,7 +28,7 @@ This document tracks all planned features across the platform with current statu
 | M5 | React Control Center (frontend) | 🟢 Complete |
 | M6 | Auth, rate limiting, workspace API, lifecycle, audit | 🟢 Complete |
 | M7 | Slow path worker, embeddings, Qdrant writes, scheduler | 🟢 Complete |
-| M8 | Promotion pipeline | 🔴 Not started |
+| M8 | Promotion pipeline | 🟢 Complete |
 | M9 | Slack ingestion | 🔴 Not started |
 
 ---
@@ -80,9 +80,9 @@ This document tracks all planned features across the platform with current statu
 | Decay scheduler (daily 02:00 UTC) | 🟢 | M7 | Spawned from api/main.rs |
 | Pruning (soft delete at decay < 0.1) | 🟢 | M7 | Skips pinned + importance_overridden |
 | Hard delete after 30-day window | 🟢 | M7 | Also removes Qdrant point |
-| Promotion pipeline (episodic → semantic) | 🔴 | M8 | Cluster → threshold → summarize → promote |
-| Configurable promotion threshold | 🔴 | M8 | Per workspace |
-| Memory deduplication | 🔴 | M8 | Cosine similarity threshold |
+| Promotion pipeline (episodic → semantic) | 🟢 | M8 | Cluster → threshold → summarize → promote |
+| Configurable promotion threshold | 🟢 | M8 | Per workspace |
+| Memory deduplication | 🟢 | M8 | Cosine similarity threshold |
 
 ---
 
@@ -157,6 +157,7 @@ This document tracks all planned features across the platform with current statu
 | POST /v1/workspaces/:id/dlq/:job_id/retry | 🟢 | M6 | |
 | DELETE /v1/workspaces/:id/dlq/:job_id | 🟢 | M6 | |
 | GET /v1/workspaces/:id/export | 🟢 | M7 | JSONL streaming, cursor-paginated |
+| POST /v1/workspaces/:id/promote | 🟢 | M8 | Manual promotion pass with workspace lock |
 
 ---
 
@@ -210,6 +211,8 @@ This document tracks all planned features across the platform with current statu
 | Export trigger (download JSONL) | 🟢 | M7 | GET /v1/workspaces/:id/export |
 | Bulk pin / bulk delete | 🟢 | M6 | POST /v1/memory/bulk |
 | Memory merge UI | 🟢 | M6 | POST /v1/memory/merge |
+| Promotion controls | 🟢 | M8 | Threshold sliders + manual trigger |
+| Semantic memory display | 🟢 | M8 | Badge, source count, promoted timestamp |
 
 ---
 
@@ -253,3 +256,4 @@ This document tracks all planned features across the platform with current statu
 | 0009_retrieval_traces.sql | retrieval_traces + 30-day TTL | 🟢 |
 | 0010_soft_delete.sql | deleted_at + soft-delete indexes | 🟢 |
 | 0011_scheduler.sql | hard_deleted_at + pruning indexes | 🟢 M7 |
+| 0012_promotion.sql | semantic promotion metadata + thresholds | 🟢 M8 |

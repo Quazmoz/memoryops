@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use crate::{
     dto::{
-        rank_from_index, MemoryResult, MemoryUnitDto, SearchFilters, SearchRequest, DEFAULT_OFFSET,
+        normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto, SearchFilters,
+        SearchRequest, DEFAULT_OFFSET,
     },
     store,
 };
@@ -62,6 +63,11 @@ async fn keyword_hits(
 
     if let Some(filters) = &req.filters {
         push_search_filters(&mut builder, filters);
+    }
+    if let Some(memory_types) = normalized_memory_types(req)? {
+        builder.push(" AND memory_type::text = ANY(");
+        builder.push_bind(memory_types);
+        builder.push(")");
     }
 
     builder.push(" ORDER BY rank_score DESC LIMIT ");

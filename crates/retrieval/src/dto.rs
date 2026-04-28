@@ -24,6 +24,7 @@ pub struct SearchRequest {
     pub limit: Option<u32>,
     pub offset: Option<u32>,
     pub filters: Option<SearchFilters>,
+    pub memory_types: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
@@ -72,6 +73,9 @@ pub struct MemoryUnitDto {
     pub embedding_id: Option<String>,
     pub token_count: Option<i32>,
     pub source_events: Vec<Uuid>,
+    pub source_episode_ids: Vec<Uuid>,
+    pub corroboration_count: i32,
+    pub promoted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -96,6 +100,9 @@ impl From<MemoryUnit> for MemoryUnitDto {
             embedding_id: unit.embedding_id,
             token_count: unit.token_count,
             source_events: unit.source_events,
+            source_episode_ids: unit.source_episode_ids,
+            corroboration_count: unit.corroboration_count,
+            promoted_at: unit.promoted_at,
             created_at: unit.created_at,
             updated_at: unit.updated_at,
         }
@@ -188,6 +195,27 @@ pub fn parse_memory_type(value: &str) -> AppResult<MemoryType> {
             "memory_type must be one of: episodic, semantic".to_owned(),
         )),
     }
+}
+
+pub fn normalized_memory_types(req: &SearchRequest) -> AppResult<Option<Vec<String>>> {
+    if let Some(memory_types) = &req.memory_types {
+        let normalized = memory_types
+            .iter()
+            .map(|memory_type| {
+                parse_memory_type(memory_type).map(|parsed| memory_type_as_str(parsed).to_owned())
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        if normalized.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(normalized));
+    }
+
+    Ok(req
+        .filters
+        .as_ref()
+        .and_then(|filters| filters.memory_type)
+        .map(|memory_type| vec![memory_type_as_str(memory_type).to_owned()]))
 }
 
 pub fn rank_from_index(index: usize) -> u32 {

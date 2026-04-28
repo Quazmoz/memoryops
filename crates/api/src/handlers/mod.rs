@@ -24,6 +24,10 @@ pub fn protected_router() -> Router<AppState> {
             axum::routing::patch(workspaces::update_workspace_config),
         )
         .route(
+            "/v1/workspaces/{id}/promote",
+            axum::routing::post(workspaces::promote),
+        )
+        .route(
             "/v1/workspaces/{id}/keys",
             axum::routing::post(keys::create_key).get(keys::list_keys),
         )
