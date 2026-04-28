@@ -794,6 +794,8 @@ Full per-component score breakdown (`semantic_similarity`, `importance`, `recenc
 |--------|------|--------|-------------|
 | POST | `/v1/ingest/github` | ✅ Live | GitHub webhook receiver |
 | POST | `/v1/ingest/slack` | ✅ Live | Slack Events API receiver |
+| POST | `/v1/ingest/linear` | ✅ Live | Linear webhook receiver |
+| POST | `/v1/ingest/jira` | ✅ Live | Jira Cloud admin webhook receiver |
 
 #### Memory (live — M4 complete)
 
@@ -1394,6 +1396,6 @@ MCP clients authenticate with a workspace API key during the MCP `initialize` ha
 | M7 | Slow path worker + embeddings + Qdrant write | MemoryUnit gets `embedding_id`; Qdrant point queryable; vector leg of hybrid search active | ✅ Complete |
 | M8 | Promotion pipeline (batch clustering) | Episodic cluster → Semantic MemoryUnit after threshold | ✅ Complete |
 | M9 | Slack ingestion | Slack message → MemoryUnit via same pipeline | ✅ Complete |
-| M10 | Linear + Jira ingestion | Linear/Jira webhooks validate signatures, normalize supported events to RawEvent, enqueue processor jobs, and produce MemoryUnits with source-specific scoring/entities | 🔴 Planned |
+| M10 | Linear + Jira ingestion | Linear/Jira webhooks validate signatures, normalize supported events to RawEvent, enqueue processor jobs, and produce MemoryUnits with source-specific scoring/entities | ✅ Complete |
 | M11 | MCP server | `crates/mcp/` exposes `memory_retrieve`, `memory_search`, and `memory_store` over stdio and HTTP SSE with workspace API key auth | 🔴 Planned |
 | M12 | Lifecycle configuration | Workspace config controls decay half-life and pruning threshold per workspace | 🔴 Planned |

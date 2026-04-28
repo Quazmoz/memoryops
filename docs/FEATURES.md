@@ -30,7 +30,7 @@ This document tracks all planned features across the platform with current statu
 | M7 | Slow path worker, embeddings, Qdrant writes, scheduler | 🟢 Complete |
 | M8 | Promotion pipeline | 🟢 Complete |
 | M9 | Slack ingestion | 🟢 Complete |
-| M10 | Linear + Jira ingestion | 🔴 Not started |
+| M10 | Linear + Jira ingestion | 🟢 Complete |
 | M11 | MCP server | 🔴 Not started |
 | M12 | Lifecycle configuration | 🔴 Not started |
 
@@ -43,7 +43,7 @@ This document tracks all planned features across the platform with current statu
 | Cargo workspace root | 🟢 | M1 | 5 crates wired |
 | docker-compose (dev) | 🟢 | M1 | Postgres, Redis, Qdrant |
 | docker-compose.test.yml | 🟢 | M1 | Isolated test infra |
-| sqlx migrations scaffold | 🟢 | M1 | 0001–0013 applied |
+| sqlx migrations scaffold | 🟢 | M1 | 0001–0014 applied |
 | rust-toolchain.toml (MSRV 1.88) | 🟢 | M1 | |
 | GitHub Actions CI (fmt + clippy + test + integration) | 🟢 | M1/M6 | Integration job added in M6 |
 | common crate (models, traits, error, config, telemetry) | 🟢 | M1 | |
@@ -67,10 +67,10 @@ This document tracks all planned features across the platform with current statu
 | Slack webhook receiver | 🟢 | M9 | Slack Events API receiver at POST /v1/ingest/slack |
 | Slack message ingestion | 🟢 | M9 | message, message.edited, app_mention |
 | Slack reaction ingestion | 🟢 | M9 | reaction_added with channel + message timestamp lineage |
-| Linear webhook receiver | 🔴 | M10 | X-Linear-Signature HMAC-SHA256 |
-| Linear event normalization | 🔴 | M10 | Issue, Comment, Project, Cycle → RawEvent |
-| Jira webhook receiver | 🔴 | M10 | X-Hub-Signature HMAC-SHA256 |
-| Jira event normalization | 🔴 | M10 | issue_created/updated/deleted, comment → RawEvent |
+| Linear webhook receiver | 🟢 | M10 | X-Linear-Signature HMAC-SHA256 |
+| Linear event normalization | 🟢 | M10 | Issue, Comment, Project, Cycle → RawEvent |
+| Jira webhook receiver | 🟢 | M10 | X-Hub-Signature HMAC-SHA256 |
+| Jira event normalization | 🟢 | M10 | issue_created/updated/deleted, comment → RawEvent |
 
 ---
 
@@ -282,3 +282,4 @@ This document tracks all planned features across the platform with current statu
 | 0011_scheduler.sql | hard_deleted_at + pruning indexes | 🟢 M7 |
 | 0012_promotion.sql | semantic promotion metadata + thresholds | 🟢 M8 |
 | 0013_slack.sql | Slack signing secret + channel/thread metadata + channel index | 🟢 M9 |
+| 0014_linear_jira.sql | Linear/Jira signing secret support + active integration indexes | 🟢 M10 |

@@ -96,6 +96,72 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/RateLimited'
+  /v1/ingest/linear:
+    post:
+      tags: [Webhooks]
+      operationId: ingestLinear
+      summary: Receive a Linear webhook event
+      description: Accepts supported Linear Issue, Comment, Project, and Cycle events. Validates X-Linear-Signature when a signing secret is configured for the workspace integration.
+      security: []
+      parameters:
+        - name: X-Linear-Signature
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '202':
+          description: Event accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/ingest/jira:
+    post:
+      tags: [Webhooks]
+      operationId: ingestJira
+      summary: Receive a Jira Cloud admin webhook event
+      description: Validates X-Hub-Signature and accepts supported issue and comment events for ingestion. Jira Connect JWT webhooks are not supported in M10.
+      security: []
+      parameters:
+        - name: X-Hub-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '202':
+          description: Event accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /v1/memory:
     get:
       tags: [Memory]
@@ -1250,6 +1316,9 @@ components:
       properties:
         source:
           $ref: '#/components/schemas/Source'
+        webhook_secret:
+          type: [string, 'null']
+          description: Required for signed integrations. Linear may omit this to accept unsigned webhooks.
     IntegrationHealth:
       type: object
       required: [workspace_id, source, events_24h, errors_24h, status]
