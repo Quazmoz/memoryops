@@ -1,6 +1,6 @@
 # MemoryOps — Feature List
 
-**Version:** 0.10.0  
+**Version:** 0.11.0  
 **Last Updated:** 2026-04-28
 
 This document tracks all planned features across the platform with current status and target milestone.
@@ -31,7 +31,7 @@ This document tracks all planned features across the platform with current statu
 | M8 | Promotion pipeline | 🟢 Complete |
 | M9 | Slack ingestion | 🟢 Complete |
 | M10 | Linear + Jira ingestion | 🟢 Complete |
-| M11 | MCP server | 🟡 In progress |
+| M11 | MCP server | 🟢 Complete |
 | M12 | Lifecycle configuration | 🔴 Not started |
 
 ---
@@ -176,12 +176,12 @@ This document tracks all planned features across the platform with current statu
 
 | Feature | Status | Milestone | Notes |
 |---------|--------|-----------|-------|
-| MCP server crate scaffold | 🟡 | M11 | new crate: crates/mcp/ |
-| memory_retrieve tool | 🟡 | M11 | in-process retrieval with token packing |
-| memory_search tool | 🟡 | M11 | in-process memory search |
-| memory_store tool | 🟡 | M11 | stores an episodic MemoryUnit and enqueues slow-path processing |
-| stdio + HTTP SSE transports | 🟡 | M11 | MCP 2025-06-18 spec |
-| MCP endpoint in docker-compose | 🟡 | M11 | profile-gated service on port 3003 |
+| MCP server crate scaffold | 🟢 | M11 | new crate: crates/mcp/ |
+| memory_retrieve tool | 🟢 | M11 | in-process retrieval with token packing |
+| memory_search tool | 🟢 | M11 | in-process memory search |
+| memory_store tool | 🟢 | M11 | stores an episodic MemoryUnit and enqueues slow-path processing |
+| stdio + HTTP SSE transports | 🟢 | M11 | MCP 2025-06-18 spec |
+| MCP endpoint in docker-compose | 🟢 | M11 | profile-gated service on port 3003 |
 
 ---
 

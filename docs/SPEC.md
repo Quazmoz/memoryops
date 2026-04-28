@@ -1518,5 +1518,5 @@ Output schema:
 | M8 | Promotion pipeline (batch clustering) | Episodic cluster → Semantic MemoryUnit after threshold | ✅ Complete |
 | M9 | Slack ingestion | Slack message → MemoryUnit via same pipeline | ✅ Complete |
 | M10 | Linear + Jira ingestion | Linear/Jira webhooks validate signatures, normalize supported events to RawEvent, enqueue processor jobs, and produce MemoryUnits with source-specific scoring/entities | ✅ Complete |
-| M11 | MCP server | `crates/mcp/` exposes `memory_retrieve`, `memory_search`, and `memory_store` over stdio and HTTP SSE with workspace API key auth | 🔴 Planned |
+| M11 | MCP server | `crates/mcp/` exposes `memory_retrieve`, `memory_search`, and `memory_store` over stdio and HTTP SSE with workspace API key auth | ✅ Complete |
 | M12 | Lifecycle configuration | Workspace config controls decay half-life and pruning threshold per workspace | 🔴 Planned |
