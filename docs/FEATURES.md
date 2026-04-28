@@ -46,6 +46,14 @@ This document tracks all planned features across the platform with current statu
 | M23 | Property-based tests for token packing (proptest) | 🔴 Not started |
 | M24 | Playwright E2E test suite | 🔴 Not started |
 | M25 | HTTP Skills (agent-callable skill registry) | 🔴 Not started |
+| M26 | Contradiction detection | 🔴 Not started |
+| M27 | Provenance graph + lineage API | 🔴 Not started |
+| M28 | Point-in-time memory queries | 🔴 Not started |
+| M29 | Multi-agent scope inheritance + publish | 🔴 Not started |
+| M30 | Memory health score + drift alerts | 🔴 Not started |
+| M31 | Compliance mode (retention + right-to-erasure) | 🔴 Not started |
+| M32 | Agent-authored observation ingest | 🔴 Not started |
+| M33 | LOCOMO benchmark integration | 🔴 Not started |
 
 ---
 
@@ -325,6 +333,32 @@ This document tracks all planned features across the platform with current statu
 | Feature | Status | Milestone | Notes |
 |---------|--------|-----------|-------|
 | HTTP Skills (agent-callable skill registry) | 🔴 | M25 | |
+
+---
+
+## Planned Features (M26–M33)
+
+| Feature | Status | Milestone | Notes |
+|---------|--------|-----------|-------|
+| Contradiction detection — semantic conflict check on new ingest | 🔴 | M26 | Flags conflicts in audit log; configurable: auto-resolve (newer wins) or quarantine |
+| Contradiction quarantine review API + UI | 🔴 | M26 | GET /v1/workspaces/:id/contradictions; resolve/dismiss actions |
+| Provenance graph — GET /v1/memory/:id/provenance | 🔴 | M27 | Returns DAG: source events → episodic → semantic → merges → accesses |
+| Provenance tree in MemoryDetail UI | 🔴 | M27 | Visual lineage panel in frontend MemoryDetail view |
+| Point-in-time retrieval — as_of param on GET /v1/memory | 🔴 | M28 | Reconstructs memory state at timestamp; uses memory_versions + decay math |
+| as_of support on POST /v1/retrieve | 🔴 | M28 | Historical context retrieval for incident post-mortems |
+| Multi-agent scope visibility field (private \| workspace) | 🔴 | M29 | scope.visibility on MemoryUnit |
+| POST /v1/memory/:id/publish (agent → workspace pool) | 🔴 | M29 | Promoted semantic memories shared across agents |
+| Sub-agent pool subscription via workspace config | 🔴 | M29 | Team agents inherit from configured sub-agent pools |
+| Memory health score (0–100 composite) | 🔴 | M30 | Decay distribution, promotion rate, DLQ rate, dedup collision rate |
+| GET /v1/workspaces/:id/health | 🔴 | M30 | Returns score + component breakdown |
+| Health score dashboard card + trend alert | 🔴 | M30 | Redis-backed threshold; webhook notification on degradation |
+| Per-workspace retention policy (max age + auto hard-purge) | 🔴 | M31 | Configured via WorkspaceConfig |
+| DELETE /v1/workspaces/:id/forget/user/:user_id | 🔴 | M31 | Hard-purges all memories with matching scope.user_id |
+| Compliance deletion audit trail | 🔴 | M31 | Separate compliance_audit_log table; GDPR/CCPA ready |
+| POST /v1/ingest/observation (agent-authored memories) | 🔴 | M32 | Authenticated by workspace API key; same slow-path pipeline |
+| MCP memory_store routes through /v1/ingest/observation | 🔴 | M32 | Closes agent read/write loop |
+| cargo bench LOCOMO evaluation suite | 🔴 | M33 | Retrieval quality benchmarks against LOCOMO dataset |
+| Per-workspace LOCOMO score on dashboard | 🔴 | M33 | Compare across workspace configs |
 
 ---
 
