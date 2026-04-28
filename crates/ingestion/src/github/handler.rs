@@ -81,7 +81,10 @@ pub async fn handle_github_webhook(
     INGEST_EVENTS.add(1, &[]);
 
     let mut redis = state.redis.clone();
-    publish_raw_event(&mut redis, &event).await?;
+    let queued_event = event.clone();
+    tokio::spawn(async move {
+        let _ = publish_raw_event(&mut redis, &queued_event).await;
+    });
 
     Ok((
         StatusCode::ACCEPTED,

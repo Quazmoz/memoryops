@@ -34,7 +34,7 @@ model = "BAAI/bge-small-en-v1.5"
 provider = "ollama"
 model = "llama3"
 base_url = "http://localhost:11434"
-timeout_secs = 30
+timeout_secs = 3
 
 # Uncomment to use OpenAI (requires OPENAI_API_KEY env var)
 # [llm.openai]

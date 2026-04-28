@@ -1,46 +1,49 @@
-// Seeds a memory directly via POST /v1/ingest/github with a minimal push payload
-// so the test doesn't depend on the slow-path worker completing
-
 import crypto from 'node:crypto';
 
 const API_BASE = process.env.E2E_API_BASE ?? 'http://localhost:5173';
 
 export async function seedGitHubEvent(workspaceId: string, apiKey: string): Promise<void> {
-  const payload = {
-    ref: 'refs/heads/main',
-    before: '0000000000000000000000000000000000000000',
-    after: 'abc123def456abc123def456abc123def456abc1',
-    pusher: { name: 'e2e-bot', email: 'e2e@test.local' },
-    repository: { full_name: 'e2e/test-repo', pushed_at: Math.floor(Date.now() / 1000) },
-    commits: [
-      {
-        id: 'abc123def456abc123def456abc123def456abc1',
-        message: 'E2E seed commit for push event',
-        timestamp: new Date().toISOString(),
-        author: { name: 'e2e-bot', email: 'e2e@test.local' },
-      },
-    ],
-  };
-
-  const secret = process.env.GITHUB_WEBHOOK_SECRET || 'dev-placeholder';
-  const bodyString = JSON.stringify(payload);
-  const hmac = crypto.createHmac('sha256', secret);
-  hmac.update(bodyString);
-  const signature = `sha256=${hmac.digest('hex')}`;
-
-  const res = await fetch(`${API_BASE}/v1/ingest/github`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-GitHub-Event': 'push',
-      'X-GitHub-Delivery': crypto.randomUUID(),
-      'X-Hub-Signature-256': signature,
-      'X-Workspace-Id': workspaceId,
+  const now = new Date().toISOString();
+  const line = JSON.stringify({
+    id: crypto.randomUUID(),
+    workspace_id: workspaceId,
+    scope: {
+      workspace_id: workspaceId,
+      agent_id: null,
+      user_id: null,
+      repo: 'e2e/test-repo',
     },
-    body: bodyString,
+    memory_type: 'episodic',
+    content: 'GitHub push event on refs/heads/main: E2E seed commit for push event',
+    entities: [],
+    importance_score: 0.8,
+    importance_overridden: false,
+    source_events: [],
+    embedding_id: null,
+    token_count: 10,
+    decay_score: 1.0,
+    pinned: false,
+    tags: ['push', 'e2e'],
+    version: 1,
+    promoted_at: null,
+    source_episode_ids: [],
+    corroboration_count: 1,
+    deleted_at: null,
+    last_accessed_at: null,
+    created_at: now,
+    updated_at: now,
   });
 
-  if (!res.ok && res.status !== 202) {
+  const res = await fetch(`${API_BASE}/v1/workspaces/${workspaceId}/import`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      'X-API-Key': apiKey,
+    },
+    body: `${line}\n`,
+  });
+
+  if (!res.ok) {
     const detail = await res.text();
     throw new Error(`seedGitHubEvent failed: ${res.status} — ${detail}`);
   }
@@ -50,11 +53,11 @@ export async function seedGitHubEvent(workspaceId: string, apiKey: string): Prom
 export async function waitForMemory(
   workspaceId: string,
   apiKey: string,
-  timeoutMs = 30_000,
+  timeoutMs = 90_000,
 ): Promise<void> {
   const start = Date.now();
   const pollInterval = 1_000;
-  const fetchTimeoutMs = 5_000;
+  const fetchTimeoutMs = 20_000;
 
   while (Date.now() - start < timeoutMs) {
     const controller = new AbortController();

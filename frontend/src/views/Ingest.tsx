@@ -39,7 +39,6 @@ export function Ingest() {
   useEffect(() => {
     setPayloadText(formatPayload(fixture.payload));
     setParseError(null);
-    mutation.reset();
   }, [fixture]);
 
   function selectSource(source: WebhookSource) {
@@ -63,6 +62,7 @@ export function Ingest() {
       return;
     }
 
+    mutation.reset();
     mutation.mutate({ fixture, payload: parsed.value });
   }
 

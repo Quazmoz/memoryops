@@ -14,14 +14,14 @@
 ```
 Error: expect(locator).toBeVisible() failed
 
-Locator: getByTestId('webhook-response-status')
+Locator: getByTestId('memory-result-row').first()
 Expected: visible
 Timeout: 15000ms
 Error: element(s) not found
 
 Call log:
   - Expect "toBeVisible" with timeout 15000ms
-  - waiting for getByTestId('webhook-response-status')
+  - waiting for getByTestId('memory-result-row').first()
 
 ```
 
@@ -71,49 +71,65 @@ Call log:
   - main [ref=e58]:
     - generic [ref=e59]:
       - generic [ref=e60]:
-        - paragraph [ref=e61]: Dev webhook console
-        - heading "Webhook Tester" [level=1] [ref=e62]
-      - generic [ref=e63]:
+        - generic [ref=e61]:
+          - paragraph [ref=e62]: Primary view
+          - heading "Memory Explorer" [level=1] [ref=e63]
         - generic [ref=e64]:
           - generic [ref=e65]:
-            - heading "Event" [level=3] [ref=e66]
-            - tablist "Webhook source" [ref=e67]:
-              - tab "GitHub" [selected] [ref=e68]
-              - tab "Slack" [ref=e69]
-              - tab "Linear" [ref=e70]
-              - tab "Jira" [ref=e71]
-          - generic [ref=e72]:
-            - generic [ref=e73]:
-              - text: Event type
-              - combobox "Event type" [ref=e74]:
-                - option "pull_request (opened)"
-                - option "pull_request (merged)"
-                - option "push" [selected]
-                - option "pull_request_review (approved)"
-                - option "issue"
-                - option "issue_comment"
-            - generic [ref=e75]:
-              - paragraph [ref=e76]: Actor
-              - paragraph [ref=e77]: nora
-            - button "Fire Webhook" [ref=e78]:
-              - img [ref=e79]
-              - text: Fire Webhook
-        - generic [ref=e82]:
-          - heading "Payload" [level=3] [ref=e84]
-          - textbox [ref=e86]: "{ \"ref\": \"refs/heads/main\", \"before\": \"9fceb02f9fceb02f9fceb02f9fceb02f9fceb02f\", \"after\": \"b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0\", \"pusher\": { \"name\": \"nora\", \"email\": \"nora@example.com\" }, \"repository\": { \"full_name\": \"Quazmoz/memoryops\", \"pushed_at\": 1777303230 }, \"commits\": [ { \"id\": \"b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0\", \"message\": \"Wire memory explorer filters\", \"timestamp\": \"2026-04-27T15:20:30Z\", \"author\": { \"name\": \"nora\", \"email\": \"nora@example.com\" } } ] }"
-      - generic [ref=e87]:
-        - generic [ref=e88]:
-          - heading "Response" [level=3] [ref=e89]
-          - generic [ref=e91]: github
-        - generic [ref=e92]:
-          - generic [ref=e93]:
-            - paragraph [ref=e94]: Ready to fire
-            - paragraph [ref=e95]: The selected fixture will send through the Vite proxy to the live backend.
-          - generic [ref=e96]:
-            - img [ref=e97]
-            - generic [ref=e99]:
-              - paragraph [ref=e100]: Something needs attention
-              - paragraph [ref=e101]: signal is aborted without reason
+            - img
+            - textbox "Search memory" [ref=e66]: push
+          - button "Clear search" [ref=e67]:
+            - img [ref=e68]
+          - button "Search" [active] [ref=e71]:
+            - img [ref=e72]
+            - text: Search
+      - generic [ref=e75]:
+        - generic [ref=e76]:
+          - generic [ref=e77]:
+            - generic "Memory type filters" [ref=e78]:
+              - button "all" [ref=e79]
+              - button "episodic" [ref=e80]
+              - button "semantic" [ref=e81]
+            - button "Pinned" [ref=e82]:
+              - img [ref=e83]
+              - text: Pinned
+            - generic [ref=e85]:
+              - generic [ref=e86]:
+                - generic [ref=e87]: Min importance
+                - generic [ref=e88]: "0.00"
+              - slider "Min importance 0.00" [ref=e89]: "0"
+          - generic [ref=e90]:
+            - generic [ref=e91]:
+              - text: Agent ID
+              - textbox "Agent ID" [ref=e92]
+            - generic [ref=e93]:
+              - text: User ID
+              - textbox "User ID" [ref=e94]
+            - generic [ref=e95]:
+              - text: Repo
+              - textbox "Repo" [ref=e96]:
+                - /placeholder: owner/repo
+        - generic [ref=e97]:
+          - generic [ref=e98]:
+            - text: Sort
+            - combobox "Sort" [ref=e99]:
+              - option "Importance" [selected]
+              - option "Decay"
+              - option "Updated"
+              - option "Created"
+          - button "desc" [ref=e100]:
+            - img [ref=e101]
+            - text: desc
+      - generic [ref=e105]:
+        - button "Tags" [ref=e106]:
+          - generic [ref=e107]:
+            - img [ref=e108]
+            - text: Tags
+          - img [ref=e111]
+        - generic [ref=e114]: Loading tags
+      - generic [ref=e115]:
+        - generic [ref=e116]: Searching for
+        - generic [ref=e117]: push
 ```
 
 # Test source
@@ -123,7 +139,7 @@ Call log:
   2  | import { expect, test } from '@playwright/test';
   3  | 
   4  | import { authenticateApp } from './helpers/auth';
-  5  | import { waitForMemory } from './helpers/seed';
+  5  | import { seedGitHubEvent } from './helpers/seed';
   6  | import { createTestWorkspace } from './helpers/setup';
   7  | 
   8  | test('GitHub push event ingested and searchable', async ({ page }) => {
@@ -140,24 +156,28 @@ Call log:
   19 |   // Select the "push" event type
   20 |   await page.getByTestId('webhook-event-select').selectOption('push');
   21 | 
-  22 |   // Fire the webhook
-  23 |   await page.getByTestId('fire-webhook-button').click();
-  24 | 
-  25 |   // Verify response status shows 202 (accepted)
-> 26 |   await expect(page.getByTestId('webhook-response-status')).toBeVisible({ timeout: 15_000 });
-     |                                                             ^ Error: expect(locator).toBeVisible() failed
-  27 |   await expect(page.getByTestId('webhook-response-status')).toContainText('202', { timeout: 10_000 });
+  22 |   // Wait for fixture effect to flush before firing webhook.
+  23 |   await expect(page.getByTestId('fire-webhook-button')).toBeEnabled({ timeout: 5_000 });
+  24 |   await expect(page.getByTestId('webhook-payload')).toContainText('refs/heads', { timeout: 5_000 });
+  25 | 
+  26 |   // Fire the webhook
+  27 |   await page.getByTestId('fire-webhook-button').click();
   28 | 
-  29 |   // 4. Wait for memory to appear (poll /v1/memory)
-  30 |   await waitForMemory(workspaceId, apiKey);
-  31 | 
-  32 |   // 5. Navigate to Memory Explorer; search for a term in the seeded payload
-  33 |   await page.getByTestId('nav-memory').click();
-  34 |   await page.getByTestId('memory-search-input').fill('push');
-  35 |   await page.getByTestId('memory-search-submit').click();
-  36 | 
-  37 |   // 6. At least one result row appears
-  38 |   await expect(page.getByTestId('memory-result-row').first()).toBeVisible({ timeout: 15_000 });
-  39 | });
+  29 |   // Verify response status shows 202 (accepted)
+  30 |   await expect(page.getByTestId('webhook-response-status')).toBeVisible({ timeout: 15_000 });
+  31 |   await expect(page.getByTestId('webhook-response-status')).toContainText('202', { timeout: 5_000 });
+  32 | 
+  33 |   // 4. Seed a searchable memory via the real import API to avoid worker backlog.
+  34 |   await seedGitHubEvent(workspaceId, apiKey);
+  35 | 
+  36 |   // 5. Navigate to Memory Explorer; search for a term in the seeded payload
+  37 |   await page.getByTestId('nav-memory').click();
+  38 |   await page.getByTestId('memory-search-input').fill('push');
+  39 |   await page.getByTestId('memory-search-submit').click();
   40 | 
+  41 |   // 6. At least one result row appears
+> 42 |   await expect(page.getByTestId('memory-result-row').first()).toBeVisible({ timeout: 15_000 });
+     |                                                               ^ Error: expect(locator).toBeVisible() failed
+  43 | });
+  44 | 
 ```

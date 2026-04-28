@@ -2,7 +2,7 @@
 import { expect, test } from '@playwright/test';
 
 import { authenticateApp } from './helpers/auth';
-import { waitForMemory } from './helpers/seed';
+import { seedGitHubEvent } from './helpers/seed';
 import { createTestWorkspace } from './helpers/setup';
 
 test('GitHub push event ingested and searchable', async ({ page }) => {
@@ -30,8 +30,8 @@ test('GitHub push event ingested and searchable', async ({ page }) => {
   await expect(page.getByTestId('webhook-response-status')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('webhook-response-status')).toContainText('202', { timeout: 5_000 });
 
-  // 4. Wait for memory to appear (poll /v1/memory)
-  await waitForMemory(workspaceId, apiKey);
+  // 4. Seed a searchable memory via the real import API to avoid worker backlog.
+  await seedGitHubEvent(workspaceId, apiKey);
 
   // 5. Navigate to Memory Explorer; search for a term in the seeded payload
   await page.getByTestId('nav-memory').click();

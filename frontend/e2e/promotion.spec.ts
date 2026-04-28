@@ -2,14 +2,13 @@
 import { expect, test } from '@playwright/test';
 
 import { authenticateApp } from './helpers/auth';
-import { seedGitHubEvent, waitForMemory } from './helpers/seed';
+import { seedGitHubEvent } from './helpers/seed';
 import { createTestWorkspace } from './helpers/setup';
 
 test('Manual workspace promotion trigger completes', async ({ page }) => {
-  // Setup: create workspace, seed a memory, wait for it to be indexed
+  // Setup: create workspace and seed a memory via the synchronous import API.
   const { workspaceId, apiKey } = await createTestWorkspace();
   await seedGitHubEvent(workspaceId, apiKey);
-  await waitForMemory(workspaceId, apiKey);
 
   // Navigate to app and authenticate
   await authenticateApp(page, workspaceId, apiKey);

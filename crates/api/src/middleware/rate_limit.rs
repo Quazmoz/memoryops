@@ -3,11 +3,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::anyhow;
 use axum::{body::Body, extract::State, http::Request, middleware::Next, response::Response};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
 const INGEST_RPM: i64 = 300;
 const MEMORY_RPM: i64 = 120;
 const API_RPM: i64 = 120;
+const RATE_LIMIT_REDIS_TIMEOUT_MS: u64 = 250;
 
 #[derive(Debug, Clone, Copy)]
 enum RateLimitGroup {
@@ -61,15 +63,39 @@ async fn enforce_limit(
     let expires_at = window_start + 60;
     let key = format!("rate:{workspace_id}:{}:{window_start}", group.as_str());
     let mut redis = state.redis.clone();
-    let (count, _expires_set) = redis::pipe()
-        .cmd("INCR")
-        .arg(&key)
-        .cmd("EXPIREAT")
-        .arg(&key)
-        .arg(expires_at)
-        .query_async::<(i64, bool)>(&mut redis)
-        .await
-        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    let redis_result = timeout(
+        Duration::from_millis(RATE_LIMIT_REDIS_TIMEOUT_MS),
+        redis::pipe()
+            .cmd("INCR")
+            .arg(&key)
+            .cmd("EXPIREAT")
+            .arg(&key)
+            .arg(expires_at)
+            .query_async::<(i64, bool)>(&mut redis),
+    )
+    .await;
+    let (count, _expires_set) = match redis_result {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => {
+            tracing::warn!(
+                error = ?error,
+                workspace_id = %workspace_id,
+                group = group.as_str(),
+                "rate limit check failed; allowing request"
+            );
+            return Ok(());
+        }
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                workspace_id = %workspace_id,
+                group = group.as_str(),
+                timeout_ms = RATE_LIMIT_REDIS_TIMEOUT_MS,
+                "rate limit check timed out; allowing request"
+            );
+            return Ok(());
+        }
+    };
 
     if count > group.limit() {
         let retry_after_secs = u64::try_from((expires_at - now).max(1)).unwrap_or(60);
