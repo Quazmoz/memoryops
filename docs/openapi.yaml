@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: MemoryOps API
-  version: 0.11.0
+  version: 0.12.0
   description: Control plane API for AI-agent memory ingestion, lifecycle management, retrieval, and audit.
   contact:
     name: MemoryOps
@@ -45,8 +45,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: '#/components/schemas/WorkspaceConfig'
       responses:
         '202':
           description: Event accepted for processing
@@ -1300,8 +1299,7 @@ components:
         name:
           type: string
         config:
-          type: object
-          additionalProperties: true
+          $ref: '#/components/schemas/WorkspaceConfig'
         created_at:
           type: string
           format: date-time
@@ -1311,6 +1309,56 @@ components:
         deleted_at:
           type: [string, 'null']
           format: date-time
+    WorkspaceConfig:
+      type: object
+      additionalProperties: true
+      properties:
+        promotion_threshold:
+          type: number
+          format: float
+          minimum: 0.50
+          maximum: 1.00
+        dedup_cosine_threshold:
+          type: number
+          format: float
+          minimum: 0.80
+          maximum: 0.99
+        access_count_trigger:
+          type: integer
+          minimum: 1
+        half_life_days:
+          type: number
+          format: float
+          description: Legacy decay configuration retained for backward compatibility.
+        decay_rate_episodic:
+          type: number
+          format: float
+        decay_rate_semantic:
+          type: number
+          format: float
+        llm_provider:
+          type: [string, 'null']
+        embedding_provider:
+          type: [string, 'null']
+        decay_half_life_days:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 3650
+          description: >
+            Half-life in days for the memory decay formula.
+            Defaults to 30 when null. Lower values cause faster decay.
+          example: 30
+        pruning_threshold:
+          type: number
+          format: float
+          nullable: true
+          minimum: 0.01
+          maximum: 0.50
+          description: >
+            Decay score below which a memory is soft-deleted.
+            Defaults to 0.10 when null.
+          example: 0.10
     IntegrationRequest:
       type: object
       required: [source]

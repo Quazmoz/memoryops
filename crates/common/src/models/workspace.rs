@@ -4,6 +4,9 @@ use uuid::Uuid;
 
 use super::raw_event::Source;
 
+pub const DEFAULT_DECAY_HALF_LIFE_DAYS: u32 = 30;
+pub const DEFAULT_PRUNING_THRESHOLD: f32 = 0.10;
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Workspace {
     pub id: Uuid,
@@ -32,6 +35,10 @@ pub struct WorkspaceConfig {
     pub decay_rate_semantic: f32,
     pub llm_provider: Option<String>,
     pub embedding_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decay_half_life_days: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pruning_threshold: Option<f32>,
 }
 
 impl Default for WorkspaceConfig {
@@ -45,6 +52,8 @@ impl Default for WorkspaceConfig {
             decay_rate_semantic: default_decay_rate_semantic(),
             llm_provider: None,
             embedding_provider: None,
+            decay_half_life_days: None,
+            pruning_threshold: None,
         }
     }
 }
@@ -105,4 +114,52 @@ pub enum IntegrationStatus {
     Active,
     Degraded,
     Failing,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn lifecycle_config_fields_round_trip_json() {
+        let config = WorkspaceConfig {
+            decay_half_life_days: Some(14),
+            pruning_threshold: Some(0.05),
+            ..WorkspaceConfig::default()
+        };
+
+        let value = match serde_json::to_value(&config) {
+            Ok(value) => value,
+            Err(error) => panic!("workspace config should serialize: {error}"),
+        };
+
+        assert_eq!(
+            value
+                .get("decay_half_life_days")
+                .and_then(|value| value.as_u64()),
+            Some(14)
+        );
+        assert!(value.get("pruning_threshold").is_some());
+
+        let decoded = match serde_json::from_value::<WorkspaceConfig>(value) {
+            Ok(decoded) => decoded,
+            Err(error) => panic!("workspace config should deserialize: {error}"),
+        };
+
+        assert_eq!(decoded.decay_half_life_days, Some(14));
+        assert_eq!(decoded.pruning_threshold, Some(0.05));
+    }
+
+    #[test]
+    fn lifecycle_config_absent_fields_deserialize_to_none() {
+        let decoded = match serde_json::from_value::<WorkspaceConfig>(json!({})) {
+            Ok(decoded) => decoded,
+            Err(error) => panic!("workspace config should deserialize: {error}"),
+        };
+
+        assert_eq!(decoded.decay_half_life_days, None);
+        assert_eq!(decoded.pruning_threshold, None);
+    }
 }

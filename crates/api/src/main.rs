@@ -633,6 +633,75 @@ mod tests {
 
     #[sqlx::test(migrations = "../../migrations")]
     #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn workspace_config_rejects_zero_decay_half_life(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let app = router(test_state(pool).await);
+        let response = match app
+            .oneshot(request(
+                Method::PATCH,
+                format!("/v1/workspaces/{workspace_id}/config"),
+                Some(&api_key),
+                json!({ "decay_half_life_days": 0 }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn workspace_config_rejects_high_pruning_threshold(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let app = router(test_state(pool).await);
+        let response = match app
+            .oneshot(request(
+                Method::PATCH,
+                format!("/v1/workspaces/{workspace_id}/config"),
+                Some(&api_key),
+                json!({ "pruning_threshold": 0.99 }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn workspace_config_accepts_lifecycle_values(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let app = router(test_state(pool).await);
+        let response = match app
+            .oneshot(request(
+                Method::PATCH,
+                format!("/v1/workspaces/{workspace_id}/config"),
+                Some(&api_key),
+                json!({
+                    "decay_half_life_days": 90,
+                    "pruning_threshold": 0.15
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn rate_limit_exceeded_returns_429(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;

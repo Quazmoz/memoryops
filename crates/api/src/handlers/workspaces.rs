@@ -31,6 +31,8 @@ pub struct CreateWorkspaceResponse {
 pub struct UpdateWorkspaceConfigRequest {
     pub promotion_threshold: Option<f32>,
     pub dedup_cosine_threshold: Option<f32>,
+    pub decay_half_life_days: Option<u32>,
+    pub pruning_threshold: Option<f32>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -100,6 +102,7 @@ pub async fn update_workspace_config(
         0.80,
         0.99,
     )?;
+    validate_lifecycle_config(&config)?;
 
     let before = get_workspace_by_id(&state, id)
         .await?
@@ -292,9 +295,35 @@ fn merge_workspace_config(target: &mut serde_json::Value, patch: &UpdateWorkspac
     if let Some(value) = patch.dedup_cosine_threshold {
         object.insert("dedup_cosine_threshold".to_owned(), json!(value));
     }
+    if let Some(value) = patch.decay_half_life_days {
+        object.insert("decay_half_life_days".to_owned(), json!(value));
+    }
+    if let Some(value) = patch.pruning_threshold {
+        object.insert("pruning_threshold".to_owned(), json!(value));
+    }
     for (key, value) in &patch.extra {
         object.insert(key.clone(), value.clone());
     }
+}
+
+fn validate_lifecycle_config(config: &UpdateWorkspaceConfigRequest) -> AppResult<()> {
+    if let Some(days) = config.decay_half_life_days {
+        if !(1..=3650).contains(&days) {
+            return Err(AppError::Validation(
+                "decay_half_life_days must be between 1 and 3650".to_owned(),
+            ));
+        }
+    }
+
+    if let Some(threshold) = config.pruning_threshold {
+        if !threshold.is_finite() || !(0.01..=0.50).contains(&threshold) {
+            return Err(AppError::Validation(
+                "pruning_threshold must be between 0.01 and 0.50".to_owned(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_threshold(
@@ -313,5 +342,52 @@ fn validate_threshold(
         Err(AppError::Validation(format!(
             "{field} must be between {min:.2} and {max:.2}"
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn update_request(
+        decay_half_life_days: Option<u32>,
+        pruning_threshold: Option<f32>,
+    ) -> UpdateWorkspaceConfigRequest {
+        UpdateWorkspaceConfigRequest {
+            promotion_threshold: None,
+            dedup_cosine_threshold: None,
+            decay_half_life_days,
+            pruning_threshold,
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    #[test]
+    fn lifecycle_config_rejects_zero_half_life() {
+        let error = match validate_lifecycle_config(&update_request(Some(0), None)) {
+            Ok(()) => panic!("zero half-life should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            matches!(error, AppError::Validation(message) if message == "decay_half_life_days must be between 1 and 3650")
+        );
+    }
+
+    #[test]
+    fn lifecycle_config_rejects_out_of_range_pruning_threshold() {
+        let error = match validate_lifecycle_config(&update_request(None, Some(0.99))) {
+            Ok(()) => panic!("high pruning threshold should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            matches!(error, AppError::Validation(message) if message == "pruning_threshold must be between 0.01 and 0.50")
+        );
+    }
+
+    #[test]
+    fn lifecycle_config_accepts_valid_values() {
+        assert!(validate_lifecycle_config(&update_request(Some(90), Some(0.15))).is_ok());
     }
 }

@@ -1,6 +1,6 @@
 # MemoryOps — Feature List
 
-**Version:** 0.11.0  
+**Version:** 0.12.0  
 **Last Updated:** 2026-04-28
 
 This document tracks all planned features across the platform with current status and target milestone.
@@ -32,7 +32,7 @@ This document tracks all planned features across the platform with current statu
 | M9 | Slack ingestion | 🟢 Complete |
 | M10 | Linear + Jira ingestion | 🟢 Complete |
 | M11 | MCP server | 🟢 Complete |
-| M12 | Lifecycle configuration | 🔴 Not started |
+| M12 | Lifecycle configuration | 🟢 Complete |
 
 ---
 
@@ -92,8 +92,8 @@ This document tracks all planned features across the platform with current statu
 | Promotion pipeline (episodic → semantic) | 🟢 | M8 | Cluster → threshold → summarize → promote |
 | Configurable promotion threshold | 🟢 | M8 | Per workspace |
 | Memory deduplication | 🟢 | M8 | Cosine similarity threshold |
-| Per-workspace decay half-life | 🔴 | M12 | decay_half_life_days in WorkspaceConfig |
-| Configurable pruning threshold | 🔴 | M12 | soft-delete threshold per workspace |
+| Per-workspace decay half-life | 🟢 | M12 | decay_half_life_days in WorkspaceConfig |
+| Configurable pruning threshold | 🟢 | M12 | soft-delete threshold per workspace |
 
 ---
 

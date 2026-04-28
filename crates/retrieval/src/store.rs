@@ -2,7 +2,10 @@ use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use common::{
     error::AppResult,
-    models::{Entity, MemoryScope, MemoryType, MemoryUnit, MemoryVersion},
+    models::{
+        Entity, MemoryScope, MemoryType, MemoryUnit, MemoryVersion, DEFAULT_DECAY_HALF_LIFE_DAYS,
+        DEFAULT_PRUNING_THRESHOLD,
+    },
     AppError,
 };
 use sqlx::{types::Json, PgPool, Postgres, QueryBuilder};
@@ -13,7 +16,7 @@ use crate::dto::{
 };
 
 const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
-const DEFAULT_DECAY_HALF_LIFE_SECS: f64 = 30.0 * 86_400.0;
+const SECONDS_PER_DAY: f64 = 86_400.0;
 
 #[derive(Debug, sqlx::FromRow)]
 struct MemoryUnitWithTotal {
@@ -480,19 +483,33 @@ pub async fn promote_to_semantic(db: &PgPool, id: Uuid, workspace_id: Uuid) -> A
 }
 
 pub async fn apply_decay_scores(db: &PgPool, workspace_id: Uuid) -> AppResult<u64> {
-    apply_decay_scores_with_half_life(db, workspace_id, DEFAULT_DECAY_HALF_LIFE_SECS).await
+    apply_decay_scores_with_half_life(
+        db,
+        workspace_id,
+        DEFAULT_DECAY_HALF_LIFE_DAYS,
+        DEFAULT_PRUNING_THRESHOLD,
+    )
+    .await
 }
 
 pub async fn apply_decay_scores_with_half_life(
     db: &PgPool,
     workspace_id: Uuid,
-    decay_half_life_secs: f64,
+    half_life_days: u32,
+    pruning_threshold: f32,
 ) -> AppResult<u64> {
-    if decay_half_life_secs <= 0.0 {
+    if half_life_days == 0 {
         return Err(AppError::Internal(anyhow!(
-            "decay half-life seconds must be positive"
+            "decay half-life days must be positive"
         )));
     }
+    if !pruning_threshold.is_finite() || !(0.01..=0.50).contains(&pruning_threshold) {
+        return Err(AppError::Internal(anyhow!(
+            "pruning threshold must be between 0.01 and 0.50"
+        )));
+    }
+
+    let decay_half_life_secs = f64::from(half_life_days) * SECONDS_PER_DAY;
 
     let updated_ids = sqlx::query_scalar::<_, Uuid>(
         r#"

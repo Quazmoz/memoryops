@@ -1,6 +1,6 @@
 # MemoryOps — Technical Specification
 
-**Version:** 0.11.0  
+**Version:** 0.12.0  
 **Status:** Active  
 **Last Updated:** 2026-04-28
 
@@ -234,6 +234,30 @@ pub struct MemoryVersion {
     pub created_at: DateTime<Utc>,
 }
 ```
+
+### 5.6 WorkspaceConfig
+
+Workspace-level configuration is stored in the `workspaces.config` JSONB column. Missing lifecycle fields are intentionally deserialized as `None`; the scheduler applies explicit defaults when it runs.
+
+```rust
+pub struct WorkspaceConfig {
+  pub promotion_threshold: f32,
+  pub dedup_cosine_threshold: f32,
+  pub access_count_trigger: u32,
+  pub half_life_days: f32,
+  pub decay_rate_episodic: f32,
+  pub decay_rate_semantic: f32,
+  pub llm_provider: Option<String>,
+  pub embedding_provider: Option<String>,
+  pub decay_half_life_days: Option<u32>,
+  pub pruning_threshold: Option<f32>,
+}
+```
+
+| Field | Default | Validation | Behavior |
+|-------|---------|------------|----------|
+| `decay_half_life_days` | `30` | Min `1`, max `3650` | When null or absent, the scheduler falls back to the global default of 30 days. |
+| `pruning_threshold` | `0.10` | Min `0.01`, max `0.50` | When null or absent, the scheduler falls back to the global default of 0.10. |
 
 ---
 
@@ -740,7 +764,7 @@ pub fn decay_score(importance_score: f32, elapsed_secs: f64, half_life_secs: f64
 }
 ```
 
-Default half-life: 30 days. Applied in bulk via `applydecayscoreswithhalflife` — skips pinned and importance-overridden units.
+Default half-life: 30 days. Applied in bulk via `apply_decay_scores_with_half_life` with the workspace-resolved half-life value; skips pinned and importance-overridden units.
 
 ### 11.4 Access Tracking & Promotion
 
@@ -1152,14 +1176,17 @@ decay_score(t) = importance_score × 0.5^(elapsed_secs / half_life_secs)
 
 | Parameter | Default | Configurable |
 |-----------|---------|-------------|
-| `half_life_days` | 30 | Per workspace (future) |
-| Pruning threshold | 0.10 | Per workspace (future) |
+| `decay_half_life_days` | 30 | Per workspace via `WorkspaceConfig` |
+| `pruning_threshold` | 0.10 | Per workspace via `WorkspaceConfig` |
 | Pinned memories | Skipped entirely | N/A |
 | `importance_overridden` | Skipped | N/A |
 
 **Scheduler behavior:**
-- `run_decay_pass(state, workspace_id)` exported from retrieval crate
-- Processes all non-pinned, non-overridden units in a single UPDATE
+- The scheduler iterates active workspaces and reads each workspace's `WorkspaceConfig` from the `workspaces.config` JSONB column.
+- `decay_half_life_days` controls the half-life passed into the decay formula for that workspace.
+- `pruning_threshold` controls the soft-delete cutoff for that workspace.
+- If a workspace config is null, missing either lifecycle field, or cannot be parsed, the scheduler logs a warning and falls back to `30` days and `0.10`.
+- Processes all non-pinned, non-overridden units in workspace-scoped UPDATE batches.
 - Runs daily at 02:00 UTC (scheduler — M6+)
 - Hard delete: separate job runs 30 days after `deleted_at`
 
@@ -1519,4 +1546,4 @@ Output schema:
 | M9 | Slack ingestion | Slack message → MemoryUnit via same pipeline | ✅ Complete |
 | M10 | Linear + Jira ingestion | Linear/Jira webhooks validate signatures, normalize supported events to RawEvent, enqueue processor jobs, and produce MemoryUnits with source-specific scoring/entities | ✅ Complete |
 | M11 | MCP server | `crates/mcp/` exposes `memory_retrieve`, `memory_search`, and `memory_store` over stdio and HTTP SSE with workspace API key auth | ✅ Complete |
-| M12 | Lifecycle configuration | Workspace config controls decay half-life and pruning threshold per workspace | 🔴 Planned |
+| M12 | Lifecycle configuration | Workspace config controls decay half-life and pruning threshold per workspace | ✅ Complete |

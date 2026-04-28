@@ -1,7 +1,14 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Timelike, Utc, Weekday};
-use common::{audit::spawn_audit_log, error::AppResult, models::AuditAction, AppError, AppState};
+use common::{
+    audit::spawn_audit_log,
+    error::AppResult,
+    models::{
+        AuditAction, WorkspaceConfig, DEFAULT_DECAY_HALF_LIFE_DAYS, DEFAULT_PRUNING_THRESHOLD,
+    },
+    AppError, AppState,
+};
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -11,15 +18,30 @@ use crate::{
 };
 
 const WORKSPACE_PAGE_SIZE: i64 = 500;
-const PRUNE_THRESHOLD: f32 = 0.10;
 const HARD_DELETE_RETENTION_DAYS: i64 = 30;
-const DEFAULT_DECAY_HALF_LIFE_DAYS: f64 = 30.0;
+const MIN_DECAY_HALF_LIFE_DAYS: u32 = 1;
+const MAX_DECAY_HALF_LIFE_DAYS: u32 = 3650;
+const MIN_PRUNING_THRESHOLD: f32 = 0.01;
+const MAX_PRUNING_THRESHOLD: f32 = 0.50;
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
 #[derive(Debug, Clone, Copy, FromRow)]
 struct MemoryIdentity {
     id: Uuid,
     workspace_id: Uuid,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct WorkspaceConfigRow {
+    id: Uuid,
+    config: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct WorkspaceLifecycleSettings {
+    workspace_id: Uuid,
+    decay_half_life_days: u32,
+    pruning_threshold: f32,
 }
 
 pub async fn run_scheduler(state: Arc<AppState>) {
@@ -131,19 +153,25 @@ async fn run_scheduled_promotion_pass(state: &AppState) -> AppResult<()> {
 pub async fn run_decay_pass(state: &AppState) -> AppResult<u64> {
     let mut total = 0_u64;
     let mut cursor = None;
-    let half_life_secs = DEFAULT_DECAY_HALF_LIFE_DAYS * SECONDS_PER_DAY;
 
     loop {
-        let workspace_ids = list_workspace_ids_after(state, cursor, WORKSPACE_PAGE_SIZE).await?;
-        if workspace_ids.is_empty() {
+        let workspaces =
+            list_workspace_lifecycle_settings_after(state, cursor, WORKSPACE_PAGE_SIZE).await?;
+        if workspaces.is_empty() {
             break;
         }
 
-        for workspace_id in &workspace_ids {
-            total = total
-                .saturating_add(apply_decay_scores(state, *workspace_id, half_life_secs).await?);
+        for workspace in &workspaces {
+            total = total.saturating_add(
+                apply_decay_scores(
+                    state,
+                    workspace.workspace_id,
+                    workspace.decay_half_life_days,
+                )
+                .await?,
+            );
         }
-        cursor = workspace_ids.last().copied();
+        cursor = workspaces.last().map(|workspace| workspace.workspace_id);
     }
 
     tracing::info!(updated = total, "scheduler decay pass completed");
@@ -153,8 +181,9 @@ pub async fn run_decay_pass(state: &AppState) -> AppResult<u64> {
 async fn apply_decay_scores(
     state: &AppState,
     workspace_id: Uuid,
-    decay_half_life_secs: f64,
+    decay_half_life_days: u32,
 ) -> AppResult<u64> {
+    let decay_half_life_secs = half_life_secs(decay_half_life_days);
     let updated_ids = sqlx::query_scalar::<_, Uuid>(
         r#"
         UPDATE memory_units
@@ -184,25 +213,44 @@ async fn apply_decay_scores(
 pub async fn run_pruning_pass(state: &AppState) -> AppResult<u64> {
     let batch_size = i64::from(state.config.decay.batch_size.max(1));
     let mut total = 0_u64;
+    let mut cursor = None;
 
     loop {
-        let pruned = prune_batch(state, batch_size).await?;
-        if pruned.is_empty() {
+        let workspaces =
+            list_workspace_lifecycle_settings_after(state, cursor, WORKSPACE_PAGE_SIZE).await?;
+        if workspaces.is_empty() {
             break;
         }
 
-        for memory in &pruned {
-            spawn_audit_log(
-                state.db.clone(),
-                memory.workspace_id,
-                "scheduler".to_owned(),
-                AuditAction::MemoryDeleted,
-                memory.id,
-                "memory",
-                Some(serde_json::json!({ "reason": "decay_pruned" })),
-            );
+        for workspace in &workspaces {
+            loop {
+                let pruned = prune_batch(
+                    state,
+                    workspace.workspace_id,
+                    workspace.pruning_threshold,
+                    batch_size,
+                )
+                .await?;
+                if pruned.is_empty() {
+                    break;
+                }
+
+                for memory in &pruned {
+                    spawn_audit_log(
+                        state.db.clone(),
+                        memory.workspace_id,
+                        "scheduler".to_owned(),
+                        AuditAction::MemoryDeleted,
+                        memory.id,
+                        "memory",
+                        Some(serde_json::json!({ "reason": "decay_pruned" })),
+                    );
+                }
+                total = total.saturating_add(len_to_u64(pruned.len())?);
+            }
         }
-        total = total.saturating_add(len_to_u64(pruned.len())?);
+
+        cursor = workspaces.last().map(|workspace| workspace.workspace_id);
     }
 
     tracing::info!(pruned = total, "scheduler pruning pass completed");
@@ -255,14 +303,14 @@ pub async fn run_hard_delete_pass(state: &AppState) -> AppResult<u64> {
     Ok(total)
 }
 
-async fn list_workspace_ids_after(
+async fn list_workspace_lifecycle_settings_after(
     state: &AppState,
     cursor: Option<Uuid>,
     limit: i64,
-) -> AppResult<Vec<Uuid>> {
-    sqlx::query_scalar::<_, Uuid>(
+) -> AppResult<Vec<WorkspaceLifecycleSettings>> {
+    let rows = sqlx::query_as::<_, WorkspaceConfigRow>(
         r#"
-        SELECT id
+        SELECT id, config
         FROM workspaces
         WHERE deleted_at IS NULL
           AND ($1::uuid IS NULL OR id > $1)
@@ -274,7 +322,12 @@ async fn list_workspace_ids_after(
     .bind(limit)
     .fetch_all(&state.db)
     .await
-    .map_err(AppError::Database)
+    .map_err(AppError::Database)?;
+
+    Ok(rows
+        .iter()
+        .map(|row| lifecycle_settings_from_value(row.id, &row.config))
+        .collect())
 }
 
 async fn fetch_all_workspace_ids(pool: &sqlx::PgPool) -> AppResult<Vec<Uuid>> {
@@ -324,18 +377,24 @@ async fn fetch_workspace_promotion_config(
     })
 }
 
-async fn prune_batch(state: &AppState, limit: i64) -> AppResult<Vec<MemoryIdentity>> {
+async fn prune_batch(
+    state: &AppState,
+    workspace_id: Uuid,
+    pruning_threshold: f32,
+    limit: i64,
+) -> AppResult<Vec<MemoryIdentity>> {
     sqlx::query_as::<_, MemoryIdentity>(
         r#"
         WITH candidates AS (
             SELECT id
             FROM memory_units
-            WHERE decay_score < $1
+                        WHERE workspace_id = $1
+                            AND decay_score < $2
               AND pinned = false
               AND importance_overridden = false
               AND deleted_at IS NULL
             ORDER BY decay_score ASC, id ASC
-            LIMIT $2
+                        LIMIT $3
         )
         UPDATE memory_units
         SET deleted_at = now(), version = version + 1
@@ -343,7 +402,8 @@ async fn prune_batch(state: &AppState, limit: i64) -> AppResult<Vec<MemoryIdenti
         RETURNING id, workspace_id
         "#,
     )
-    .bind(PRUNE_THRESHOLD)
+    .bind(workspace_id)
+    .bind(pruning_threshold)
     .bind(limit)
     .fetch_all(&state.db)
     .await
@@ -381,12 +441,89 @@ pub fn decay_filter_allows_update(
 
 pub fn should_prune(
     decay_score: f32,
+    pruning_threshold: f32,
     pinned: bool,
     importance_overridden: bool,
     deleted: bool,
 ) -> bool {
-    decay_score < PRUNE_THRESHOLD
+    decay_score < pruning_threshold
         && decay_filter_allows_update(pinned, importance_overridden, deleted)
+}
+
+fn lifecycle_settings_from_value(
+    workspace_id: Uuid,
+    config_value: &serde_json::Value,
+) -> WorkspaceLifecycleSettings {
+    match serde_json::from_value::<WorkspaceConfig>(config_value.clone()) {
+        Ok(config) => lifecycle_settings_from_config(workspace_id, &config),
+        Err(error) => {
+            tracing::warn!(
+                workspace_id = %workspace_id,
+                error = ?error,
+                "failed to parse workspace config; using lifecycle defaults"
+            );
+            WorkspaceLifecycleSettings::default_for_workspace(workspace_id)
+        }
+    }
+}
+
+fn lifecycle_settings_from_config(
+    workspace_id: Uuid,
+    config: &WorkspaceConfig,
+) -> WorkspaceLifecycleSettings {
+    let decay_half_life_days = config
+        .decay_half_life_days
+        .unwrap_or(DEFAULT_DECAY_HALF_LIFE_DAYS);
+    let pruning_threshold = config
+        .pruning_threshold
+        .unwrap_or(DEFAULT_PRUNING_THRESHOLD);
+
+    WorkspaceLifecycleSettings {
+        workspace_id,
+        decay_half_life_days: valid_decay_half_life_days(decay_half_life_days, workspace_id),
+        pruning_threshold: valid_pruning_threshold(pruning_threshold, workspace_id),
+    }
+}
+
+impl WorkspaceLifecycleSettings {
+    fn default_for_workspace(workspace_id: Uuid) -> Self {
+        Self {
+            workspace_id,
+            decay_half_life_days: DEFAULT_DECAY_HALF_LIFE_DAYS,
+            pruning_threshold: DEFAULT_PRUNING_THRESHOLD,
+        }
+    }
+}
+
+fn valid_decay_half_life_days(days: u32, workspace_id: Uuid) -> u32 {
+    if (MIN_DECAY_HALF_LIFE_DAYS..=MAX_DECAY_HALF_LIFE_DAYS).contains(&days) {
+        days
+    } else {
+        tracing::warn!(
+            workspace_id = %workspace_id,
+            decay_half_life_days = days,
+            "workspace decay half-life is out of range; using default"
+        );
+        DEFAULT_DECAY_HALF_LIFE_DAYS
+    }
+}
+
+fn valid_pruning_threshold(threshold: f32, workspace_id: Uuid) -> f32 {
+    if threshold.is_finite() && (MIN_PRUNING_THRESHOLD..=MAX_PRUNING_THRESHOLD).contains(&threshold)
+    {
+        threshold
+    } else {
+        tracing::warn!(
+            workspace_id = %workspace_id,
+            pruning_threshold = threshold,
+            "workspace pruning threshold is out of range; using default"
+        );
+        DEFAULT_PRUNING_THRESHOLD
+    }
+}
+
+fn half_life_secs(decay_half_life_days: u32) -> f64 {
+    f64::from(decay_half_life_days) * SECONDS_PER_DAY
 }
 
 pub fn hard_delete_eligible(deleted_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
@@ -412,7 +549,7 @@ mod tests {
 
     #[test]
     fn decay_boundary_at_exactly_half_life_is_half_importance() {
-        let half_life_secs = DEFAULT_DECAY_HALF_LIFE_DAYS * SECONDS_PER_DAY;
+        let half_life_secs = half_life_secs(DEFAULT_DECAY_HALF_LIFE_DAYS);
         let score = decay_score(1.0, half_life_secs, half_life_secs);
 
         assert!((score - 0.5).abs() <= 0.001);
@@ -428,14 +565,69 @@ mod tests {
 
     #[test]
     fn pruning_threshold_boundary_is_strict() {
-        assert!(should_prune(0.099, false, false, false));
-        assert!(!should_prune(0.10, false, false, false));
-        assert!(!should_prune(0.101, false, false, false));
+        assert!(should_prune(
+            0.099,
+            DEFAULT_PRUNING_THRESHOLD,
+            false,
+            false,
+            false
+        ));
+        assert!(!should_prune(
+            0.10,
+            DEFAULT_PRUNING_THRESHOLD,
+            false,
+            false,
+            false
+        ));
+        assert!(!should_prune(
+            0.101,
+            DEFAULT_PRUNING_THRESHOLD,
+            false,
+            false,
+            false
+        ));
     }
 
     #[test]
     fn pruning_skips_pinned_memory() {
-        assert!(!should_prune(0.01, true, false, false));
+        assert!(!should_prune(
+            0.01,
+            DEFAULT_PRUNING_THRESHOLD,
+            true,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn scheduler_uses_workspace_specific_half_life_when_present() {
+        let workspace_id = Uuid::nil();
+        let config = WorkspaceConfig {
+            decay_half_life_days: Some(7),
+            ..WorkspaceConfig::default()
+        };
+
+        let settings = lifecycle_settings_from_config(workspace_id, &config);
+
+        assert_eq!(settings.decay_half_life_days, 7);
+        assert_eq!(
+            half_life_secs(settings.decay_half_life_days),
+            7.0 * SECONDS_PER_DAY
+        );
+    }
+
+    #[test]
+    fn scheduler_falls_back_to_default_half_life_when_missing() {
+        let settings = lifecycle_settings_from_config(Uuid::nil(), &WorkspaceConfig::default());
+
+        assert_eq!(settings.decay_half_life_days, DEFAULT_DECAY_HALF_LIFE_DAYS);
+    }
+
+    #[test]
+    fn scheduler_falls_back_to_default_pruning_threshold_when_missing() {
+        let settings = lifecycle_settings_from_config(Uuid::nil(), &WorkspaceConfig::default());
+
+        assert_eq!(settings.pruning_threshold, DEFAULT_PRUNING_THRESHOLD);
     }
 
     #[test]
