@@ -200,6 +200,20 @@ export type WorkspaceDetail = WorkspaceSummary & {
   deleted_at?: string | null;
 };
 
+export type WorkspaceStats = {
+  total_memories: number;
+  episodic_count: number;
+  semantic_count: number;
+  pinned_count: number;
+  deleted_count: number;
+  avg_importance_score: number;
+  avg_decay_score: number;
+  memories_created_7d: number;
+  memories_created_30d: number;
+  oldest_memory_at: string | null;
+  newest_memory_at: string | null;
+};
+
 export type PromotionReport = {
   clusters_found: number;
   units_promoted: number;

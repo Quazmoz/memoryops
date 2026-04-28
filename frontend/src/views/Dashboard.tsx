@@ -1,4 +1,4 @@
-import { ArrowRight, Database, GitPullRequest, Send } from "lucide-react";
+import { ArrowRight, BarChart2, BookMarked, Database, GitCommit, Pin, Search, Send, Settings2, TrendingUp } from "lucide-react";
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Line, LineChart, ResponsiveContainer, Tooltip } from "recharts";
@@ -10,9 +10,10 @@ import { StatusPill } from "../components/StatusPill";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Skeleton } from "../components/ui/skeleton";
-import { dayKey, formatCount } from "../lib/format";
+import { dayKey, formatCount, formatRelativeTime, formatScore } from "../lib/format";
 import { useAppStore } from "../store/app-store";
 import { useMemoryList, useReadiness } from "../hooks/use-memory";
+import { useWorkspaceStats } from "../hooks/use-workspace";
 
 type SparklinePoint = {
   day: string;
@@ -22,8 +23,7 @@ type SparklinePoint = {
 export function Dashboard() {
   const workspaceId = useAppStore((state) => state.workspaceId);
   const readiness = useReadiness(workspaceId);
-  const episodic = useMemoryList(workspaceId, { limit: 1, offset: 0, memoryType: "episodic" });
-  const semantic = useMemoryList(workspaceId, { limit: 1, offset: 0, memoryType: "semantic" });
+  const stats = useWorkspaceStats(workspaceId);
   const recent = useMemoryList(workspaceId, { limit: 100, offset: 0, sort: "created_at", direction: "asc" });
   const sparklineData = useMemo(() => buildSparklineData(recent.data?.items ?? []), [recent.data?.items]);
 
@@ -47,14 +47,21 @@ export function Dashboard() {
       </header>
 
       {readiness.isError ? <InlineError message={errorMessage(readiness.error)} /> : null}
-      {episodic.isError || semantic.isError ? (
-        <InlineError title="Memory counts unavailable" message={errorMessage(episodic.error ?? semantic.error)} />
-      ) : null}
+      {stats.isError ? <InlineError title="Stats unavailable" message={errorMessage(stats.error)} /> : null}
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <MetricCard title="Episodic memory" value={episodic.data?.total} loading={episodic.isLoading} icon={<GitPullRequest className="h-4 w-4" />} />
-        <MetricCard title="Semantic memory" value={semantic.data?.total} loading={semantic.isLoading} icon={<Database className="h-4 w-4" />} />
-        <MetricCard title="Total memory" value={(episodic.data?.total ?? 0) + (semantic.data?.total ?? 0)} loading={episodic.isLoading || semantic.isLoading} icon={<Database className="h-4 w-4" />} />
+      <section className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <MetricCard title="Total" value={stats.data?.total_memories} loading={stats.isLoading} icon={<Database className="h-4 w-4" />} />
+        <MetricCard title="Episodic" value={stats.data?.episodic_count} loading={stats.isLoading} icon={<GitCommit className="h-4 w-4" />} />
+        <MetricCard title="Semantic" value={stats.data?.semantic_count} loading={stats.isLoading} icon={<BookMarked className="h-4 w-4" />} />
+        <MetricCard title="Pinned" value={stats.data?.pinned_count} loading={stats.isLoading} icon={<Pin className="h-4 w-4" />} />
+        <MetricCard title="Created (7d)" value={stats.data?.memories_created_7d} loading={stats.isLoading} icon={<TrendingUp className="h-4 w-4" />} />
+        <MetricCard
+          title="Avg importance"
+          value={stats.data?.avg_importance_score}
+          loading={stats.isLoading}
+          icon={<BarChart2 className="h-4 w-4" />}
+          valueFormatter={formatScore}
+        />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[1fr_22rem]">
@@ -104,6 +111,60 @@ export function Dashboard() {
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </Link>
             </Button>
+            <Button asChild variant="secondary">
+              <Link to="/lifecycle" data-testid="quick-jump-lifecycle" className="justify-between">
+                <span className="inline-flex items-center gap-2">
+                  <Settings2 className="h-4 w-4" aria-hidden="true" />
+                  Lifecycle
+                </span>
+                <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </Link>
+            </Button>
+            <Button asChild variant="secondary">
+              <Link to="/trace" data-testid="quick-jump-trace" className="justify-between">
+                <span className="inline-flex items-center gap-2">
+                  <Search className="h-4 w-4" aria-hidden="true" />
+                  Retrieval Trace
+                </span>
+                <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Memory health</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <StatsRows
+              loading={stats.isLoading}
+              rows={[
+                { label: "Avg decay score", value: formatScore(stats.data?.avg_decay_score) },
+                { label: "Soft-deleted (recoverable)", value: formatCount(stats.data?.deleted_count) },
+                { label: "Oldest memory", value: stats.data?.oldest_memory_at ? formatRelativeTime(stats.data.oldest_memory_at) : "None yet" },
+                { label: "Newest memory", value: stats.data?.newest_memory_at ? formatRelativeTime(stats.data.newest_memory_at) : "None yet" },
+              ]}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>30-day activity</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <StatsRows
+              loading={stats.isLoading}
+              rows={[
+                { label: "Memories created (30d)", value: formatCount(stats.data?.memories_created_30d) },
+                { label: "Memories created (7d)", value: formatCount(stats.data?.memories_created_7d) },
+                { label: "Semantic ratio", value: formatRatio(stats.data?.semantic_count, stats.data?.total_memories) },
+                { label: "Pinned ratio", value: formatRatio(stats.data?.pinned_count, stats.data?.total_memories) },
+              ]}
+            />
           </CardContent>
         </Card>
       </section>
@@ -111,7 +172,19 @@ export function Dashboard() {
   );
 }
 
-function MetricCard({ title, value, loading, icon }: { title: string; value: number | undefined; loading: boolean; icon: React.ReactNode }) {
+export function MetricCard({
+  title,
+  value,
+  loading,
+  icon,
+  valueFormatter = formatCount,
+}: {
+  title: string;
+  value: number | null | undefined;
+  loading: boolean;
+  icon: React.ReactNode;
+  valueFormatter?: (value: number | null | undefined) => string;
+}) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
@@ -119,9 +192,32 @@ function MetricCard({ title, value, loading, icon }: { title: string; value: num
         <div className="text-accent-strong">{icon}</div>
       </CardHeader>
       <CardContent>
-        {loading ? <Skeleton className="h-9 w-24" /> : <p className="text-3xl font-semibold">{formatCount(value)}</p>}
+        {loading ? <Skeleton className="h-9 w-24" data-testid="metric-card-skeleton" /> : <p className="text-3xl font-semibold">{valueFormatter(value)}</p>}
       </CardContent>
     </Card>
+  );
+}
+
+function StatsRows({ loading, rows }: { loading: boolean; rows: Array<{ label: string; value: string }> }) {
+  if (loading) {
+    return (
+      <div className="grid gap-3">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton className="h-4 w-full" key={index} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <dl className="grid gap-3">
+      {rows.map((row) => (
+        <div className="grid grid-cols-[1fr_auto] items-center gap-3" key={row.label}>
+          <dt className="text-sm text-ink/60">{row.label}</dt>
+          <dd className="text-sm font-medium text-ink">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -137,4 +233,12 @@ function buildSparklineData(items: MemoryUnit[]): SparklinePoint[] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "The backend did not return a readable response.";
+}
+
+function formatRatio(numerator: number | null | undefined, denominator: number | null | undefined): string {
+  if (!denominator) {
+    return "—";
+  }
+
+  return `${(((numerator ?? 0) / denominator) * 100).toFixed(1)}%`;
 }

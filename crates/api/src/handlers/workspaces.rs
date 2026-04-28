@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anyhow::anyhow;
 use axum::{extract::Path, extract::State, Extension, Json};
+use chrono::{DateTime, Utc};
 use common::{
     audit::spawn_audit_log,
     auth::AuthContext,
@@ -35,6 +36,36 @@ pub struct UpdateWorkspaceConfigRequest {
     pub pruning_threshold: Option<f32>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceStats {
+    pub total_memories: i64,
+    pub episodic_count: i64,
+    pub semantic_count: i64,
+    pub pinned_count: i64,
+    pub deleted_count: i64,
+    pub avg_importance_score: f64,
+    pub avg_decay_score: f64,
+    pub memories_created_7d: i64,
+    pub memories_created_30d: i64,
+    pub oldest_memory_at: Option<DateTime<Utc>>,
+    pub newest_memory_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct WorkspaceStatsRow {
+    total_memories: i64,
+    episodic_count: i64,
+    semantic_count: i64,
+    pinned_count: i64,
+    deleted_count: i64,
+    avg_importance_score: Option<f64>,
+    avg_decay_score: Option<f64>,
+    memories_created_7d: i64,
+    memories_created_30d: i64,
+    oldest_memory_at: Option<DateTime<Utc>>,
+    newest_memory_at: Option<DateTime<Utc>>,
 }
 
 #[axum::debug_handler]
@@ -85,6 +116,39 @@ pub async fn get_workspace(
         })?;
 
     Ok(Json(workspace))
+}
+
+#[axum::debug_handler]
+pub async fn get_stats(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<WorkspaceStats>> {
+    require_workspace(&auth, id)?;
+    let row = sqlx::query_as::<_, WorkspaceStatsRow>(
+        r#"
+        SELECT
+            COUNT(*) FILTER (WHERE deleted_at IS NULL) AS total_memories,
+            COUNT(*) FILTER (WHERE deleted_at IS NULL AND memory_type = 'episodic') AS episodic_count,
+            COUNT(*) FILTER (WHERE deleted_at IS NULL AND memory_type = 'semantic') AS semantic_count,
+            COUNT(*) FILTER (WHERE deleted_at IS NULL AND pinned) AS pinned_count,
+            COUNT(*) FILTER (WHERE deleted_at IS NOT NULL AND hard_deleted_at IS NULL) AS deleted_count,
+            AVG(importance_score) FILTER (WHERE deleted_at IS NULL) AS avg_importance_score,
+            AVG(decay_score) FILTER (WHERE deleted_at IS NULL) AS avg_decay_score,
+            COUNT(*) FILTER (WHERE deleted_at IS NULL AND created_at >= NOW() - INTERVAL '7 days') AS memories_created_7d,
+            COUNT(*) FILTER (WHERE deleted_at IS NULL AND created_at >= NOW() - INTERVAL '30 days') AS memories_created_30d,
+            MIN(created_at) FILTER (WHERE deleted_at IS NULL) AS oldest_memory_at,
+            MAX(created_at) FILTER (WHERE deleted_at IS NULL) AS newest_memory_at
+        FROM memory_units
+        WHERE workspace_id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(Json(workspace_stats_from_row(row)))
 }
 
 #[axum::debug_handler]
@@ -226,6 +290,22 @@ async fn get_workspace_by_id(state: &AppState, id: Uuid) -> AppResult<Option<Wor
     .fetch_optional(&state.db)
     .await
     .map_err(AppError::Database)
+}
+
+fn workspace_stats_from_row(row: WorkspaceStatsRow) -> WorkspaceStats {
+    WorkspaceStats {
+        total_memories: row.total_memories,
+        episodic_count: row.episodic_count,
+        semantic_count: row.semantic_count,
+        pinned_count: row.pinned_count,
+        deleted_count: row.deleted_count,
+        avg_importance_score: row.avg_importance_score.unwrap_or(0.0),
+        avg_decay_score: row.avg_decay_score.unwrap_or(0.0),
+        memories_created_7d: row.memories_created_7d,
+        memories_created_30d: row.memories_created_30d,
+        oldest_memory_at: row.oldest_memory_at,
+        newest_memory_at: row.newest_memory_at,
+    }
 }
 
 async fn fetch_workspace_promotion_config(
@@ -376,6 +456,22 @@ mod tests {
         }
     }
 
+    fn stats_row() -> WorkspaceStatsRow {
+        WorkspaceStatsRow {
+            total_memories: 0,
+            episodic_count: 0,
+            semantic_count: 0,
+            pinned_count: 0,
+            deleted_count: 0,
+            avg_importance_score: None,
+            avg_decay_score: None,
+            memories_created_7d: 0,
+            memories_created_30d: 0,
+            oldest_memory_at: None,
+            newest_memory_at: None,
+        }
+    }
+
     #[test]
     fn lifecycle_config_rejects_zero_half_life() {
         let error = match validate_lifecycle_config(&update_request(Some(0), None)) {
@@ -403,5 +499,21 @@ mod tests {
     #[test]
     fn lifecycle_config_accepts_valid_values() {
         assert!(validate_lifecycle_config(&update_request(Some(90), Some(0.15))).is_ok());
+    }
+
+    #[test]
+    fn workspace_stats_coerces_null_averages_to_zero() {
+        let stats = workspace_stats_from_row(stats_row());
+
+        assert_eq!(stats.avg_importance_score, 0.0);
+        assert_eq!(stats.avg_decay_score, 0.0);
+    }
+
+    #[test]
+    fn workspace_stats_keeps_null_oldest_and_newest_as_none() {
+        let stats = workspace_stats_from_row(stats_row());
+
+        assert_eq!(stats.oldest_memory_at, None);
+        assert_eq!(stats.newest_memory_at, None);
     }
 }

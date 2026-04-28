@@ -8,6 +8,7 @@ import type {
   WorkspaceConfig,
   WorkspaceDetail,
   WorkspaceSummary,
+  WorkspaceStats,
 } from "./types";
 
 export async function createWorkspace(name: string): Promise<WorkspaceSummary> {
@@ -45,6 +46,10 @@ export async function createApiKey(workspaceId: string, name: string): Promise<C
 
 export function getWorkspace(workspaceId: string): Promise<WorkspaceDetail> {
   return apiRequest<WorkspaceDetail>(`/v1/workspaces/${workspaceId}`);
+}
+
+export function getWorkspaceStats(workspaceId: string): Promise<WorkspaceStats> {
+  return apiRequest<WorkspaceStats>(`/v1/workspaces/${workspaceId}/stats`);
 }
 
 export function updateWorkspaceConfig(workspaceId: string, patch: WorkspaceConfig): Promise<WorkspaceDetail> {

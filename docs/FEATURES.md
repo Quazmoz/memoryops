@@ -33,6 +33,7 @@ This document tracks all planned features across the platform with current statu
 | M10 | Linear + Jira ingestion | 🟢 Complete |
 | M11 | MCP server | 🟢 Complete |
 | M12 | Lifecycle configuration | 🟢 Complete |
+| M13 | Workspace stats endpoint + Dashboard KPIs | 🟢 Complete |
 
 ---
 
@@ -169,6 +170,7 @@ This document tracks all planned features across the platform with current statu
 | DELETE /v1/workspaces/:id/dlq/:job_id | 🟢 | M6 | |
 | GET /v1/workspaces/:id/export | 🟢 | M7 | JSONL streaming, cursor-paginated |
 | POST /v1/workspaces/:id/promote | 🟢 | M8 | Manual promotion pass with workspace lock |
+| GET /v1/workspaces/:id/stats | 🟢 | M13 | Aggregate memory stats per workspace |
 
 ---
 
@@ -237,6 +239,8 @@ This document tracks all planned features across the platform with current statu
 | Memory merge UI | 🟢 | M6 | POST /v1/memory/merge |
 | Promotion controls | 🟢 | M8 | Threshold sliders + manual trigger |
 | Semantic memory display | 🟢 | M8 | Badge, source count, promoted timestamp |
+| Dashboard KPI strip (6 cards via /stats) | 🟢 | M13 | Replaces 3 useMemoryList calls |
+| Dashboard secondary stats row | 🟢 | M13 | Memory health + 30-day activity cards |
 
 ---
 
