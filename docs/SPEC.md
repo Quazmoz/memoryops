@@ -1,8 +1,8 @@
 # MemoryOps — Technical Specification
 
-**Version:** 0.4.0  
+**Version:** 0.9.0  
 **Status:** Active  
-**Last Updated:** 2026-04-27
+**Last Updated:** 2026-04-28
 
 ---
 
@@ -373,7 +373,7 @@ CorsLayer           # configurable origins
   │
   ▼
 AuthLayer           # X-API-Key → workspace_id extraction
-  │                 # skipped for /webhooks/* and /health
+  │                 # skipped for /v1/ingest/* and /health
   ▼
 RateLimitLayer      # Redis sliding window per workspace
   │
@@ -404,7 +404,7 @@ Handler
 │  ┌──────────────────┐    ┌────────────────────────────────┐   │
 │  │  Ingestion Svc   │    │        Processor Svc           │   │
 │  │                  │    │                                │   │
-│  │ POST /webhooks/  │───▶│  Fast Worker  │  Slow Worker  │   │
+│  │ POST /v1/ingest/ │───▶│  Fast Worker  │  Slow Worker  │   │
 │  │  github | slack  │    │  (sync, rules)│  (async, LLM) │   │
 │  └──────────────────┘    └────────────────────────────────┘   │
 │           │                          │                        │
@@ -458,15 +458,16 @@ memoryops/
 │   │   ├── src/
 │   │   │   ├── lib.rs
 │   │   │   ├── router.rs       # axum routes for /v1/ingest/*
-│   │   │   ├── validator.rs    # WebhookValidator trait + impls
 │   │   │   ├── github/
 │   │   │   │   ├── mod.rs
 │   │   │   │   ├── handler.rs
+│   │   │   │   ├── signature.rs
 │   │   │   │   └── parser.rs   # GitHub payload → RawEvent
 │   │   │   └── slack/
 │   │   │       ├── mod.rs
 │   │   │       ├── handler.rs
-│   │   │       └── parser.rs
+│   │   │       ├── parser.rs
+│   │   │       └── validator.rs
 │   ├── processor/
 │   │   ├── src/
 │   │   │   ├── lib.rs
@@ -489,6 +490,7 @@ memoryops/
 │   └── api/
 │       ├── src/
 │       │   ├── main.rs         # AppState wiring, router merge, startup
+│       │   ├── scheduler.rs    # API-owned scheduled background jobs
 │       │   ├── middleware/
 │       │   │   ├── auth.rs
 │       │   │   └── rate_limit.rs
@@ -508,7 +510,16 @@ memoryops/
 │   ├── 0001_init.sql
 │   ├── 0002_ingestion_indexes.sql
 │   ├── 0003_processor.sql
-│   └── 0004_retrieval.sql      # FTS indexes, access_count column
+│   ├── 0004_retrieval.sql      # FTS indexes, access_count column
+│   ├── 0005_workspaces.sql
+│   ├── 0006_api_keys.sql
+│   ├── 0007_audit_log.sql
+│   ├── 0008_integrations.sql
+│   ├── 0009_retrieval_traces.sql
+│   ├── 0010_soft_delete.sql
+│   ├── 0011_scheduler.sql
+│   ├── 0012_promotion.sql
+│   └── 0013_slack.sql
 ├── docs/
 │   ├── SPEC.md
 │   ├── FEATURES.md
@@ -600,6 +611,15 @@ Step 5 uses a Redis pipeline inside the Postgres transaction callback to ensure 
 
 GitHub may deliver webhooks more than once. Idempotency key = `SHA256(source + event_type + payload.id + occurred_at)`. On conflict, return `202` without re-processing.
 
+### 9.5 Slack Events
+
+| Event | Meaning |
+|-------|---------|
+| `message` | New message in channel or thread |
+| `message.edited` | Message body edited |
+| `reaction_added` | Emoji reaction on a message |
+| `app_mention` | Direct @mention of the MemoryOps app |
+
 ---
 
 ## 10. Processing Pipeline
@@ -651,20 +671,39 @@ XREADGROUP GROUP slow_workers consumer-1 COUNT 10 BLOCK 2000 STREAMS processor_j
 
 ### 10.3 Promotion Pipeline
 
-Triggered on every retrieval access (async, non-blocking) and as a scheduled pass.
+MemoryOps has two live promotion paths.
+
+**Access-based promotion (async per retrieval):**
 
 ```
 1. Load MemoryUnit by id
 2. Check Redis access counter (HGET memoryops:access:<id> count)
 3. If: memory_type == Episodic
-      AND importance_score >= 0.85
-      AND access_count >= 3
-      AND not deleted, not pinned
-   → UPDATE memory_type = 'semantic' (promoter)
+    AND importance_score >= promotion_threshold
+    AND access_count >= access_count_trigger
+    AND not deleted, not pinned
+  → UPDATE memory_type = 'semantic'
 4. Log promotion via tracing::info!
 ```
 
-**Configurable per workspace:** `promotion_threshold` (default: 0.85), `access_count_trigger` (default: 3).
+**Cluster-based promotion (nightly scheduler):**
+
+```
+1. Fetch all non-promoted episodic memories per workspace
+2. Compute cosine similarity between pairs using Qdrant vectors
+3. Group by similarity > dedup_threshold (default 0.92) into clusters
+4. For qualifying clusters (avg importance >= promotion_threshold):
+  a. Select highest-importance unit as canonical
+  b. LLM summarize concatenated cluster content
+  c. Write new Semantic MemoryUnit with merged source_events
+  d. Soft-delete all cluster members
+  e. Write Qdrant point for new semantic unit
+  f. Emit AuditEntry: memory_promoted per affected id
+```
+
+`POST /v1/workspaces/:id/promote` manually triggers the cluster-based pass. The handler uses a Redis `SET NX EX 300` distributed lock per workspace to prevent concurrent runs.
+
+**Configurable per workspace:** `promotion_threshold` (default: 0.85), `access_count_trigger` (default: 3), `dedup_threshold` (default: 0.92).
 
 ---
 
@@ -711,13 +750,13 @@ Every search result triggers:
 
 ### 11.5 List & CRUD
 
-`GET /v1/memory` supports full filtering: `workspace_id`, `memory_type`, `pinned`, `min_importance`, sort by `importance_score | decay_score | updated_at | created_at`, direction `asc | desc`, `limit` (max 100), `offset`.
+`GET /v1/memory` supports full filtering: `workspace_id`, `memory_type`, `pinned`, `min_importance`, sort by `importance_score | decay_score | updated_at | created_at`, direction `asc | desc`, and cursor pagination.
 
-`PATCH /v1/memory/:id` supports: `pinned`, `importance_score` (sets `importance_overridden = true`), `tags`. Validates `importance_score ∈ [0.0, 1.0]`.
+`PATCH /v1/memory/:id` supports: `content`, `pinned`, `importance_score` (sets `importance_overridden = true`), `tags`. Validates `importance_score ∈ [0.0, 1.0]`.
 
-### 11.6 Score Breakdown (future — M6+)
+### 11.6 Score Breakdown
 
-Full per-component score breakdown (`semantic_similarity`, `importance`, `recency`, `source_authority`, `memory_type_weight`) is tracked in `RetrievalTraceEntry`. The `POST /v1/retrieve` endpoint in a future milestone will expose this via a dedicated retrieval surface. The current `POST /v1/memory/search` is the queryable read path.
+Full per-component score breakdown (`semantic_similarity`, `importance`, `recency`, `source_authority`, `memory_type_weight`) is tracked in `RetrievalTraceEntry`. `POST /v1/retrieve` is live as of M6 and returns packed memories with score breakdowns and trace data. Retrieval traces are persisted for 30 days in the `retrieval_traces` table and can be inspected through `GET /v1/retrieve/trace/:query_id`.
 
 ---
 
@@ -728,7 +767,7 @@ Full per-component score breakdown (`semantic_similarity`, `importance`, `recenc
 - **Versioning:** All routes prefixed `/v1/`
 - **Auth:** `X-API-Key` header required on all routes except `/v1/ingest/*` and `/health`
 - **Content-Type:** `application/json` for all request/response bodies
-- **Pagination:** offset-based on list endpoints (`?limit=<n>&offset=<n>`, default limit 20, max 100)
+- **Pagination:** cursor-based on list endpoints (`?after=<cursor>&limit=<n>`, default limit 20, max 100)
 - **Errors:** unified error envelope (see §14)
 - **Idempotency:** `POST` endpoints accept optional `Idempotency-Key` header
 - **Timestamps:** all `DateTime` fields in ISO 8601 UTC (`2026-04-27T18:00:00Z`)
@@ -750,10 +789,10 @@ Full per-component score breakdown (`semantic_similarity`, `importance`, `recenc
 
 #### Ingestion (no auth, HMAC only)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/v1/ingest/github` | GitHub webhook receiver |
-| POST | `/v1/ingest/slack` | Slack Events API receiver |
+| Method | Path | Status | Description |
+|--------|------|--------|-------------|
+| POST | `/v1/ingest/github` | ✅ Live | GitHub webhook receiver |
+| POST | `/v1/ingest/slack` | ✅ Live | Slack Events API receiver |
 
 #### Memory (live — M4 complete)
 
@@ -761,55 +800,56 @@ Full per-component score breakdown (`semantic_similarity`, `importance`, `recenc
 |--------|------|--------|-------------|
 | GET | `/v1/memory` | ✅ Live | List (filter by type/pinned/importance/tag; sort; paginated) |
 | GET | `/v1/memory/:id` | ✅ Live | Get with full entity, scope, score |
-| PATCH | `/v1/memory/:id` | ✅ Live | Update: pin, tag, importance override |
-| DELETE | `/v1/memory/:id` | 🔴 M6 | Soft delete |
+| PATCH | `/v1/memory/:id` | ✅ Live | Update: content, pin, tag, importance override |
+| DELETE | `/v1/memory/:id` | ✅ Live | Soft delete |
 | POST | `/v1/memory/search` | ✅ Live | Hybrid/vector/keyword search with RRF fusion |
-| POST | `/v1/memory/:id/promote` | 🔴 M6 | Force episodic → semantic |
-| POST | `/v1/memory/:id/restore` | 🔴 M6 | Restore soft-deleted memory |
-| POST | `/v1/memory/bulk` | 🔴 M6 | Bulk pin / bulk delete |
-| GET | `/v1/memory/:id/history` | 🔴 M6 | Version history |
-| POST | `/v1/memory/merge` | 🔴 M6 | Merge two semantic memory units |
+| POST | `/v1/memory/:id/promote` | ✅ Live | Force episodic → semantic |
+| POST | `/v1/memory/:id/restore` | ✅ Live | Restore soft-deleted memory |
+| POST | `/v1/memory/bulk` | ✅ Live | Bulk pin / bulk delete |
+| GET | `/v1/memory/:id/history` | ✅ Live | Version history |
+| POST | `/v1/memory/merge` | ✅ Live | Merge two semantic memory units |
 
-#### Retrieval (future)
+#### Retrieval
 
 | Method | Path | Status | Description |
 |--------|------|--------|-------------|
-| POST | `/v1/retrieve` | 🔴 M6 | Core retrieval with token packing + trace |
-| GET | `/v1/retrieve/trace/:query_id` | 🔴 M6 | Retrieval trace |
+| POST | `/v1/retrieve` | ✅ Live | Core retrieval with token packing + trace |
+| GET | `/v1/retrieve/trace/:query_id` | ✅ Live | Retrieval trace |
 
 #### Workspaces
 
 | Method | Path | Status | Description |
 |--------|------|--------|-------------|
-| POST | `/v1/workspaces` | 🔴 M6 | Create workspace |
-| GET | `/v1/workspaces/:id` | 🔴 M6 | Get workspace |
-| PATCH | `/v1/workspaces/:id/config` | 🔴 M6 | Update config |
-| POST | `/v1/workspaces/:id/integrations` | 🔴 M6 | Add integration |
-| GET | `/v1/workspaces/:id/integrations` | 🔴 M6 | List with health |
-| DELETE | `/v1/workspaces/:id/integrations/:source` | 🔴 M6 | Remove integration |
+| POST | `/v1/workspaces` | ✅ Live | Create workspace |
+| GET | `/v1/workspaces/:id` | ✅ Live | Get workspace |
+| PATCH | `/v1/workspaces/:id/config` | ✅ Live | Update config |
+| POST | `/v1/workspaces/:id/promote` | ✅ Live | Manual promotion pass (workspace-scoped lock) |
+| POST | `/v1/workspaces/:id/integrations` | ✅ Live | Add integration |
+| GET | `/v1/workspaces/:id/integrations` | ✅ Live | List with health |
+| DELETE | `/v1/workspaces/:id/integrations/:source` | ✅ Live | Remove integration |
 
 #### API Keys
 
 | Method | Path | Status | Description |
 |--------|------|--------|-------------|
-| POST | `/v1/workspaces/:id/keys` | 🔴 M6 | Create key (plaintext returned once) |
-| GET | `/v1/workspaces/:id/keys` | 🔴 M6 | List keys |
-| DELETE | `/v1/workspaces/:id/keys/:key_id` | 🔴 M6 | Revoke key |
+| POST | `/v1/workspaces/:id/keys` | ✅ Live | Create key (plaintext returned once) |
+| GET | `/v1/workspaces/:id/keys` | ✅ Live | List keys |
+| DELETE | `/v1/workspaces/:id/keys/:key_id` | ✅ Live | Revoke key |
 
 #### Audit & DLQ
 
 | Method | Path | Status | Description |
 |--------|------|--------|-------------|
-| GET | `/v1/workspaces/:id/audit` | 🔴 M6 | Paginated audit log |
-| GET | `/v1/workspaces/:id/dlq` | 🔴 M6 | List DLQ jobs |
-| POST | `/v1/workspaces/:id/dlq/:job_id/retry` | 🔴 M6 | Retry DLQ job |
-| DELETE | `/v1/workspaces/:id/dlq/:job_id` | 🔴 M6 | Discard DLQ job |
+| GET | `/v1/workspaces/:id/audit` | ✅ Live | Paginated audit log |
+| GET | `/v1/workspaces/:id/dlq` | ✅ Live | List DLQ jobs |
+| POST | `/v1/workspaces/:id/dlq/:job_id/retry` | ✅ Live | Retry DLQ job |
+| DELETE | `/v1/workspaces/:id/dlq/:job_id` | ✅ Live | Discard DLQ job |
 
 #### Export
 
 | Method | Path | Status | Description |
 |--------|------|--------|-------------|
-| GET | `/v1/workspaces/:id/export` | 🔴 M7 | Stream JSONL export |
+| GET | `/v1/workspaces/:id/export` | ✅ Live | Stream JSONL export |
 
 #### Health
 
@@ -1131,13 +1171,17 @@ Key pattern: rate:{workspace_id}:{endpoint_group}:{window_start_unix}
 Algorithm:   INCR + EXPIREAT per window
 ```
 
-| Endpoint Group | Default RPM | Header on Exceed |
-|----------------|-------------|-----------------|
-| `retrieve` | 60 | `Retry-After: <seconds>` |
-| `ingest` | 300 | `Retry-After: <seconds>` |
-| `api` | 120 | `Retry-After: <seconds>` |
-
 All limits configurable per workspace. Exceeding returns `429 Too Many Requests`.
+
+### 20.1 Rate Limit Groups
+
+| Group | Routes | Limit |
+|-------|--------|-------|
+| `ingest` | `/v1/ingest/*` | 300 RPM per workspace |
+| `memory` | `/v1/memory/*` | 120 RPM per workspace |
+| `api` | All other `/v1/*` | 120 RPM per workspace |
+
+Window: 60s sliding. Excess → `429 Too Many Requests` with `Retry-After`.
 
 ---
 
@@ -1315,11 +1359,9 @@ pub struct IntegrationHealth {
 | M2 | GitHub webhook ingestion + RawEvent writes | Webhook delivers → `raw_events` row exists; idempotency works | ✅ Complete |
 | M3 | Fast path processor + episodic MemoryUnit | Ingest PR → MemoryUnit with entities + importance created | ✅ Complete |
 | M4 | Retrieval crate — search, list, get, update, decay, promotion | `POST /v1/memory/search` returns ranked results; hybrid RRF works; decay pass runs; `cargo test` passes | ✅ Complete |
-| M5 | React Memory Control Center (against live API) | Explorer, detail, search views functional; webhook tester fires real ingestion | 🎯 Next |
-| M6 | Full REST API + auth + rate limiting + audit + soft delete | All endpoints passing integration tests; 401/429 enforced; `POST /v1/retrieve` live | 🔴 Planned |
-| M7 | Slow path worker + embeddings + Qdrant write | MemoryUnit gets `embedding_id`; Qdrant point queryable; vector leg of hybrid search active | 🔴 Planned |
-| M8 | Promotion pipeline (batch clustering) | Episodic cluster → Semantic MemoryUnit after threshold | 🔴 Planned |
-| M9 | Slack ingestion | Slack message → MemoryUnit via same pipeline | 🔴 Planned |
+| M5 | React Memory Control Center (against live API) | Explorer, detail, search views functional; webhook tester fires real ingestion | ✅ Complete |
+| M6 | Full REST API + auth + rate limiting + audit + soft delete | All endpoints passing integration tests; 401/429 enforced; `POST /v1/retrieve` live | ✅ Complete |
+| M7 | Slow path worker + embeddings + Qdrant write | MemoryUnit gets `embedding_id`; Qdrant point queryable; vector leg of hybrid search active | ✅ Complete |
+| M8 | Promotion pipeline (batch clustering) | Episodic cluster → Semantic MemoryUnit after threshold | ✅ Complete |
+| M9 | Slack ingestion | Slack message → MemoryUnit via same pipeline | ✅ Complete |
 | M10 | Demo | Agent failure → memory fix → trace walkthrough recorded | 🔴 Planned |
-
-> **Note on M7 ordering:** The slow path worker (embeddings + Qdrant) is intentionally after the UI (M5) and full REST API (M6). The vector leg of hybrid search gracefully degrades to keyword-only when `embedding_id` is null. This means the UI and API are fully testable against real data without requiring a running embedding model.

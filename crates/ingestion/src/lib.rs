@@ -1,6 +1,7 @@
 pub mod github;
 mod queue;
 mod router;
+pub mod slack;
 mod store;
 
 pub use queue::{publish_raw_event, STREAM_KEY};

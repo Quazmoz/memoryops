@@ -1,7 +1,7 @@
 # MemoryOps — Feature List
 
-**Version:** 0.7.0  
-**Last Updated:** 2026-04-27
+**Version:** 0.9.0  
+**Last Updated:** 2026-04-28
 
 This document tracks all planned features across the platform with current status and target milestone.
 
@@ -29,7 +29,7 @@ This document tracks all planned features across the platform with current statu
 | M6 | Auth, rate limiting, workspace API, lifecycle, audit | 🟢 Complete |
 | M7 | Slow path worker, embeddings, Qdrant writes, scheduler | 🟢 Complete |
 | M8 | Promotion pipeline | 🟢 Complete |
-| M9 | Slack ingestion | 🔴 Not started |
+| M9 | Slack ingestion | 🟢 Complete |
 
 ---
 
@@ -40,7 +40,7 @@ This document tracks all planned features across the platform with current statu
 | Cargo workspace root | 🟢 | M1 | 5 crates wired |
 | docker-compose (dev) | 🟢 | M1 | Postgres, Redis, Qdrant |
 | docker-compose.test.yml | 🟢 | M1 | Isolated test infra |
-| sqlx migrations scaffold | 🟢 | M1 | 0001–0010 applied |
+| sqlx migrations scaffold | 🟢 | M1 | 0001–0013 applied |
 | rust-toolchain.toml (MSRV 1.88) | 🟢 | M1 | |
 | GitHub Actions CI (fmt + clippy + test + integration) | 🟢 | M1/M6 | Integration job added in M6 |
 | common crate (models, traits, error, config, telemetry) | 🟢 | M1 | |
@@ -61,7 +61,9 @@ This document tracks all planned features across the platform with current statu
 | Dead letter queue for failed jobs | 🟢 | M6 | Redis list dlq:{workspace_id} |
 | DLQ manual retry API | 🟢 | M6 | POST /workspaces/:id/dlq/:job_id/retry |
 | Auto-retry with exponential backoff (max 3) | 🟢 | M6 | |
-| Slack webhook receiver | 🔴 | M9 | message, thread, reaction |
+| Slack webhook receiver | 🟢 | M9 | Slack Events API receiver at POST /v1/ingest/slack |
+| Slack message ingestion | 🟢 | M9 | message, message.edited, app_mention |
+| Slack reaction ingestion | 🟢 | M9 | reaction_added with channel + message timestamp lineage |
 
 ---
 
@@ -257,3 +259,4 @@ This document tracks all planned features across the platform with current statu
 | 0010_soft_delete.sql | deleted_at + soft-delete indexes | 🟢 |
 | 0011_scheduler.sql | hard_deleted_at + pruning indexes | 🟢 M7 |
 | 0012_promotion.sql | semantic promotion metadata + thresholds | 🟢 M8 |
+| 0013_slack.sql | Slack signing secret + channel/thread metadata + channel index | 🟢 M9 |

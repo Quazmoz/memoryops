@@ -55,6 +55,7 @@ struct StoredDlqEntry {
 }
 
 #[axum::debug_handler]
+#[tracing::instrument(skip(state, request))]
 pub async fn create_integration(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -69,17 +70,25 @@ pub async fn create_integration(
     }
 
     let secret_hash = hash_secret(&request.webhook_secret)?;
+    let webhook_secret = if request.source == Source::Slack {
+        Some(request.webhook_secret.as_str())
+    } else {
+        None
+    };
     sqlx::query(
         r#"
-        INSERT INTO integrations (workspace_id, source, webhook_secret_hash, deleted_at)
-        VALUES ($1, $2, $3, NULL)
+        INSERT INTO integrations (workspace_id, source, webhook_secret_hash, webhook_secret, deleted_at)
+        VALUES ($1, $2, $3, $4, NULL)
         ON CONFLICT (workspace_id, source) DO UPDATE
-        SET webhook_secret_hash = EXCLUDED.webhook_secret_hash, deleted_at = NULL
+        SET webhook_secret_hash = EXCLUDED.webhook_secret_hash,
+            webhook_secret = EXCLUDED.webhook_secret,
+            deleted_at = NULL
         "#,
     )
     .bind(id)
     .bind(request.source)
     .bind(secret_hash)
+    .bind(webhook_secret)
     .execute(&state.db)
     .await
     .map_err(AppError::Database)?;

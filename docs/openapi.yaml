@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: MemoryOps API
-  version: 0.1.0
+  version: 0.9.0
   description: Control plane API for AI-agent memory ingestion, lifecycle management, retrieval, and audit.
   contact:
     name: MemoryOps
@@ -21,10 +21,10 @@ tags:
   - name: Export
   - name: Health
 paths:
-  /v1/webhooks/github:
+  /v1/ingest/github:
     post:
       tags: [Webhooks]
-      operationId: ingestGitHubWebhook
+      operationId: ingestGitHub
       summary: Receive a GitHub webhook event
       description: Validates the GitHub signature and accepts supported repository events for ingestion.
       security: []
@@ -57,10 +57,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /v1/webhooks/slack:
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/ingest/slack:
     post:
       tags: [Webhooks]
-      operationId: ingestSlackWebhook
+      operationId: ingestSlack
       summary: Receive a Slack Events API webhook
       description: Validates the Slack signature and accepts supported workspace events for ingestion.
       security: []
@@ -80,8 +82,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: '#/components/schemas/SlackEventEnvelope'
       responses:
         '202':
           description: Event accepted for processing
@@ -93,6 +94,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /v1/memory:
     get:
       tags: [Memory]
@@ -352,6 +355,7 @@ paths:
       operationId: createWorkspace
       summary: Create a workspace
       description: Creates a tenant workspace that owns memory, keys, integrations, and configuration.
+      security: []
       requestBody:
         required: true
         content:
@@ -412,6 +416,25 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/promote:
+    post:
+      tags: [Workspaces]
+      operationId: promoteWorkspace
+      summary: Start a workspace promotion pass
+      description: Starts a workspace-scoped semantic promotion pass if no promotion lock is already held.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '202':
+          description: Promotion pass started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspacePromotionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/workspaces/{id}/integrations:
     post:
       tags: [Workspaces]
@@ -738,6 +761,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
+    Conflict:
+      description: Request conflicts with current resource state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
     NotFound:
       description: Resource not found
       content:
@@ -762,6 +791,88 @@ components:
         event_id:
           type: string
           format: uuid
+    SlackEventEnvelope:
+      oneOf:
+        - $ref: '#/components/schemas/SlackUrlVerification'
+        - $ref: '#/components/schemas/SlackEventCallback'
+    SlackUrlVerification:
+      type: object
+      required: [type, challenge]
+      properties:
+        type:
+          type: string
+          enum: [url_verification]
+        challenge:
+          type: string
+    SlackEventCallback:
+      type: object
+      required: [type, event]
+      properties:
+        type:
+          type: string
+          enum: [event_callback]
+        event:
+          oneOf:
+            - $ref: '#/components/schemas/SlackMessageEvent'
+            - $ref: '#/components/schemas/SlackReactionEvent'
+    SlackMessageEvent:
+      type: object
+      required: [type, channel, user, text, ts]
+      properties:
+        type:
+          type: string
+          enum: [message, app_mention]
+        subtype:
+          type: [string, 'null']
+          enum: [message_changed, null]
+        channel:
+          type: string
+        user:
+          type: string
+        text:
+          type: string
+        ts:
+          type: string
+        thread_ts:
+          type: [string, 'null']
+        message:
+          type: object
+          additionalProperties: true
+    SlackReactionEvent:
+      type: object
+      required: [type, user, reaction, item]
+      properties:
+        type:
+          type: string
+          enum: [reaction_added]
+        user:
+          type: string
+        reaction:
+          type: string
+        item:
+          type: object
+          required: [channel, ts]
+          properties:
+            channel:
+              type: string
+            ts:
+              type: string
+    WorkspacePromotionResponse:
+      type: object
+      required: [workspace_id, clusters_found, units_promoted, units_skipped]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        clusters_found:
+          type: integer
+          minimum: 0
+        units_promoted:
+          type: integer
+          minimum: 0
+        units_skipped:
+          type: integer
+          minimum: 0
     Source:
       type: string
       enum: [github, slack, jira, linear]
