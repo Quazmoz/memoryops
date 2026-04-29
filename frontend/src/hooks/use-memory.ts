@@ -9,6 +9,7 @@ import {
 import {
   buildSearchRequest,
   getMemory,
+  getMemoryProvenance,
   getReadiness,
   listMemory,
   patchMemory,
@@ -27,6 +28,7 @@ export const memoryKeys = {
   lists: (workspaceId: string) => ["workspace", workspaceId, "memory", "list"] as const,
   list: (workspaceId: string, params: MemoryListParams) => ["workspace", workspaceId, "memory", "list", params] as const,
   detail: (workspaceId: string, id: string) => ["workspace", workspaceId, "memory", "detail", id] as const,
+  provenance: (workspaceId: string, id: string) => ["workspace", workspaceId, "memory", "provenance", id] as const,
   searches: (workspaceId: string) => ["workspace", workspaceId, "memory", "search"] as const,
   search: (workspaceId: string, criteria: SearchCriteria) => ["workspace", workspaceId, "memory", "search", criteria] as const,
 };
@@ -60,6 +62,16 @@ export function useMemoryDetail(workspaceId: string, id: string | undefined) {
   return useQuery({
     queryKey: memoryKeys.detail(workspaceId, id ?? "missing"),
     queryFn: () => getMemory(workspaceId, id ?? ""),
+    enabled: hasWorkspaceAuth(workspaceId, apiKey) && Boolean(id?.trim()),
+  });
+}
+
+export function useMemoryProvenance(workspaceId: string, id: string | undefined) {
+  const apiKey = useAppStore((state) => state.apiKey);
+
+  return useQuery({
+    queryKey: memoryKeys.provenance(workspaceId, id ?? "missing"),
+    queryFn: () => getMemoryProvenance(workspaceId, id ?? ""),
     enabled: hasWorkspaceAuth(workspaceId, apiKey) && Boolean(id?.trim()),
   });
 }

@@ -47,7 +47,7 @@ This document tracks all planned features across the platform with current statu
 | M24 | Playwright E2E test suite | 🟢 Complete |
 | M25 | HTTP Skills (agent-callable skill registry) | 🟢 Complete |
 | M26 | Contradiction detection | 🟢 Complete |
-| M27 | Provenance graph + lineage API | 🔴 Not started |
+| M27 | Provenance graph + lineage API | 🟢 Complete |
 | M28 | Point-in-time memory queries | 🔴 Not started |
 | M29 | Multi-agent scope inheritance + publish | 🔴 Not started |
 | M30 | Memory health score + drift alerts | 🔴 Not started |
@@ -197,6 +197,7 @@ This document tracks all planned features across the platform with current statu
 | POST /v1/workspaces/:id/import | 🟢 | M21 | JSONL import; idempotent on id |
 | POST/GET/PATCH/DELETE /v1/workspaces/:id/skills[/:name] | 🟢 | M25 | Workspace HTTP Skills registry; secret read is isolated at /secret |
 | GET /v1/workspaces/:id/contradictions, POST /v1/workspaces/:id/contradictions/:flag_id/resolve, GET /v1/workspaces/:id/contradictions/count | 🟢 | M26 | Review and resolve contradiction flags |
+| GET /v1/memory/:id/provenance | 🟢 | M27 | Source events, source episodes, merge audit records, and access summary as DAG |
 
 ---
 
@@ -288,6 +289,7 @@ This document tracks all planned features across the platform with current statu
 | Skills registry view | 🟢 | M25 | CRUD table, drawer form, schema validation, enabled toggle |
 | Contradiction review view | 🟢 | M26 | Status tabs, side-by-side memory previews, resolve notes |
 | Dashboard contradiction badge | 🟢 | M26 | Open-count badge links to review queue |
+| MemoryDetail lineage panel | 🟢 | M27 | Tree view for provenance graph |
 
 ---
 
@@ -355,8 +357,8 @@ This document tracks all planned features across the platform with current statu
 |---------|--------|-----------|-------|
 | Contradiction detection — semantic conflict check on new ingest | 🟢 | M26 | Flags conflicts in audit log; configurable: auto-resolve (newer wins) or quarantine |
 | Contradiction quarantine review API + UI | 🟢 | M26 | GET /v1/workspaces/:id/contradictions; resolve/dismiss actions |
-| Provenance graph — GET /v1/memory/:id/provenance | 🔴 | M27 | Returns DAG: source events → episodic → semantic → merges → accesses |
-| Provenance tree in MemoryDetail UI | 🔴 | M27 | Visual lineage panel in frontend MemoryDetail view |
+| Provenance graph — GET /v1/memory/:id/provenance | 🟢 | M27 | Returns DAG: source events → episodic → semantic → merges → accesses |
+| Provenance tree in MemoryDetail UI | 🟢 | M27 | Visual lineage panel in frontend MemoryDetail view |
 | Point-in-time retrieval — as_of param on GET /v1/memory | 🔴 | M28 | Reconstructs memory state at timestamp; uses memory_versions + decay math |
 | as_of support on POST /v1/retrieve | 🔴 | M28 | Historical context retrieval for incident post-mortems |
 | Multi-agent scope visibility field (private \| workspace) | 🔴 | M29 | scope.visibility on MemoryUnit |
@@ -396,3 +398,4 @@ This document tracks all planned features across the platform with current statu
 | 0015_scope_indexes.sql | Scope-filter generated columns + composite active-memory index | 🟢 M19 |
 | 0016_skills.sql | HTTP Skills registry with encrypted auth secrets | 🟢 M25 |
 | 0017_contradictions.sql | Contradiction flags and resolution status | 🟢 M26 |
+| 0018_provenance_indexes.sql | Source-event, source-episode, and memory audit lineage indexes | 🟢 M27 |

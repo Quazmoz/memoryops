@@ -184,6 +184,27 @@ export type RetrievalTrace = {
   candidates?: TraceCandidate[];
 };
 
+export type ProvenanceNode = {
+  id: string;
+  node_type: "raw_event" | "memory" | "merge" | "access" | string;
+  title: string;
+  subtitle: string | null;
+  timestamp: string | null;
+  metadata: JsonValue;
+};
+
+export type ProvenanceEdge = {
+  from: string;
+  to: string;
+  edge_type: "created_from" | "promoted_to" | "merged_into" | "accessed_as" | string;
+};
+
+export type ProvenanceGraph = {
+  root_id: string;
+  nodes: ProvenanceNode[];
+  edges: ProvenanceEdge[];
+};
+
 export type RetrieveResponse = {
   query_id: string;
   memories?: PackedMemory[];

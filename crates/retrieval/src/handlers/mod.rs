@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 pub mod get;
 pub mod list;
+pub mod provenance;
 pub mod search;
 pub mod update;
 

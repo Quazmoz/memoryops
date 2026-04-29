@@ -41,6 +41,10 @@ pub fn retrieval_router() -> Router<AppState> {
             get(handlers::lifecycle::handle_history),
         )
         .route(
+            "/v1/memory/{id}/provenance",
+            get(handlers::provenance::handle_provenance),
+        )
+        .route(
             "/v1/memory/{id}",
             get(handlers::get::handle_get)
                 .patch(handlers::update::handle_update)

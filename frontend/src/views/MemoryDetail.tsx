@@ -1,8 +1,8 @@
-import { ArrowLeft, Check, Plus, Save, X } from "lucide-react";
+import { ArrowLeft, Check, Clock3, Database, GitCommit, GitMerge, Plus, Save, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import type { MemoryScope, MemoryUnit } from "../api/types";
+import type { MemoryScope, MemoryUnit, ProvenanceGraph, ProvenanceNode } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EntityChip } from "../components/EntityChip";
 import { InlineError } from "../components/InlineError";
@@ -11,7 +11,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
-import { useMemoryDetail, useUpdateMemory } from "../hooks/use-memory";
+import { useMemoryDetail, useMemoryProvenance, useUpdateMemory } from "../hooks/use-memory";
 import { formatCount, formatDateTime, formatRelativeTime, formatScore } from "../lib/format";
 import { validateImportanceScore } from "../lib/validation";
 import { useAppStore } from "../store/app-store";
@@ -20,6 +20,7 @@ export function MemoryDetail() {
   const { id } = useParams<{ id?: string }>();
   const workspaceId = useAppStore((state) => state.workspaceId);
   const memoryQuery = useMemoryDetail(workspaceId, id);
+  const provenanceQuery = useMemoryProvenance(workspaceId, id);
   const updateMemory = useUpdateMemory(workspaceId);
   const memory = memoryQuery.data;
   const scope = useMemo(() => normalizeScope(memory, workspaceId), [memory, workspaceId]);
@@ -171,6 +172,19 @@ export function MemoryDetail() {
             </Card>
           </section>
 
+          <section data-testid="provenance-panel">
+            <Card>
+              <CardHeader>
+                <CardTitle>Lineage</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {provenanceQuery.isLoading ? <Skeleton className="h-48 w-full" /> : null}
+                {provenanceQuery.isError ? <InlineError title="Lineage unavailable" message={errorMessage(provenanceQuery.error)} /> : null}
+                {provenanceQuery.data ? <ProvenanceTree graph={provenanceQuery.data} /> : null}
+              </CardContent>
+            </Card>
+          </section>
+
           <section className="grid gap-4 xl:grid-cols-2">
             <Card>
               <CardHeader>
@@ -249,6 +263,136 @@ export function MemoryDetail() {
       ) : null}
     </div>
   );
+}
+
+function ProvenanceTree({ graph }: { graph: ProvenanceGraph }) {
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const incoming = new Set(graph.edges.map((edge) => edge.to));
+  const children = new Map<string, Array<{ id: string; edgeType: string }>>();
+  graph.edges.forEach((edge) => {
+    const current = children.get(edge.from) ?? [];
+    current.push({ id: edge.to, edgeType: edge.edge_type });
+    children.set(edge.from, current);
+  });
+
+  const roots = graph.nodes.filter((node) => !incoming.has(node.id));
+  const renderRoots = roots.length > 0 ? roots : graph.nodes.filter((node) => node.id === graph.root_id);
+
+  if (graph.nodes.length <= 1 && graph.edges.length === 0) {
+    return <EmptyState title="Lineage is quiet" message="No source, promotion, merge, or access links are attached to this memory yet." />;
+  }
+
+  return (
+    <div className="grid gap-2">
+      {renderRoots.map((node) => (
+        <ProvenanceBranch key={node.id} nodeId={node.id} nodesById={nodesById} children={children} depth={0} />
+      ))}
+    </div>
+  );
+}
+
+function ProvenanceBranch({
+  nodeId,
+  nodesById,
+  children,
+  depth,
+  edgeType,
+  path = new Set<string>(),
+}: {
+  nodeId: string;
+  nodesById: Map<string, ProvenanceNode>;
+  children: Map<string, Array<{ id: string; edgeType: string }>>;
+  depth: number;
+  edgeType?: string;
+  path?: Set<string>;
+}) {
+  const node = nodesById.get(nodeId);
+  if (!node || path.has(nodeId)) {
+    return null;
+  }
+
+  const nextPath = new Set(path).add(nodeId);
+  const childNodes = children.get(nodeId) ?? [];
+
+  return (
+    <div className="grid gap-2">
+      <div
+        data-testid={provenanceNodeTestId(node.id)}
+        className="grid gap-2 rounded-md border border-line bg-soft p-3 sm:grid-cols-[auto_1fr_auto] sm:items-center"
+        style={{ marginLeft: depth * 18 }}
+      >
+        <div className="flex h-9 w-9 items-center justify-center rounded-md border border-line bg-white text-accent-strong">
+          <ProvenanceIcon type={node.node_type} />
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium text-ink">{node.title}</p>
+            <Badge variant={nodeBadge(node.node_type)}>{node.node_type.replace("_", " ")}</Badge>
+            {edgeType ? <Badge variant="muted">{edgeLabel(edgeType)}</Badge> : null}
+          </div>
+          {node.subtitle ? <p className="mt-1 truncate text-sm text-ink/65">{node.subtitle}</p> : null}
+        </div>
+        <span className="text-xs text-ink/55">{formatDateTime(node.timestamp)}</span>
+      </div>
+      {childNodes.map((child) => (
+        <ProvenanceBranch
+          key={`${nodeId}:${child.id}:${child.edgeType}`}
+          nodeId={child.id}
+          nodesById={nodesById}
+          children={children}
+          depth={depth + 1}
+          edgeType={child.edgeType}
+          path={nextPath}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ProvenanceIcon({ type }: { type: string }) {
+  if (type === "raw_event") {
+    return <GitCommit className="h-4 w-4" aria-hidden="true" />;
+  }
+  if (type === "merge") {
+    return <GitMerge className="h-4 w-4" aria-hidden="true" />;
+  }
+  if (type === "access") {
+    return <Clock3 className="h-4 w-4" aria-hidden="true" />;
+  }
+  return <Database className="h-4 w-4" aria-hidden="true" />;
+}
+
+function nodeBadge(type: string): "accent" | "blue" | "green" | "purple" | "muted" {
+  if (type === "raw_event") {
+    return "blue";
+  }
+  if (type === "merge") {
+    return "purple";
+  }
+  if (type === "access") {
+    return "green";
+  }
+  return "accent";
+}
+
+function edgeLabel(edgeType: string): string {
+  if (edgeType === "created_from") {
+    return "created";
+  }
+  if (edgeType === "promoted_to") {
+    return "promoted";
+  }
+  if (edgeType === "merged_into") {
+    return "merged";
+  }
+  if (edgeType === "accessed_as") {
+    return "accessed";
+  }
+  return edgeType.replace("_", " ");
+}
+
+function provenanceNodeTestId(id: string): string {
+  return `provenance-node-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
 function ScoreLine({ label, value }: { label: string; value: string }) {

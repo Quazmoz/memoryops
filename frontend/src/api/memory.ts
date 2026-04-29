@@ -5,6 +5,7 @@ import type {
   MemoryType,
   MemoryTypeFilter,
   MemoryUnit,
+  ProvenanceGraph,
   ReadinessResponse,
   RetrieveRequest,
   RetrieveResponse,
@@ -75,6 +76,10 @@ export function listMemory(workspaceId: string, params: MemoryListParams): Promi
 
 export function getMemory(workspaceId: string, id: string): Promise<MemoryUnit> {
   return apiRequest<MemoryUnit>(`/v1/memory/${id}${queryString({ workspace_id: workspaceId })}`);
+}
+
+export function getMemoryProvenance(workspaceId: string, id: string): Promise<ProvenanceGraph> {
+  return apiRequest<ProvenanceGraph>(`/v1/memory/${id}/provenance${queryString({ workspace_id: workspaceId })}`);
 }
 
 export function patchMemory(workspaceId: string, id: string, patch: UpdateMemoryRequest): Promise<MemoryUnit> {
