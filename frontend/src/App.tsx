@@ -11,6 +11,7 @@ import { MemoryDetail } from "./views/MemoryDetail";
 import { MemoryExplorer } from "./views/MemoryExplorer";
 import { RetrievalTraceView } from "./views/RetrievalTraceView";
 import { SettingsView } from "./views/SettingsView";
+import { SkillsView } from "./views/SkillsView";
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/trace" element={<RetrievalTraceView />} />
           <Route path="/lifecycle" element={<LifecycleView />} />
           <Route path="/integrations" element={<IntegrationsView />} />
+          <Route path="/skills" element={<SkillsView />} />
           <Route path="/audit" element={<AuditView />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

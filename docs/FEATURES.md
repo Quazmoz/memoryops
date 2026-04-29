@@ -45,7 +45,7 @@ This document tracks all planned features across the platform with current statu
 | M22 | Metrics dashboard (OTel summary endpoint + UI panel) | 🟢 Complete |
 | M23 | Property-based tests for token packing (proptest) | 🟢 Complete |
 | M24 | Playwright E2E test suite | 🟢 Complete |
-| M25 | HTTP Skills (agent-callable skill registry) | 🔴 Not started |
+| M25 | HTTP Skills (agent-callable skill registry) | 🟢 Complete |
 | M26 | Contradiction detection | 🔴 Not started |
 | M27 | Provenance graph + lineage API | 🔴 Not started |
 | M28 | Point-in-time memory queries | 🔴 Not started |
@@ -194,6 +194,7 @@ This document tracks all planned features across the platform with current statu
 | GET /v1/workspaces/:id/stats/history | 🟢 | M18 | Daily aggregate: created, promoted, soft-deleted per day |
 | GET /v1/workspaces/:id/tags | 🟢 | M20 | Tag name + count enumeration |
 | POST /v1/workspaces/:id/import | 🟢 | M21 | JSONL import; idempotent on id |
+| POST/GET/PATCH/DELETE /v1/workspaces/:id/skills[/:name] | 🟢 | M25 | Workspace HTTP Skills registry; secret read is isolated at /secret |
 
 ---
 
@@ -207,6 +208,7 @@ This document tracks all planned features across the platform with current statu
 | memory_store tool | 🟢 | M11 | stores an episodic MemoryUnit and enqueues slow-path processing |
 | stdio + HTTP SSE transports | 🟢 | M11 | MCP 2025-06-18 spec |
 | MCP endpoint in docker-compose | 🟢 | M11 | profile-gated service on port 3003 |
+| memory_retrieve returns enabled workspace skills | 🟢 | M25 | Skills array includes endpoint and JSON schemas without secrets |
 
 ---
 
@@ -281,6 +283,7 @@ This document tracks all planned features across the platform with current statu
 | Dashboard trend charts (30-day memory activity) | 🟢 | M18 | GET /v1/workspaces/:id/stats/history |
 | Tag browser (enumerate + filter by tag) | 🟢 | M20 | GET /v1/workspaces/:id/tags |
 | Dashboard Metrics panel (3×3 telemetry grid, auto-refresh 30s) | 🟢 | M22 | useMetrics hook → /v1/workspaces/:id/metrics |
+| Skills registry view | 🟢 | M25 | CRUD table, drawer form, schema validation, enabled toggle |
 
 ---
 
@@ -338,7 +341,7 @@ This document tracks all planned features across the platform with current statu
 
 | Feature | Status | Milestone | Notes |
 |---------|--------|-----------|-------|
-| HTTP Skills (agent-callable skill registry) | 🔴 | M25 | |
+| HTTP Skills (agent-callable skill registry) | 🟢 | M25 | Workspace registry + MCP retrieve integration |
 
 ---
 
@@ -387,3 +390,4 @@ This document tracks all planned features across the platform with current statu
 | 0013_slack.sql | Slack signing secret + channel/thread metadata + channel index | 🟢 M9 |
 | 0014_linear_jira.sql | Linear/Jira signing secret support + active integration indexes | 🟢 M10 |
 | 0015_scope_indexes.sql | Scope-filter generated columns + composite active-memory index | 🟢 M19 |
+| 0016_skills.sql | HTTP Skills registry with encrypted auth secrets | 🟢 M25 |

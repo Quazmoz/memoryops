@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{MemoryToolResult, ToolDefinition};
+use super::{MemoryToolResult, SkillToolResult, ToolDefinition};
 
 const DEFAULT_LIMIT: u32 = 10;
 const MAX_LIMIT: u32 = 50;
@@ -19,6 +19,12 @@ pub struct RetrieveInput {
     pub limit: u32,
     #[serde(default)]
     pub min_score: f32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct RetrieveOutput {
+    pub memories: Vec<MemoryToolResult>,
+    pub skills: Vec<SkillToolResult>,
 }
 
 pub fn definition() -> ToolDefinition {
@@ -42,7 +48,7 @@ pub async fn run(
     state: &AppState,
     workspace_id: Uuid,
     input: RetrieveInput,
-) -> AppResult<Vec<MemoryToolResult>> {
+) -> AppResult<RetrieveOutput> {
     if input.query.trim().is_empty() {
         return Err(AppError::Validation("query is required".to_owned()));
     }
@@ -65,12 +71,52 @@ pub async fn run(
     let min_score = input.min_score.max(0.0);
     let token_budget = state.config.retrieval.default_token_budget;
 
-    Ok(pack_results(
-        results,
-        min_score,
-        token_budget,
-        limit as usize,
-    ))
+    let memories = pack_results(results, min_score, token_budget, limit as usize);
+    let skills = load_enabled_skills(state, workspace_id).await?;
+
+    Ok(RetrieveOutput { memories, skills })
+}
+
+async fn load_enabled_skills(
+    state: &AppState,
+    workspace_id: Uuid,
+) -> AppResult<Vec<SkillToolResult>> {
+    sqlx::query_as::<_, SkillRow>(
+        r#"
+        SELECT name, description, endpoint_url, http_method, input_schema, output_schema
+        FROM workspace_skills
+        WHERE workspace_id = $1 AND enabled = TRUE
+        ORDER BY name ASC
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_all(&state.db)
+    .await
+    .map(|rows| rows.into_iter().map(SkillToolResult::from).collect())
+    .map_err(AppError::Database)
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SkillRow {
+    name: String,
+    description: String,
+    endpoint_url: String,
+    http_method: String,
+    input_schema: serde_json::Value,
+    output_schema: serde_json::Value,
+}
+
+impl From<SkillRow> for SkillToolResult {
+    fn from(row: SkillRow) -> Self {
+        Self {
+            name: row.name,
+            description: row.description,
+            endpoint_url: row.endpoint_url,
+            http_method: row.http_method,
+            input_schema: row.input_schema,
+            output_schema: row.output_schema,
+        }
+    }
 }
 
 pub fn pack_results(

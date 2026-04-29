@@ -29,7 +29,7 @@ pub trait McpBackend: Send + Sync + 'static {
         &self,
         context: &AuthContext,
         input: tools::retrieve::RetrieveInput,
-    ) -> Result<Vec<tools::MemoryToolResult>, JsonRpcError>;
+    ) -> Result<tools::retrieve::RetrieveOutput, JsonRpcError>;
 
     async fn memory_search(
         &self,
@@ -69,7 +69,7 @@ impl McpBackend for RuntimeBackend {
         &self,
         context: &AuthContext,
         input: tools::retrieve::RetrieveInput,
-    ) -> Result<Vec<tools::MemoryToolResult>, JsonRpcError> {
+    ) -> Result<tools::retrieve::RetrieveOutput, JsonRpcError> {
         tools::retrieve::run(&self.state, context.workspace_id, input)
             .await
             .map_err(app_error_to_rpc)
@@ -385,8 +385,18 @@ mod tests {
             &self,
             _context: &AuthContext,
             _input: tools::retrieve::RetrieveInput,
-        ) -> Result<Vec<tools::MemoryToolResult>, JsonRpcError> {
-            Ok(vec![memory_result(0.91)])
+        ) -> Result<tools::retrieve::RetrieveOutput, JsonRpcError> {
+            Ok(tools::retrieve::RetrieveOutput {
+                memories: vec![memory_result(0.91)],
+                skills: vec![tools::SkillToolResult {
+                    name: "summarize_pr".to_owned(),
+                    description: "Summarize pull requests".to_owned(),
+                    endpoint_url: "https://example.com/summarize".to_owned(),
+                    http_method: "POST".to_owned(),
+                    input_schema: json!({}),
+                    output_schema: json!({}),
+                }],
+            })
         }
 
         async fn memory_search(
@@ -484,11 +494,20 @@ mod tests {
             json!({ "query": "memory", "limit": 1 }),
         )
         .await;
-        let first = first_structured_item(&response);
+        let structured = structured_content(&response);
+        let first = structured
+            .get("memories")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .expect("memory_retrieve should include memories");
 
         assert!(first.get("id").is_some());
         assert!(first.get("content").is_some());
         assert!(first.get("score").is_some());
+        assert!(structured
+            .get("skills")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty()));
     }
 
     #[tokio::test]

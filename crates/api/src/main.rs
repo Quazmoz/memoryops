@@ -88,6 +88,7 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         .acquire_timeout(Duration::from_secs(config.database.connect_timeout_secs))
         .connect(&database_url)
         .await?;
+    ensure_skill_secret_configuration(&db).await?;
     let redis_client = redis::Client::open(redis_url)?;
     let redis = ConnectionManager::new(redis_client).await?;
     let qdrant = Qdrant::from_url(&qdrant_url).build()?;
@@ -104,6 +105,34 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         config: Arc::new(config),
         github_webhook_secret,
     })
+}
+
+async fn ensure_skill_secret_configuration(db: &sqlx::PgPool) -> anyhow::Result<()> {
+    let skills_table = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT to_regclass('public.workspace_skills')::TEXT",
+    )
+    .fetch_one(db)
+    .await?;
+    if skills_table.is_none() {
+        return Ok(());
+    }
+
+    let has_encrypted_skill = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM workspace_skills WHERE auth_secret_enc IS NOT NULL)",
+    )
+    .fetch_one(db)
+    .await?;
+    if has_encrypted_skill
+        && std::env::var("APP_SECRET_KEY")
+            .map(|value| value.trim().is_empty())
+            .unwrap_or(true)
+    {
+        return Err(anyhow::anyhow!(
+            "APP_SECRET_KEY must be set because workspace_skills contains encrypted auth secrets"
+        ));
+    }
+
+    Ok(())
 }
 
 fn webhook_secret_from_env(name: &'static str, app_env: &str) -> anyhow::Result<String> {

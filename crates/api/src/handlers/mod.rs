@@ -7,6 +7,7 @@ pub mod export;
 pub mod integrations;
 pub mod keys;
 pub mod metrics;
+pub mod skills;
 pub mod tags;
 pub mod workspaces;
 
@@ -50,6 +51,20 @@ pub fn protected_router() -> Router<AppState> {
             axum::routing::delete(keys::revoke_key),
         )
         .route("/v1/workspaces/{id}/audit", get(audit::list_audit))
+        .route(
+            "/v1/workspaces/{id}/skills",
+            axum::routing::post(skills::create_skill).get(skills::list_skills),
+        )
+        .route(
+            "/v1/workspaces/{id}/skills/{name}",
+            get(skills::get_skill)
+                .patch(skills::update_skill)
+                .delete(skills::delete_skill),
+        )
+        .route(
+            "/v1/workspaces/{id}/skills/{name}/secret",
+            get(skills::get_skill_secret),
+        )
         .route(
             "/v1/workspaces/{id}/integrations",
             axum::routing::post(integrations::create_integration)

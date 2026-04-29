@@ -28,6 +28,16 @@ pub struct MemoryToolResult {
     pub source: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SkillToolResult {
+    pub name: String,
+    pub description: String,
+    pub endpoint_url: String,
+    pub http_method: String,
+    pub input_schema: Value,
+    pub output_schema: Value,
+}
+
 impl MemoryToolResult {
     pub fn from_memory_result(result: MemoryResult) -> Self {
         Self {
