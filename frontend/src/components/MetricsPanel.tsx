@@ -93,7 +93,7 @@ export function MetricsPanel() {
           {!metrics.isPending && !metrics.isError ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {METRICS.flat().map((spec) => (
-                <MetricCell key={spec.key} spec={spec} value={metrics.data?.metrics[spec.key] ?? null} />
+                <MetricCell key={spec.key} spec={spec} value={metrics.data?.metrics?.[spec.key] ?? metrics.data?.[spec.key] ?? null} />
               ))}
             </div>
           ) : null}
