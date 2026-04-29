@@ -1,3 +1,4 @@
+pub mod contradiction;
 pub mod dlq;
 pub mod embedder;
 pub mod extractor;

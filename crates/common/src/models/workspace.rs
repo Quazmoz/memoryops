@@ -43,6 +43,12 @@ pub struct WorkspaceConfig {
     pub decay_half_life_days: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pruning_threshold: Option<f32>,
+    #[serde(default = "default_contradiction_mode")]
+    pub contradiction_mode: ContradictionMode,
+    #[serde(default = "default_contradiction_threshold")]
+    pub contradiction_threshold: f32,
+    #[serde(default = "default_contradiction_candidates")]
+    pub contradiction_candidates: usize,
 }
 
 impl Default for WorkspaceConfig {
@@ -60,8 +66,19 @@ impl Default for WorkspaceConfig {
             embedding_model: None,
             decay_half_life_days: None,
             pruning_threshold: None,
+            contradiction_mode: default_contradiction_mode(),
+            contradiction_threshold: default_contradiction_threshold(),
+            contradiction_candidates: default_contradiction_candidates(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContradictionMode {
+    #[default]
+    Quarantine,
+    AutoResolve,
 }
 
 fn default_promotion_threshold() -> f32 {
@@ -86,6 +103,18 @@ fn default_decay_rate_episodic() -> f32 {
 
 fn default_decay_rate_semantic() -> f32 {
     0.5
+}
+
+fn default_contradiction_mode() -> ContradictionMode {
+    ContradictionMode::Quarantine
+}
+
+fn default_contradiction_threshold() -> f32 {
+    0.35
+}
+
+fn default_contradiction_candidates() -> usize {
+    20
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

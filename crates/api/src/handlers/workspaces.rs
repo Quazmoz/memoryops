@@ -10,7 +10,7 @@ use common::{
     audit::spawn_audit_log,
     auth::AuthContext,
     error::AppResult,
-    models::{AuditAction, MemoryUnit, Workspace, WorkspaceConfig},
+    models::{AuditAction, ContradictionMode, MemoryUnit, Workspace, WorkspaceConfig},
     AppError, AppState,
 };
 use futures_util::StreamExt;
@@ -42,6 +42,9 @@ pub struct UpdateWorkspaceConfigRequest {
     pub dedup_cosine_threshold: Option<f32>,
     pub decay_half_life_days: Option<u32>,
     pub pruning_threshold: Option<f32>,
+    pub contradiction_mode: Option<ContradictionMode>,
+    pub contradiction_threshold: Option<f32>,
+    pub contradiction_candidates: Option<usize>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -263,6 +266,7 @@ pub async fn update_workspace_config(
         0.99,
     )?;
     validate_lifecycle_config(&config)?;
+    validate_contradiction_config(&config)?;
 
     let before = get_workspace_by_id(&state, id)
         .await?
@@ -690,9 +694,38 @@ fn merge_workspace_config(target: &mut serde_json::Value, patch: &UpdateWorkspac
     if let Some(value) = patch.pruning_threshold {
         object.insert("pruning_threshold".to_owned(), json!(value));
     }
+    if let Some(value) = patch.contradiction_mode {
+        object.insert("contradiction_mode".to_owned(), json!(value));
+    }
+    if let Some(value) = patch.contradiction_threshold {
+        object.insert("contradiction_threshold".to_owned(), json!(value));
+    }
+    if let Some(value) = patch.contradiction_candidates {
+        object.insert("contradiction_candidates".to_owned(), json!(value));
+    }
     for (key, value) in &patch.extra {
         object.insert(key.clone(), value.clone());
     }
+}
+
+fn validate_contradiction_config(config: &UpdateWorkspaceConfigRequest) -> AppResult<()> {
+    if let Some(threshold) = config.contradiction_threshold {
+        if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
+            return Err(AppError::Validation(
+                "contradiction_threshold must be between 0.0 and 1.0".to_owned(),
+            ));
+        }
+    }
+
+    if let Some(candidates) = config.contradiction_candidates {
+        if !(1..=200).contains(&candidates) {
+            return Err(AppError::Validation(
+                "contradiction_candidates must be between 1 and 200".to_owned(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_lifecycle_config(config: &UpdateWorkspaceConfigRequest) -> AppResult<()> {
@@ -912,6 +945,9 @@ mod tests {
             dedup_cosine_threshold: None,
             decay_half_life_days,
             pruning_threshold,
+            contradiction_mode: None,
+            contradiction_threshold: None,
+            contradiction_candidates: None,
             extra: serde_json::Map::new(),
         }
     }

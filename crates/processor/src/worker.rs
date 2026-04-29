@@ -19,7 +19,7 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use crate::{
-    dlq,
+    contradiction, dlq,
     embedder::{Embedder, QdrantPayload},
     pipeline,
     pipeline::fast::count_tokens,
@@ -416,14 +416,40 @@ pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> 
         embedder: Embedder::from_state(state),
     };
 
-    process_slow_with_dependencies(
+    let updated = process_slow_with_dependencies(
         job,
         &memory_store,
         state.llm_provider.as_ref(),
         &embedder,
         Some(state.db.clone()),
     )
-    .await
+    .await?;
+
+    if let Some(updated_memory) = updated {
+        let task_state = state.clone();
+        tokio::spawn(async move {
+            let config = match contradiction::fetch_workspace_config(
+                &task_state.db,
+                updated_memory.workspace_id,
+            )
+            .await
+            {
+                Ok(config) => config,
+                Err(error) => {
+                    tracing::warn!(error = ?error, workspace_id = %updated_memory.workspace_id, "failed to load contradiction config");
+                    return;
+                }
+            };
+
+            if let Err(error) =
+                contradiction::check_contradictions(&task_state, &updated_memory, &config).await
+            {
+                tracing::warn!(error = ?error, memory_id = %updated_memory.id, "contradiction check failed");
+            }
+        });
+    }
+
+    Ok(())
 }
 
 async fn process_slow_with_dependencies(
@@ -432,7 +458,7 @@ async fn process_slow_with_dependencies(
     llm_provider: &dyn LlmProvider,
     embedder: &dyn SlowPathEmbedder,
     audit_db: Option<PgPool>,
-) -> AppResult<()> {
+) -> AppResult<Option<MemoryUnit>> {
     let memory = match memory_store
         .get_memory_unit_by_id(job.memory_id, job.workspace_id)
         .await?
@@ -440,13 +466,13 @@ async fn process_slow_with_dependencies(
         Some(memory) => memory,
         None => {
             tracing::debug!(memory_id = %job.memory_id, "slow processor memory missing or deleted; skipping");
-            return Ok(());
+            return Ok(None);
         }
     };
 
     if memory.embedding_id.is_some() {
         tracing::debug!(memory_id = %memory.id, "memory already has embedding_id; skipping slow path");
-        return Ok(());
+        return Ok(None);
     }
 
     let content = summarize_or_content(llm_provider, memory.id, &memory.content).await;
@@ -466,19 +492,19 @@ async fn process_slow_with_dependencies(
         )
         .await?;
 
-    if let (Some(updated), Some(db)) = (updated, audit_db) {
+    if let (Some(updated_memory), Some(db)) = (&updated, audit_db) {
         spawn_audit_log(
             db,
-            updated.workspace_id,
+            updated_memory.workspace_id,
             "system".to_owned(),
             AuditAction::MemoryEmbedded,
-            updated.id,
+            updated_memory.id,
             "memory",
             Some(serde_json::json!({ "embedding_id": embedding_id })),
         );
     }
 
-    Ok(())
+    Ok(updated)
 }
 
 async fn summarize_or_content(

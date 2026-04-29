@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { FirstRunGate } from "./components/FirstRunGate";
 import { AppShell } from "./components/layout/AppShell";
 import { AuditView } from "./views/AuditView";
+import { ContradictionsView } from "./views/ContradictionsView";
 import { Dashboard } from "./views/Dashboard";
 import { Ingest } from "./views/Ingest";
 import { IntegrationsView } from "./views/IntegrationsView";
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/lifecycle" element={<LifecycleView />} />
           <Route path="/integrations" element={<IntegrationsView />} />
           <Route path="/skills" element={<SkillsView />} />
+          <Route path="/contradictions" element={<ContradictionsView />} />
           <Route path="/audit" element={<AuditView />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

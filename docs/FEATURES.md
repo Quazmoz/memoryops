@@ -46,7 +46,7 @@ This document tracks all planned features across the platform with current statu
 | M23 | Property-based tests for token packing (proptest) | 🟢 Complete |
 | M24 | Playwright E2E test suite | 🟢 Complete |
 | M25 | HTTP Skills (agent-callable skill registry) | 🟢 Complete |
-| M26 | Contradiction detection | 🔴 Not started |
+| M26 | Contradiction detection | 🟢 Complete |
 | M27 | Provenance graph + lineage API | 🔴 Not started |
 | M28 | Point-in-time memory queries | 🔴 Not started |
 | M29 | Multi-agent scope inheritance + publish | 🔴 Not started |
@@ -115,6 +115,7 @@ This document tracks all planned features across the platform with current statu
 | Memory deduplication | 🟢 | M8 | Cosine similarity threshold |
 | Per-workspace decay half-life | 🟢 | M12 | decay_half_life_days in WorkspaceConfig |
 | Configurable pruning threshold | 🟢 | M12 | soft-delete threshold per workspace |
+| Contradiction detection on slow-path embedding | 🟢 | M26 | Qdrant candidate scan with quarantine or auto-resolve mode |
 
 ---
 
@@ -195,6 +196,7 @@ This document tracks all planned features across the platform with current statu
 | GET /v1/workspaces/:id/tags | 🟢 | M20 | Tag name + count enumeration |
 | POST /v1/workspaces/:id/import | 🟢 | M21 | JSONL import; idempotent on id |
 | POST/GET/PATCH/DELETE /v1/workspaces/:id/skills[/:name] | 🟢 | M25 | Workspace HTTP Skills registry; secret read is isolated at /secret |
+| GET /v1/workspaces/:id/contradictions, POST /v1/workspaces/:id/contradictions/:flag_id/resolve, GET /v1/workspaces/:id/contradictions/count | 🟢 | M26 | Review and resolve contradiction flags |
 
 ---
 
@@ -284,6 +286,8 @@ This document tracks all planned features across the platform with current statu
 | Tag browser (enumerate + filter by tag) | 🟢 | M20 | GET /v1/workspaces/:id/tags |
 | Dashboard Metrics panel (3×3 telemetry grid, auto-refresh 30s) | 🟢 | M22 | useMetrics hook → /v1/workspaces/:id/metrics |
 | Skills registry view | 🟢 | M25 | CRUD table, drawer form, schema validation, enabled toggle |
+| Contradiction review view | 🟢 | M26 | Status tabs, side-by-side memory previews, resolve notes |
+| Dashboard contradiction badge | 🟢 | M26 | Open-count badge links to review queue |
 
 ---
 
@@ -349,8 +353,8 @@ This document tracks all planned features across the platform with current statu
 
 | Feature | Status | Milestone | Notes |
 |---------|--------|-----------|-------|
-| Contradiction detection — semantic conflict check on new ingest | 🔴 | M26 | Flags conflicts in audit log; configurable: auto-resolve (newer wins) or quarantine |
-| Contradiction quarantine review API + UI | 🔴 | M26 | GET /v1/workspaces/:id/contradictions; resolve/dismiss actions |
+| Contradiction detection — semantic conflict check on new ingest | 🟢 | M26 | Flags conflicts in audit log; configurable: auto-resolve (newer wins) or quarantine |
+| Contradiction quarantine review API + UI | 🟢 | M26 | GET /v1/workspaces/:id/contradictions; resolve/dismiss actions |
 | Provenance graph — GET /v1/memory/:id/provenance | 🔴 | M27 | Returns DAG: source events → episodic → semantic → merges → accesses |
 | Provenance tree in MemoryDetail UI | 🔴 | M27 | Visual lineage panel in frontend MemoryDetail view |
 | Point-in-time retrieval — as_of param on GET /v1/memory | 🔴 | M28 | Reconstructs memory state at timestamp; uses memory_versions + decay math |
@@ -391,3 +395,4 @@ This document tracks all planned features across the platform with current statu
 | 0014_linear_jira.sql | Linear/Jira signing secret support + active integration indexes | 🟢 M10 |
 | 0015_scope_indexes.sql | Scope-filter generated columns + composite active-memory index | 🟢 M19 |
 | 0016_skills.sql | HTTP Skills registry with encrypted auth secrets | 🟢 M25 |
+| 0017_contradictions.sql | Contradiction flags and resolution status | 🟢 M26 |

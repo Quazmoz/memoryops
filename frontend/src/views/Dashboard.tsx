@@ -1,6 +1,8 @@
-import { ArrowRight, BarChart2, BookMarked, Database, GitCommit, Pin, Search, Send, Settings2, TrendingUp } from "lucide-react";
+import { ArrowRight, BarChart2, BookMarked, CheckCircle2, Database, GitCommit, Pin, Search, Send, Settings2, ShieldAlert, TrendingUp } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
+import { getContradictionCount } from "../api/contradictions";
 import { InlineError } from "../components/InlineError";
 import { MemoryTrendChart } from "../components/MemoryTrendChart";
 import { MetricsPanel } from "../components/MetricsPanel";
@@ -18,6 +20,12 @@ export function Dashboard() {
   const readiness = useReadiness(workspaceId);
   const stats = useWorkspaceStats(workspaceId);
   const hasWorkspace = workspaceId.trim().length > 0;
+  const contradictionCount = useQuery({
+    queryKey: ["workspace", workspaceId, "contradictions", "count"],
+    queryFn: () => getContradictionCount(workspaceId),
+    enabled: hasWorkspace,
+    staleTime: 60_000,
+  });
 
   const readinessStatus = readiness.isLoading
     ? "checking"
@@ -41,12 +49,13 @@ export function Dashboard() {
       {readiness.isError ? <InlineError message={errorMessage(readiness.error)} /> : null}
       {stats.isError ? <InlineError title="Stats unavailable" message={errorMessage(stats.error)} /> : null}
 
-      <section className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <section className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
         <MetricCard title="Total" value={stats.data?.total_memories} loading={stats.isLoading} icon={<Database className="h-4 w-4" />} />
         <MetricCard title="Episodic" value={stats.data?.episodic_count} loading={stats.isLoading} icon={<GitCommit className="h-4 w-4" />} />
         <MetricCard title="Semantic" value={stats.data?.semantic_count} loading={stats.isLoading} icon={<BookMarked className="h-4 w-4" />} />
         <MetricCard title="Pinned" value={stats.data?.pinned_count} loading={stats.isLoading} icon={<Pin className="h-4 w-4" />} />
         <MetricCard title="Created (7d)" value={stats.data?.memories_created_7d} loading={stats.isLoading} icon={<TrendingUp className="h-4 w-4" />} />
+        <ContradictionCountBadge count={contradictionCount.data?.open} loading={contradictionCount.isLoading} />
         <MetricCard
           title="Avg importance"
           value={stats.data?.avg_importance_score}
@@ -148,6 +157,25 @@ export function Dashboard() {
         </Card>
       </section>
     </div>
+  );
+}
+
+function ContradictionCountBadge({ count, loading }: { count: number | null | undefined; loading: boolean }) {
+  const open = count ?? 0;
+  const hasOpen = open > 0;
+
+  return (
+    <Link to="/contradictions" data-testid="contradiction-count-badge" className="block rounded-lg focus:outline-none focus:ring-2 focus:ring-accent">
+      <Card className={hasOpen ? "border-rust/40 bg-rust/5" : "border-green-200 bg-green-50"}>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+          <CardTitle className="text-sm font-medium text-ink/65">Contradictions</CardTitle>
+          <div className={hasOpen ? "text-rust" : "text-green-700"}>
+            {hasOpen ? <ShieldAlert className="h-4 w-4" aria-hidden="true" /> : <CheckCircle2 className="h-4 w-4" aria-hidden="true" />}
+          </div>
+        </CardHeader>
+        <CardContent>{loading ? <Skeleton className="h-9 w-16" /> : <p className="text-3xl font-semibold">{formatCount(open)}</p>}</CardContent>
+      </Card>
+    </Link>
   );
 }
 

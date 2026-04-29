@@ -239,6 +239,9 @@ export type WorkspaceConfig = {
   dedup_cosine_threshold?: number;
   decay_half_life_days?: number;
   pruning_threshold?: number;
+  contradiction_mode?: "quarantine" | "auto_resolve" | string;
+  contradiction_threshold?: number;
+  contradiction_candidates?: number;
   llm_provider?: string;
   llm_model?: string;
   embedding_provider?: string;
