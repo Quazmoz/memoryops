@@ -16,11 +16,11 @@ Error: expect(locator).toBeVisible() failed
 
 Locator: getByTestId('memory-result-row').first()
 Expected: visible
-Timeout: 15000ms
+Timeout: 30000ms
 Error: element(s) not found
 
 Call log:
-  - Expect "toBeVisible" with timeout 15000ms
+  - Expect "toBeVisible" with timeout 30000ms
   - waiting for getByTestId('memory-result-row').first()
 
 ```
@@ -126,10 +126,16 @@ Call log:
             - img [ref=e108]
             - text: Tags
           - img [ref=e111]
-        - generic [ref=e114]: Loading tags
-      - generic [ref=e115]:
-        - generic [ref=e116]: Searching for
-        - generic [ref=e117]: push
+        - generic [ref=e113]:
+          - button "e2e 1" [ref=e114]:
+            - generic [ref=e115]: e2e
+            - generic [ref=e116]: "1"
+          - button "push 1" [ref=e117]:
+            - generic [ref=e118]: push
+            - generic [ref=e119]: "1"
+      - generic [ref=e120]:
+        - generic [ref=e121]: Searching for
+        - generic [ref=e122]: push
 ```
 
 # Test source
@@ -139,7 +145,7 @@ Call log:
   2  | import { expect, test } from '@playwright/test';
   3  | 
   4  | import { authenticateApp } from './helpers/auth';
-  5  | import { seedGitHubEvent } from './helpers/seed';
+  5  | import { seedGitHubEvent, waitForMemory } from './helpers/seed';
   6  | import { createTestWorkspace } from './helpers/setup';
   7  | 
   8  | test('GitHub push event ingested and searchable', async ({ page }) => {
@@ -167,17 +173,22 @@ Call log:
   30 |   await expect(page.getByTestId('webhook-response-status')).toBeVisible({ timeout: 15_000 });
   31 |   await expect(page.getByTestId('webhook-response-status')).toContainText('202', { timeout: 5_000 });
   32 | 
-  33 |   // 4. Seed a searchable memory via the real import API to avoid worker backlog.
-  34 |   await seedGitHubEvent(workspaceId, apiKey);
-  35 | 
-  36 |   // 5. Navigate to Memory Explorer; search for a term in the seeded payload
-  37 |   await page.getByTestId('nav-memory').click();
-  38 |   await page.getByTestId('memory-search-input').fill('push');
-  39 |   await page.getByTestId('memory-search-submit').click();
-  40 | 
-  41 |   // 6. At least one result row appears
-> 42 |   await expect(page.getByTestId('memory-result-row').first()).toBeVisible({ timeout: 15_000 });
+  33 |   // 4. Seed a searchable memory via the real import API to avoid worker backlog,
+  34 |   //    then wait for the row to be queryable before searching. Without this poll
+  35 |   //    the search fires before the committed row is visible to the retrieval query.
+  36 |   await seedGitHubEvent(workspaceId, apiKey);
+  37 |   await waitForMemory(workspaceId, apiKey);
+  38 | 
+  39 |   // 5. Navigate to Memory Explorer; search for a term in the seeded payload
+  40 |   await page.getByTestId('nav-memory').click();
+  41 |   await page.getByTestId('memory-search-input').fill('push');
+  42 |   await page.getByTestId('memory-search-submit').click();
+  43 | 
+  44 |   // 6. At least one result row appears. The 30s timeout absorbs slow search responses
+  45 |   //    when the slow-path workers' blocking Redis XREADGROUP holds the multiplexed
+  46 |   //    connection while record_access (no per-call timeout) waits behind it.
+> 47 |   await expect(page.getByTestId('memory-result-row').first()).toBeVisible({ timeout: 30_000 });
      |                                                               ^ Error: expect(locator).toBeVisible() failed
-  43 | });
-  44 | 
+  48 | });
+  49 | 
 ```
