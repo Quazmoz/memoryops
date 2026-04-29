@@ -62,4 +62,21 @@ describe("buildSearchRequest", () => {
     expect(request.repo).toBe("Quazmoz/memoryops");
     expect(request.filters).toBeUndefined();
   });
+
+  it("adds workspace pool inheritance when enabled", () => {
+    const request = buildSearchRequest("018f0000-0000-7000-8000-000000000001", {
+      query: "memory",
+      memoryType: "all",
+      pinned: false,
+      minImportance: 0,
+      tags: [],
+      asOf: "2026-04-28T12:00:00Z",
+      includeWorkspacePool: true,
+      limit: 50,
+      offset: 0,
+    });
+
+    expect(request.include_workspace_pool).toBe(true);
+    expect(request.as_of).toBe("2026-04-28T12:00:00Z");
+  });
 });

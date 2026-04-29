@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Clock3, Database, GitCommit, GitMerge, Plus, Save, X } from "lucide-react";
+import { ArrowLeft, Check, Clock3, Database, GitCommit, GitMerge, Plus, Save, Share2, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
@@ -11,7 +11,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
-import { useMemoryDetail, useMemoryProvenance, useUpdateMemory } from "../hooks/use-memory";
+import { useMemoryDetail, useMemoryProvenance, usePublishMemory, useUpdateMemory } from "../hooks/use-memory";
 import { formatCount, formatDateTime, formatRelativeTime, formatScore } from "../lib/format";
 import { validateImportanceScore } from "../lib/validation";
 import { useAppStore } from "../store/app-store";
@@ -22,6 +22,7 @@ export function MemoryDetail() {
   const memoryQuery = useMemoryDetail(workspaceId, id);
   const provenanceQuery = useMemoryProvenance(workspaceId, id);
   const updateMemory = useUpdateMemory(workspaceId);
+  const publishMemory = usePublishMemory(workspaceId);
   const memory = memoryQuery.data;
   const scope = useMemo(() => normalizeScope(memory, workspaceId), [memory, workspaceId]);
   const [draftTags, setDraftTags] = useState<string[]>([]);
@@ -83,6 +84,14 @@ export function MemoryDetail() {
     updateMemory.mutate({ id: memory.id, patch: { pinned: !memory.pinned } });
   }
 
+  function publishToWorkspacePool() {
+    if (!memory) {
+      return;
+    }
+
+    publishMemory.mutate({ id: memory.id });
+  }
+
   return (
     <div className="mx-auto grid max-w-7xl gap-5">
       <div>
@@ -103,6 +112,7 @@ export function MemoryDetail() {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant={memory.memory_type === "semantic" ? "teal" : "rust"}>{memory.memory_type === "semantic" ? "Semantic" : "Episodic"}</Badge>
+                <Badge variant={memory.scope_visibility === "workspace" ? "green" : "gray"}>{memory.scope_visibility === "workspace" ? "Workspace Pool" : "Private"}</Badge>
                 {memory.importance_overridden ? <Badge variant="amber">overridden</Badge> : null}
                 {memory.memory_type === "semantic" && memory.corroboration_count > 1 ? <Badge variant="purple">⬡ {memory.corroboration_count} sources</Badge> : null}
                 <span className="text-sm text-ink/55">Updated {formatDateTime(memory.updated_at)}</span>
@@ -110,13 +120,22 @@ export function MemoryDetail() {
               </div>
               <h1 className="mt-3 text-2xl font-semibold tracking-normal text-ink">Memory Detail</h1>
             </div>
-            <Button type="button" variant={memory.pinned ? "secondary" : "default"} data-testid="detail-pin-toggle" onClick={togglePinned} disabled={updateMemory.isPending}>
-              <Check className="h-4 w-4" aria-hidden="true" />
-              {memory.pinned ? "Pinned" : "Pin"}
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              {memory.memory_type === "semantic" && memory.scope_visibility === "private" ? (
+                <Button type="button" variant="secondary" data-testid="detail-publish-button" onClick={publishToWorkspacePool} disabled={publishMemory.isPending}>
+                  <Share2 className="h-4 w-4" aria-hidden="true" />
+                  Publish
+                </Button>
+              ) : null}
+              <Button type="button" variant={memory.pinned ? "secondary" : "default"} data-testid="detail-pin-toggle" onClick={togglePinned} disabled={updateMemory.isPending}>
+                <Check className="h-4 w-4" aria-hidden="true" />
+                {memory.pinned ? "Pinned" : "Pin"}
+              </Button>
+            </div>
           </header>
 
           {updateMemory.isError ? <InlineError message={errorMessage(updateMemory.error)} /> : null}
+          {publishMemory.isError ? <InlineError message={errorMessage(publishMemory.error)} /> : null}
 
           <section className="grid gap-4 xl:grid-cols-[1fr_22rem]">
             <Card>

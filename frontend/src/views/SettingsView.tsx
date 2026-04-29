@@ -1,4 +1,4 @@
-import { Download, GitMerge, KeyRound, Loader2, Play, ServerCog, ShieldCheck, SlidersHorizontal, Upload } from "lucide-react";
+import { Download, GitMerge, KeyRound, Loader2, Play, Save, ServerCog, ShieldCheck, SlidersHorizontal, Upload } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
@@ -29,6 +29,7 @@ export function SettingsView() {
   const [embeddingModel, setEmbeddingModel] = useState("BAAI/bge-small-en-v1.5");
   const [llmProvider, setLlmProvider] = useState("ollama");
   const [llmModel, setLlmModel] = useState("llama3");
+  const [subAgentPools, setSubAgentPools] = useState("");
   const embeddingModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const llmModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -74,6 +75,7 @@ export function SettingsView() {
       setEmbeddingModel(workspace.embedding_model ?? "BAAI/bge-small-en-v1.5");
       setLlmProvider(workspace.llm_provider ?? "ollama");
       setLlmModel(workspace.llm_model ?? "llama3");
+      setSubAgentPools((workspace.sub_agent_pools ?? []).join(", "));
     },
     onError: (error: Error) => setConfigError(error.message),
   });
@@ -101,6 +103,7 @@ export function SettingsView() {
       setEmbeddingModel(workspaceQuery.data.embedding_model ?? "BAAI/bge-small-en-v1.5");
       setLlmProvider(workspaceQuery.data.llm_provider ?? "ollama");
       setLlmModel(workspaceQuery.data.llm_model ?? "llama3");
+      setSubAgentPools((workspaceQuery.data.sub_agent_pools ?? []).join(", "));
     }
   }, [workspaceQuery.data]);
 
@@ -163,6 +166,10 @@ export function SettingsView() {
     llmModelTimeoutRef.current = setTimeout(() => {
       configMutation.mutate({ llm_model: value });
     }, 600);
+  }
+
+  function saveSubAgentPools() {
+    configMutation.mutate({ sub_agent_pools: commaSeparatedValues(subAgentPools) });
   }
 
   function chooseImportFile() {
@@ -344,6 +351,25 @@ export function SettingsView() {
             {promotionError ? <InlineError title="Promotion failed" message={promotionError} /> : null}
             {configError ? <InlineError title="Config update failed" message={configError} /> : null}
           </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-medium uppercase text-ink/45" htmlFor="sub-agent-pools">
+              Sub-Agent Pools
+            </label>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                id="sub-agent-pools"
+                data-testid="sub-agent-pools-input"
+                value={subAgentPools}
+                onChange={(event) => setSubAgentPools(event.target.value)}
+                placeholder="agent-a, agent-b"
+              />
+              <Button type="button" variant="secondary" data-testid="sub-agent-pools-save" onClick={saveSubAgentPools} disabled={configMutation.isPending}>
+                {configMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+                Save
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -429,4 +455,15 @@ function downloadBlob(blob: Blob, filename: string) {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+function commaSeparatedValues(value: string): string[] {
+  const values: string[] = [];
+  value.split(",").forEach((item) => {
+    const trimmed = item.trim();
+    if (trimmed.length > 0 && !values.includes(trimmed)) {
+      values.push(trimmed);
+    }
+  });
+  return values;
 }

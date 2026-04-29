@@ -2,6 +2,7 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 export type MemoryType = "episodic" | "semantic";
+export type ScopeVisibility = "private" | "workspace";
 export type MemoryTypeFilter = "all" | MemoryType;
 export type SearchMode = "hybrid" | "vector" | "keyword";
 export type SortField = "importance_score" | "decay_score" | "updated_at" | "created_at";
@@ -33,6 +34,7 @@ export type MemoryUnit = {
   workspace_id: string;
   scope: MemoryScope | JsonValue | null;
   memory_type: MemoryType;
+  scope_visibility: ScopeVisibility;
   content: string;
   entities?: MemoryEntity[];
   importance_score: number;
@@ -81,6 +83,8 @@ export type SearchRequest = {
   user_id?: string;
   repo?: string;
   memory_types?: MemoryType[];
+  as_of?: string;
+  include_workspace_pool?: boolean;
 };
 
 export type SearchResult = {
@@ -106,6 +110,8 @@ export type RetrieveRequest = {
   search_mode?: SearchMode;
   mode?: SearchMode;
   include_trace?: boolean;
+  as_of?: string;
+  include_workspace_pool?: boolean;
 };
 
 export type TagSummary = {
@@ -170,6 +176,7 @@ export type RetrievalTrace = {
   query_id: string;
   query?: string;
   query_text?: string;
+  as_of?: string | null;
   mode?: SearchMode;
   search_mode?: string;
   created_at?: string;
@@ -263,6 +270,7 @@ export type WorkspaceConfig = {
   contradiction_mode?: "quarantine" | "auto_resolve" | string;
   contradiction_threshold?: number;
   contradiction_candidates?: number;
+  sub_agent_pools?: string[];
   llm_provider?: string;
   llm_model?: string;
   embedding_provider?: string;

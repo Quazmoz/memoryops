@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use common::{
     error::AppResult,
     models::{
-        Entity, MemoryScope, MemoryType, MemoryUnit, MemoryVersion, DEFAULT_DECAY_HALF_LIFE_DAYS,
-        DEFAULT_PRUNING_THRESHOLD,
+        Entity, MemoryScope, MemoryType, MemoryUnit, MemoryVersion, ScopeVisibility,
+        WorkspaceConfig, DEFAULT_DECAY_HALF_LIFE_DAYS, DEFAULT_PRUNING_THRESHOLD,
     },
     AppError,
 };
@@ -13,10 +13,10 @@ use uuid::Uuid;
 
 use crate::dto::{
     parse_memory_type, ListQuery, ScopeFilter, SortDirection, SortField, UpdateMemoryRequest,
-    MAX_LIMIT,
+    WorkspacePoolAccess, MAX_LIMIT,
 };
 
-const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
+const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, scope_visibility, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
 #[derive(Debug, sqlx::FromRow)]
@@ -25,6 +25,7 @@ struct MemoryUnitWithTotal {
     workspace_id: Uuid,
     scope: MemoryScope,
     memory_type: MemoryType,
+    scope_visibility: ScopeVisibility,
     content: String,
     entities: Json<Vec<Entity>>,
     importance_score: f32,
@@ -53,6 +54,7 @@ impl From<MemoryUnitWithTotal> for MemoryUnit {
             workspace_id: row.workspace_id,
             scope: row.scope,
             memory_type: row.memory_type,
+            scope_visibility: row.scope_visibility,
             content: row.content,
             entities: row.entities,
             importance_score: row.importance_score,
@@ -129,11 +131,44 @@ pub async fn get_memory_units_by_ids(
         .map_err(AppError::Database)
 }
 
+pub async fn get_memory_units_by_ids_at(
+    db: &PgPool,
+    ids: &[Uuid],
+    workspace_id: Uuid,
+    as_of: DateTime<Utc>,
+) -> AppResult<Vec<MemoryUnit>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let half_life_days = fetch_workspace_half_life_days(db, workspace_id).await?;
+    let mut builder = QueryBuilder::<Postgres>::new("SELECT ");
+    push_historical_memory_columns(&mut builder, as_of, half_life_days);
+    builder.push(" FROM memory_units m");
+    push_historical_version_join(&mut builder, as_of);
+    builder.push(" WHERE m.workspace_id = ");
+    builder.push_bind(workspace_id);
+    builder.push(" AND m.id = ANY(");
+    builder.push_bind(ids.to_vec());
+    builder.push(")");
+    push_as_of_existence_filter(&mut builder, as_of);
+
+    builder
+        .build_query_as::<MemoryUnit>()
+        .fetch_all(db)
+        .await
+        .map_err(AppError::Database)
+}
+
 pub async fn list_memory_units(
     db: &PgPool,
     params: &ListQuery,
     workspace_id: Uuid,
 ) -> AppResult<(Vec<MemoryUnit>, u64)> {
+    if let Some(as_of) = params.as_of {
+        return list_memory_units_at(db, params, workspace_id, as_of).await;
+    }
+
     let limit = params.resolved_limit().min(MAX_LIMIT);
     let offset = params.resolved_offset();
 
@@ -155,7 +190,71 @@ pub async fn list_memory_units(
         builder.push(" AND importance_score >= ");
         builder.push_bind(min_importance);
     }
-    push_scope_filter(&mut builder, &scope_from_list_query(params));
+    push_scope_filter(
+        &mut builder,
+        &scope_from_list_query(params),
+        &WorkspacePoolAccess::default(),
+        None,
+    );
+
+    builder.push(" ORDER BY ");
+    builder.push(sort_column(params.resolved_sort()));
+    builder.push(" ");
+    builder.push(sort_direction(params.resolved_direction()));
+    builder.push(" LIMIT ");
+    builder.push_bind(i64::from(limit));
+    builder.push(" OFFSET ");
+    builder.push_bind(i64::from(offset));
+
+    let rows = builder
+        .build_query_as::<MemoryUnitWithTotal>()
+        .fetch_all(db)
+        .await
+        .map_err(AppError::Database)?;
+    let total = rows
+        .first()
+        .map_or(0, |row| nonnegative_i64_to_u64(row.total_count));
+    let items = rows.into_iter().map(MemoryUnit::from).collect();
+
+    Ok((items, total))
+}
+
+async fn list_memory_units_at(
+    db: &PgPool,
+    params: &ListQuery,
+    workspace_id: Uuid,
+    as_of: DateTime<Utc>,
+) -> AppResult<(Vec<MemoryUnit>, u64)> {
+    let limit = params.resolved_limit().min(MAX_LIMIT);
+    let offset = params.resolved_offset();
+    let half_life_days = fetch_workspace_half_life_days(db, workspace_id).await?;
+
+    let mut builder = QueryBuilder::<Postgres>::new("SELECT ");
+    push_historical_memory_columns(&mut builder, as_of, half_life_days);
+    builder.push(", COUNT(*) OVER() AS total_count FROM memory_units m");
+    push_historical_version_join(&mut builder, as_of);
+    builder.push(" WHERE m.workspace_id = ");
+    builder.push_bind(workspace_id);
+    push_as_of_existence_filter(&mut builder, as_of);
+
+    if let Some(memory_type) = &params.memory_type {
+        builder.push(" AND m.memory_type = ");
+        builder.push_bind(parse_memory_type(memory_type)?);
+    }
+    if let Some(pinned) = params.pinned {
+        builder.push(" AND m.pinned = ");
+        builder.push_bind(pinned);
+    }
+    if let Some(min_importance) = params.min_importance {
+        builder.push(" AND COALESCE(mv.importance_score, m.importance_score) >= ");
+        builder.push_bind(min_importance);
+    }
+    push_scope_filter(
+        &mut builder,
+        &scope_from_list_query(params),
+        &WorkspacePoolAccess::default(),
+        Some("m"),
+    );
 
     builder.push(" ORDER BY ");
     builder.push(sort_column(params.resolved_sort()));
@@ -282,6 +381,23 @@ pub async fn force_promote_to_semantic(
 ) -> AppResult<Option<MemoryUnit>> {
     let sql = format!(
         "UPDATE memory_units SET memory_type = 'semantic', version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+    );
+
+    sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(id)
+        .bind(workspace_id)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)
+}
+
+pub async fn publish_memory_unit(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+) -> AppResult<Option<MemoryUnit>> {
+    let sql = format!(
+        "UPDATE memory_units SET scope_visibility = 'workspace', version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
     );
 
     sqlx::query_as::<_, MemoryUnit>(&sql)
@@ -580,28 +696,178 @@ fn normalized_scope_value(value: Option<&String>) -> Option<String> {
     }
 }
 
-fn push_scope_filter(builder: &mut QueryBuilder<'_, Postgres>, scope: &ScopeFilter) {
+pub(crate) fn push_scope_filter(
+    builder: &mut QueryBuilder<'_, Postgres>,
+    scope: &ScopeFilter,
+    workspace_pool: &WorkspacePoolAccess,
+    table_alias: Option<&'static str>,
+) {
     if scope.is_empty() {
         return;
     }
 
-    push_scope_field(builder, "agent_id", scope.agent_id.clone());
-    push_scope_field(builder, "user_id", scope.user_id.clone());
-    push_scope_field(builder, "repo", scope.repo.clone());
+    push_agent_scope_field(builder, scope.agent_id.clone(), workspace_pool, table_alias);
+    push_scope_field(builder, "user_id", scope.user_id.clone(), table_alias);
+    push_scope_field(builder, "repo", scope.repo.clone(), table_alias);
+}
+
+pub(crate) fn scope_matches_workspace_pool(
+    unit: &MemoryUnit,
+    requested_scope: &ScopeFilter,
+    workspace_pool: &WorkspacePoolAccess,
+) -> bool {
+    if let Some(agent_id) = &requested_scope.agent_id {
+        let agent_matches = unit.scope.agent_id.as_ref() == Some(agent_id);
+        let workspace_matches = match unit.scope_visibility {
+            ScopeVisibility::Workspace if workspace_pool.include_all_workspace => true,
+            ScopeVisibility::Workspace => {
+                unit.scope.agent_id.as_ref().is_some_and(|memory_agent_id| {
+                    workspace_pool
+                        .inherited_agent_ids
+                        .iter()
+                        .any(|agent_id| agent_id == memory_agent_id)
+                })
+            }
+            ScopeVisibility::Private => false,
+        };
+
+        if !agent_matches && !workspace_matches {
+            return false;
+        }
+    }
+
+    if let Some(user_id) = &requested_scope.user_id {
+        if unit.scope.user_id.as_ref() != Some(user_id) {
+            return false;
+        }
+    }
+    if let Some(repo) = &requested_scope.repo {
+        if unit.scope.repo.as_ref() != Some(repo) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn push_agent_scope_field(
+    builder: &mut QueryBuilder<'_, Postgres>,
+    value: Option<String>,
+    workspace_pool: &WorkspacePoolAccess,
+    table_alias: Option<&'static str>,
+) {
+    let Some(value) = value else {
+        return;
+    };
+
+    builder.push(" AND (");
+    push_qualified_column(builder, table_alias, "agent_id");
+    builder.push(" = ");
+    builder.push_bind(value);
+    if workspace_pool.include_all_workspace {
+        builder.push(" OR ");
+        push_qualified_column(builder, table_alias, "scope_visibility");
+        builder.push(" = 'workspace'");
+    } else if !workspace_pool.inherited_agent_ids.is_empty() {
+        builder.push(" OR (");
+        push_qualified_column(builder, table_alias, "scope_visibility");
+        builder.push(" = 'workspace' AND ");
+        push_qualified_column(builder, table_alias, "agent_id");
+        builder.push(" = ANY(");
+        builder.push_bind(workspace_pool.inherited_agent_ids.clone());
+        builder.push("))");
+    }
+    builder.push(")");
 }
 
 fn push_scope_field(
     builder: &mut QueryBuilder<'_, Postgres>,
     column: &'static str,
     value: Option<String>,
+    table_alias: Option<&'static str>,
 ) {
+    let Some(value) = value else {
+        return;
+    };
+
     builder.push(" AND (");
-    builder.push(column);
+    push_qualified_column(builder, table_alias, column);
     builder.push(" = ");
-    builder.push_bind(value.clone());
-    builder.push(" OR ");
     builder.push_bind(value);
-    builder.push(" IS NULL)");
+    builder.push(")");
+}
+
+fn push_qualified_column(
+    builder: &mut QueryBuilder<'_, Postgres>,
+    table_alias: Option<&'static str>,
+    column: &'static str,
+) {
+    if let Some(alias) = table_alias {
+        builder.push(alias);
+        builder.push(".");
+    }
+    builder.push(column);
+}
+
+fn push_historical_memory_columns(
+    builder: &mut QueryBuilder<'_, Postgres>,
+    as_of: DateTime<Utc>,
+    half_life_days: f64,
+) {
+    let half_life_secs = half_life_days * SECONDS_PER_DAY;
+    builder.push(
+        "m.id, m.workspace_id, m.scope, m.memory_type, m.scope_visibility, COALESCE(mv.content, m.content) AS content, m.entities, COALESCE(mv.importance_score, m.importance_score) AS importance_score, m.importance_overridden, m.source_events, m.embedding_id, m.token_count, ",
+    );
+    builder.push(
+        "GREATEST(0.0::double precision, COALESCE(mv.importance_score, m.importance_score)::double precision * POWER(0.5::double precision, EXTRACT(EPOCH FROM (",
+    );
+    builder.push_bind(as_of);
+    builder.push(" - m.created_at)) / ");
+    builder.push_bind(half_life_secs);
+    builder.push(
+        "))::real AS decay_score, m.pinned, COALESCE(mv.tags, m.tags) AS tags, COALESCE(mv.version, m.version) AS version, m.promoted_at, m.source_episode_ids, m.corroboration_count, m.deleted_at, m.last_accessed_at, m.created_at, m.updated_at",
+    );
+}
+
+fn push_historical_version_join(builder: &mut QueryBuilder<'_, Postgres>, as_of: DateTime<Utc>) {
+    builder.push(
+        " LEFT JOIN LATERAL (SELECT version, content, importance_score, tags FROM memory_versions WHERE memory_id = m.id AND workspace_id = m.workspace_id AND created_at <= ",
+    );
+    builder.push_bind(as_of);
+    builder.push(" ORDER BY version DESC LIMIT 1) mv ON true");
+}
+
+fn push_as_of_existence_filter(builder: &mut QueryBuilder<'_, Postgres>, as_of: DateTime<Utc>) {
+    builder.push(" AND m.created_at <= ");
+    builder.push_bind(as_of);
+    builder.push(" AND (m.deleted_at IS NULL OR m.deleted_at > ");
+    builder.push_bind(as_of);
+    builder.push(")");
+}
+
+async fn fetch_workspace_half_life_days(db: &PgPool, workspace_id: Uuid) -> AppResult<f64> {
+    let value = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT config FROM workspaces WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(workspace_id)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound {
+        resource: format!("workspace:{workspace_id}"),
+    })?;
+
+    let config = serde_json::from_value::<WorkspaceConfig>(value).unwrap_or_default();
+    let half_life_days = config
+        .decay_half_life_days
+        .map(f64::from)
+        .unwrap_or(f64::from(DEFAULT_DECAY_HALF_LIFE_DAYS));
+
+    if half_life_days > 0.0 {
+        Ok(half_life_days)
+    } else {
+        Ok(f64::from(DEFAULT_DECAY_HALF_LIFE_DAYS))
+    }
 }
 
 fn sort_direction(direction: SortDirection) -> &'static str {
@@ -741,6 +1007,7 @@ mod tests {
             agent_id: None,
             user_id: None,
             repo: None,
+            as_of: None,
             sort: None,
             direction: None,
         };
@@ -982,6 +1249,7 @@ mod tests {
             agent_id: agent_id.map(str::to_owned),
             user_id: user_id.map(str::to_owned),
             repo: repo.map(str::to_owned),
+            as_of: None,
             sort: None,
             direction: None,
         }

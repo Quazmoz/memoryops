@@ -9,8 +9,12 @@ use common::{
     audit::spawn_audit_log,
     auth::AuthContext,
     error::AppResult,
-    models::{AuditAction, MemoryType, MemoryVersion},
+    models::{AuditAction, MemoryType, MemoryUnit, MemoryVersion},
     AppError, AppState,
+};
+use qdrant_client::{
+    qdrant::{PointsIdsList, SetPayloadPointsBuilder},
+    Payload,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -20,6 +24,7 @@ use processor::{embedder::Embedder, worker::enqueue_slow_job};
 
 use crate::{
     dto::MemoryUnitDto,
+    search::vector::COLLECTION_NAME,
     store::{self, BulkStoreAction},
 };
 
@@ -169,6 +174,82 @@ pub async fn handle_promote(
     );
 
     Ok(Json(MemoryUnitDto::from(promoted)))
+}
+
+#[axum::debug_handler]
+pub async fn handle_publish(
+    State(state): State<AppState>,
+    auth: Option<Extension<AuthContext>>,
+    Path(id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> AppResult<Json<MemoryUnitDto>> {
+    let auth_context = auth.as_ref().map(|extension| &extension.0);
+    let workspace_id = resolve_workspace_id(auth_context, workspace_id_param(&params)?)?;
+    let before = store::get_memory_unit_by_id(&state.db, id, workspace_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            resource: format!("memory:{id}"),
+        })?;
+
+    if before.memory_type != MemoryType::Semantic {
+        return Err(AppError::Unprocessable(
+            "only semantic memories can be published".to_owned(),
+        ));
+    }
+
+    let published = store::publish_memory_unit(&state.db, id, workspace_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            resource: format!("memory:{id}"),
+        })?;
+
+    let mut redis = state.redis.clone();
+    if let Err(error) = enqueue_slow_job(&mut redis, published.id, published.workspace_id, 0).await
+    {
+        tracing::warn!(error = ?error, memory_id = %published.id, "failed to enqueue published memory for payload refresh");
+    }
+    refresh_published_qdrant_payload(&state, &published).await;
+
+    spawn_audit_log(
+        state.db.clone(),
+        workspace_id,
+        audit_actor(auth_context),
+        AuditAction::Publish,
+        id,
+        "memory",
+        Some(json!({
+            "before": crate::dto::scope_visibility_as_str(before.scope_visibility),
+            "after": crate::dto::scope_visibility_as_str(published.scope_visibility)
+        })),
+    );
+
+    Ok(Json(MemoryUnitDto::from(published)))
+}
+
+async fn refresh_published_qdrant_payload(state: &AppState, memory: &MemoryUnit) {
+    if memory.embedding_id.is_none() {
+        return;
+    }
+
+    let payload = match Payload::try_from(json!({
+        "scope_visibility": crate::dto::scope_visibility_as_str(memory.scope_visibility)
+    })) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(error = ?error, memory_id = %memory.id, "failed to build Qdrant publish payload");
+            return;
+        }
+    };
+
+    let request = SetPayloadPointsBuilder::new(COLLECTION_NAME, payload)
+        .points_selector(PointsIdsList {
+            ids: vec![memory.id.to_string().into()],
+        })
+        .wait(true);
+
+    if let Err(error) = state.qdrant.set_payload(request).await {
+        tracing::warn!(error = ?error, memory_id = %memory.id, "failed to refresh published memory payload in Qdrant");
+    }
 }
 
 #[axum::debug_handler]

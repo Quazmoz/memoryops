@@ -314,8 +314,8 @@ mod tests {
         body::{to_bytes, Body},
         http::{Method, Request, StatusCode},
     };
-    use chrono::Utc;
-    use common::models::MemoryType;
+    use chrono::{DateTime, Duration, SecondsFormat, Utc};
+    use common::models::{MemoryType, ScopeVisibility};
     use redis::aio::ConnectionManager;
     use serde_json::{json, Value};
     use sqlx::PgPool;
@@ -451,6 +451,136 @@ mod tests {
         }
 
         memory_id
+    }
+
+    struct MemoryFixture<'a> {
+        content: &'a str,
+        memory_type: MemoryType,
+        scope_visibility: ScopeVisibility,
+        agent_id: Option<&'a str>,
+        repo: Option<&'a str>,
+        importance_score: f32,
+        created_at: DateTime<Utc>,
+        deleted_at: Option<DateTime<Utc>>,
+    }
+
+    async fn insert_memory_fixture(
+        pool: &PgPool,
+        workspace_id: Uuid,
+        fixture: MemoryFixture<'_>,
+    ) -> Uuid {
+        let memory_id = Uuid::now_v7();
+        let result = sqlx::query(
+            r#"
+            INSERT INTO memory_units (
+                id,
+                workspace_id,
+                scope,
+                memory_type,
+                scope_visibility,
+                content,
+                entities,
+                importance_score,
+                decay_score,
+                tags,
+                created_at,
+                updated_at,
+                deleted_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $10, $11)
+            "#,
+        )
+        .bind(memory_id)
+        .bind(workspace_id)
+        .bind(json!({
+            "workspace_id": workspace_id,
+            "agent_id": fixture.agent_id,
+            "user_id": null,
+            "repo": fixture.repo
+        }))
+        .bind(fixture.memory_type)
+        .bind(fixture.scope_visibility)
+        .bind(fixture.content)
+        .bind(json!([]))
+        .bind(fixture.importance_score)
+        .bind(Vec::<String>::new())
+        .bind(fixture.created_at)
+        .bind(fixture.deleted_at)
+        .execute(pool)
+        .await;
+
+        if let Err(error) = result {
+            panic!("test memory fixture insert should succeed: {error}");
+        }
+
+        memory_id
+    }
+
+    async fn insert_memory_version(
+        pool: &PgPool,
+        workspace_id: Uuid,
+        memory_id: Uuid,
+        version: i32,
+        content: &str,
+        importance_score: f32,
+        created_at: DateTime<Utc>,
+    ) {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO memory_versions (
+                id, memory_id, workspace_id, version, content, importance_score, tags, edited_by, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            "#,
+        )
+        .bind(Uuid::now_v7())
+        .bind(memory_id)
+        .bind(workspace_id)
+        .bind(version)
+        .bind(content)
+        .bind(importance_score)
+        .bind(Vec::<String>::new())
+        .bind("test")
+        .bind(created_at)
+        .execute(pool)
+        .await;
+
+        if let Err(error) = result {
+            panic!("test memory version insert should succeed: {error}");
+        }
+    }
+
+    fn utc_query_timestamp(value: DateTime<Utc>) -> String {
+        value.to_rfc3339_opts(SecondsFormat::Secs, true)
+    }
+
+    async fn wait_for_publish_audit(pool: &PgPool, workspace_id: Uuid, memory_id: Uuid) -> i64 {
+        for _ in 0..20 {
+            let count = match sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT COUNT(*)
+                FROM audit_log
+                WHERE workspace_id = $1
+                  AND target_id = $2
+                  AND action::text = 'publish'
+                "#,
+            )
+            .bind(workspace_id)
+            .bind(memory_id)
+            .fetch_one(pool)
+            .await
+            {
+                Ok(count) => count,
+                Err(error) => panic!("audit count query should succeed: {error}"),
+            };
+
+            if count > 0 {
+                return count;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        0
     }
 
     fn request(method: Method, uri: String, api_key: Option<&str>, body: Value) -> Request<Body> {
@@ -692,6 +822,420 @@ mod tests {
         }));
         assert!(!memories.iter().any(|memory| {
             memory.get("id").and_then(Value::as_str) == Some(memory_b_text.as_str())
+        }));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn memory_list_as_of_reconstructs_historical_state(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let as_of = Utc::now() - Duration::days(10);
+        let before_as_of = as_of - Duration::days(10);
+        let after_as_of = as_of + Duration::days(1);
+        let historical_id = insert_memory_fixture(
+            &pool,
+            workspace_id,
+            MemoryFixture {
+                content: "current incident summary",
+                memory_type: MemoryType::Semantic,
+                scope_visibility: ScopeVisibility::Private,
+                agent_id: None,
+                repo: Some("Quazmoz/memoryops"),
+                importance_score: 0.9,
+                created_at: before_as_of,
+                deleted_at: None,
+            },
+        )
+        .await;
+        insert_memory_version(
+            &pool,
+            workspace_id,
+            historical_id,
+            1,
+            "historical incident summary",
+            0.8,
+            before_as_of,
+        )
+        .await;
+        insert_memory_version(
+            &pool,
+            workspace_id,
+            historical_id,
+            2,
+            "future incident summary",
+            0.95,
+            after_as_of,
+        )
+        .await;
+        insert_memory_fixture(
+            &pool,
+            workspace_id,
+            MemoryFixture {
+                content: "future-only incident summary",
+                memory_type: MemoryType::Semantic,
+                scope_visibility: ScopeVisibility::Private,
+                agent_id: None,
+                repo: Some("Quazmoz/memoryops"),
+                importance_score: 0.9,
+                created_at: after_as_of,
+                deleted_at: None,
+            },
+        )
+        .await;
+        insert_memory_fixture(
+            &pool,
+            workspace_id,
+            MemoryFixture {
+                content: "already deleted incident summary",
+                memory_type: MemoryType::Semantic,
+                scope_visibility: ScopeVisibility::Private,
+                agent_id: None,
+                repo: Some("Quazmoz/memoryops"),
+                importance_score: 0.9,
+                created_at: before_as_of,
+                deleted_at: Some(as_of - Duration::days(1)),
+            },
+        )
+        .await;
+        let app = router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::GET,
+                format!("/v1/memory?as_of={}", utc_query_timestamp(as_of)),
+                Some(&api_key),
+                json!(null),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("as_of memory list should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let items = match body.get("items").and_then(Value::as_array) {
+            Some(items) => items,
+            None => panic!("memory list response should include items"),
+        };
+        let historical_id_text = historical_id.to_string();
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].get("id").and_then(Value::as_str),
+            Some(historical_id_text.as_str())
+        );
+        assert_eq!(
+            items[0].get("content").and_then(Value::as_str),
+            Some("historical incident summary")
+        );
+        let decay_score = items[0]
+            .get("decay_score")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        assert!(decay_score < 0.8);
+        assert!(decay_score > 0.6);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn retrieve_as_of_filters_future_memories(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let as_of = Utc::now() - Duration::days(5);
+        let included_id = insert_memory_fixture(
+            &pool,
+            workspace_id,
+            MemoryFixture {
+                content: "alpha incident mitigation existed",
+                memory_type: MemoryType::Episodic,
+                scope_visibility: ScopeVisibility::Private,
+                agent_id: None,
+                repo: Some("Quazmoz/memoryops"),
+                importance_score: 0.9,
+                created_at: as_of - Duration::days(1),
+                deleted_at: None,
+            },
+        )
+        .await;
+        let excluded_id = insert_memory_fixture(
+            &pool,
+            workspace_id,
+            MemoryFixture {
+                content: "alpha incident mitigation future",
+                memory_type: MemoryType::Episodic,
+                scope_visibility: ScopeVisibility::Private,
+                agent_id: None,
+                repo: Some("Quazmoz/memoryops"),
+                importance_score: 0.9,
+                created_at: as_of + Duration::days(1),
+                deleted_at: None,
+            },
+        )
+        .await;
+        let app = router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::POST,
+                "/v1/retrieve".to_owned(),
+                Some(&api_key),
+                json!({
+                    "query": "alpha incident mitigation",
+                    "workspace_id": workspace_id,
+                    "mode": "keyword",
+                    "as_of": utc_query_timestamp(as_of),
+                    "token_budget": 8096,
+                    "include_trace": true
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("as_of retrieve should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let memories = match body.get("memories").and_then(Value::as_array) {
+            Some(memories) => memories,
+            None => panic!("retrieve response should include memories"),
+        };
+        let included_id_text = included_id.to_string();
+        let excluded_id_text = excluded_id.to_string();
+        assert!(memories.iter().any(|memory| {
+            memory.get("id").and_then(Value::as_str) == Some(included_id_text.as_str())
+        }));
+        assert!(!memories.iter().any(|memory| {
+            memory.get("id").and_then(Value::as_str) == Some(excluded_id_text.as_str())
+        }));
+        let expected_as_of = utc_query_timestamp(as_of);
+        assert_eq!(
+            body.get("trace")
+                .and_then(|trace| trace.get("as_of"))
+                .and_then(Value::as_str),
+            Some(expected_as_of.as_str())
+        );
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn publish_endpoint_rejects_episodic_memory(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let memory_id = insert_memory_fixture(
+            &pool,
+            workspace_id,
+            MemoryFixture {
+                content: "episodic memory cannot publish",
+                memory_type: MemoryType::Episodic,
+                scope_visibility: ScopeVisibility::Private,
+                agent_id: Some("agent-a"),
+                repo: Some("Quazmoz/memoryops"),
+                importance_score: 0.9,
+                created_at: Utc::now(),
+                deleted_at: None,
+            },
+        )
+        .await;
+        let app = router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::POST,
+                format!("/v1/memory/{memory_id}/publish?workspace_id={workspace_id}"),
+                Some(&api_key),
+                json!(null),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("publish request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn publish_sets_workspace_visibility_and_writes_audit(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let memory_id = insert_memory_fixture(
+            &pool,
+            workspace_id,
+            MemoryFixture {
+                content: "semantic memory can publish",
+                memory_type: MemoryType::Semantic,
+                scope_visibility: ScopeVisibility::Private,
+                agent_id: Some("agent-a"),
+                repo: Some("Quazmoz/memoryops"),
+                importance_score: 0.9,
+                created_at: Utc::now(),
+                deleted_at: None,
+            },
+        )
+        .await;
+        let check_pool = pool.clone();
+        let app = router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::POST,
+                format!("/v1/memory/{memory_id}/publish?workspace_id={workspace_id}"),
+                Some(&api_key),
+                json!(null),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("publish request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(
+            body.get("scope_visibility").and_then(Value::as_str),
+            Some("workspace")
+        );
+        let audit_count = wait_for_publish_audit(&check_pool, workspace_id, memory_id).await;
+        assert_eq!(audit_count, 1);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn published_memory_searches_across_agents_when_pool_included(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let memory_id = insert_memory_fixture(
+            &pool,
+            workspace_id,
+            MemoryFixture {
+                content: "shared alpha deployment runbook",
+                memory_type: MemoryType::Semantic,
+                scope_visibility: ScopeVisibility::Workspace,
+                agent_id: Some("agent-a"),
+                repo: Some("Quazmoz/memoryops"),
+                importance_score: 0.9,
+                created_at: Utc::now(),
+                deleted_at: None,
+            },
+        )
+        .await;
+        let app = router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::POST,
+                "/v1/memory/search".to_owned(),
+                Some(&api_key),
+                json!({
+                    "query": "shared alpha deployment",
+                    "workspace_id": workspace_id,
+                    "mode": "keyword",
+                    "agent_id": "agent-b",
+                    "include_workspace_pool": true
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("workspace-pool search should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let results = match body.get("results").and_then(Value::as_array) {
+            Some(results) => results,
+            None => panic!("search response should include results"),
+        };
+        let memory_id_text = memory_id.to_string();
+        assert!(results.iter().any(|result| {
+            result
+                .get("memory")
+                .and_then(|memory| memory.get("id"))
+                .and_then(Value::as_str)
+                == Some(memory_id_text.as_str())
+        }));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
+    async fn sub_agent_pool_config_inherits_published_retrieval_memories(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let result = sqlx::query("UPDATE workspaces SET config = $2 WHERE id = $1")
+            .bind(workspace_id)
+            .bind(json!({ "sub_agent_pools": ["agent-a"] }))
+            .execute(&pool)
+            .await;
+        if let Err(error) = result {
+            panic!("workspace config update should succeed: {error}");
+        }
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+        let inherited_id = insert_memory_fixture(
+            &pool,
+            workspace_id,
+            MemoryFixture {
+                content: "inherited alpha workspace pool memory",
+                memory_type: MemoryType::Semantic,
+                scope_visibility: ScopeVisibility::Workspace,
+                agent_id: Some("agent-a"),
+                repo: Some("Quazmoz/memoryops"),
+                importance_score: 0.9,
+                created_at: Utc::now(),
+                deleted_at: None,
+            },
+        )
+        .await;
+        let private_id = insert_memory_fixture(
+            &pool,
+            workspace_id,
+            MemoryFixture {
+                content: "inherited alpha private memory",
+                memory_type: MemoryType::Semantic,
+                scope_visibility: ScopeVisibility::Private,
+                agent_id: Some("agent-a"),
+                repo: Some("Quazmoz/memoryops"),
+                importance_score: 0.9,
+                created_at: Utc::now(),
+                deleted_at: None,
+            },
+        )
+        .await;
+        let app = router(test_state(pool).await);
+
+        let response = match app
+            .oneshot(request(
+                Method::POST,
+                "/v1/retrieve".to_owned(),
+                Some(&api_key),
+                json!({
+                    "query": "inherited alpha",
+                    "workspace_id": workspace_id,
+                    "mode": "keyword",
+                    "agent_id": "agent-b",
+                    "token_budget": 8096
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("sub-agent pool retrieve should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let memories = match body.get("memories").and_then(Value::as_array) {
+            Some(memories) => memories,
+            None => panic!("retrieve response should include memories"),
+        };
+        let inherited_id_text = inherited_id.to_string();
+        let private_id_text = private_id.to_string();
+        assert!(memories.iter().any(|memory| {
+            memory.get("id").and_then(Value::as_str) == Some(inherited_id_text.as_str())
+        }));
+        assert!(!memories.iter().any(|memory| {
+            memory.get("id").and_then(Value::as_str) == Some(private_id_text.as_str())
         }));
     }
 

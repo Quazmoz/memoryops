@@ -53,6 +53,7 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
                     ⬡ {memory.corroboration_count} sources
                   </Badge>
                 ) : null}
+                {memory.scope_visibility === "workspace" ? <Badge variant="green">Workspace Pool</Badge> : null}
                 {memory.pinned ? <Badge variant="amber">Pinned</Badge> : null}
               </div>
               <p className="text-sm font-medium text-ink">{previewText(memory.content)}</p>

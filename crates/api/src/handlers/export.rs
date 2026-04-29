@@ -33,6 +33,7 @@ pub async fn export_workspace(
                     workspace_id,
                     scope,
                     memory_type,
+                    scope_visibility,
                     content,
                     entities,
                     importance_score,

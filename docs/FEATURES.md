@@ -1,7 +1,7 @@
 # MemoryOps — Feature List
 
-**Version:** 0.15.0
-**Last Updated:** 2026-04-28
+**Version:** 0.17.0
+**Last Updated:** 2026-04-29
 
 This document tracks all planned features across the platform with current status and target milestone.
 
@@ -48,8 +48,8 @@ This document tracks all planned features across the platform with current statu
 | M25 | HTTP Skills (agent-callable skill registry) | 🟢 Complete |
 | M26 | Contradiction detection | 🟢 Complete |
 | M27 | Provenance graph + lineage API | 🟢 Complete |
-| M28 | Point-in-time memory queries | 🔴 Not started |
-| M29 | Multi-agent scope inheritance + publish | 🔴 Not started |
+| M28 | Point-in-time memory queries | 🟢 Complete |
+| M29 | Multi-agent scope inheritance + publish | 🟢 Complete |
 | M30 | Memory health score + drift alerts | 🔴 Not started |
 | M31 | Compliance mode (retention + right-to-erasure) | 🔴 Not started |
 | M32 | Agent-authored observation ingest | 🔴 Not started |
@@ -64,7 +64,7 @@ This document tracks all planned features across the platform with current statu
 | Cargo workspace root | 🟢 | M1 | 5 crates wired |
 | docker-compose (dev) | 🟢 | M1 | Postgres, Redis, Qdrant |
 | docker-compose.test.yml | 🟢 | M1 | Isolated test infra |
-| sqlx migrations scaffold | 🟢 | M1 | 0001–0014 applied |
+| sqlx migrations scaffold | 🟢 | M1 | 0001–0020 tracked |
 | rust-toolchain.toml (MSRV 1.88) | 🟢 | M1 | |
 | GitHub Actions CI (fmt + clippy + test + integration) | 🟢 | M1/M6 | Integration job added in M6 |
 | common crate (models, traits, error, config, telemetry) | 🟢 | M1 | |
@@ -157,6 +157,9 @@ This document tracks all planned features across the platform with current statu
 | GET /v1/retrieve/trace/:query_id | 🟢 | M6 | |
 | Vector search leg (live when embedding_id populated) | 🟢 | M7 | Wired through slow path embeddings |
 | Configurable scoring weights per workspace | 🟢 | M6 | WorkspaceConfig |
+| Point-in-time memory list/search | 🟢 | M28 | GET /v1/memory?as_of=... and historical hydration via memory_versions |
+| Point-in-time retrieval | 🟢 | M28 | POST /v1/retrieve as_of with historical decay math and trace persistence |
+| Workspace-pool retrieval inheritance | 🟢 | M29 | include_workspace_pool and sub_agent_pools allow agent-scoped searches to include published semantic memory |
 
 ---
 
@@ -198,6 +201,11 @@ This document tracks all planned features across the platform with current statu
 | POST/GET/PATCH/DELETE /v1/workspaces/:id/skills[/:name] | 🟢 | M25 | Workspace HTTP Skills registry; secret read is isolated at /secret |
 | GET /v1/workspaces/:id/contradictions, POST /v1/workspaces/:id/contradictions/:flag_id/resolve, GET /v1/workspaces/:id/contradictions/count | 🟢 | M26 | Review and resolve contradiction flags |
 | GET /v1/memory/:id/provenance | 🟢 | M27 | Source events, source episodes, merge audit records, and access summary as DAG |
+| GET /v1/memory?as_of=... | 🟢 | M28 | Reconstructs active memories as of an ISO8601 timestamp |
+| POST /v1/retrieve with as_of | 🟢 | M28 | Historical retrieval packs memory state and scores at timestamp |
+| POST /v1/memory/:id/publish | 🟢 | M29 | Publishes semantic memory to workspace pool and writes audit action |
+| POST /v1/memory/search include_workspace_pool | 🟢 | M29 | Agent searches can include workspace-published memories |
+| PATCH /v1/workspaces/:id/config sub_agent_pools | 🟢 | M29 | Configures automatic workspace-pool inheritance for sub-agents |
 
 ---
 
@@ -212,6 +220,7 @@ This document tracks all planned features across the platform with current statu
 | stdio + HTTP SSE transports | 🟢 | M11 | MCP 2025-06-18 spec |
 | MCP endpoint in docker-compose | 🟢 | M11 | profile-gated service on port 3003 |
 | memory_retrieve returns enabled workspace skills | 🟢 | M25 | Skills array includes endpoint and JSON schemas without secrets |
+| memory_retrieve include_workspace_pool | 🟢 | M29 | Tool schema supports workspace-pool inheritance for agent context |
 
 ---
 
@@ -290,6 +299,10 @@ This document tracks all planned features across the platform with current statu
 | Contradiction review view | 🟢 | M26 | Status tabs, side-by-side memory previews, resolve notes |
 | Dashboard contradiction badge | 🟢 | M26 | Open-count badge links to review queue |
 | MemoryDetail lineage panel | 🟢 | M27 | Tree view for provenance graph |
+| Memory Explorer point-in-time filter | 🟢 | M28 | As Of datetime filter feeds GET /v1/memory and POST /v1/memory/search |
+| Memory visibility badges | 🟢 | M29 | Detail and list rows show Private vs Workspace Pool visibility |
+| Publish semantic memory action | 🟢 | M29 | Memory Detail publishes private semantic memories with optimistic cache update |
+| Settings sub-agent pools field | 🟢 | M29 | Workspace config writes comma-separated inherited agent pools |
 
 ---
 
@@ -359,11 +372,11 @@ This document tracks all planned features across the platform with current statu
 | Contradiction quarantine review API + UI | 🟢 | M26 | GET /v1/workspaces/:id/contradictions; resolve/dismiss actions |
 | Provenance graph — GET /v1/memory/:id/provenance | 🟢 | M27 | Returns DAG: source events → episodic → semantic → merges → accesses |
 | Provenance tree in MemoryDetail UI | 🟢 | M27 | Visual lineage panel in frontend MemoryDetail view |
-| Point-in-time retrieval — as_of param on GET /v1/memory | 🔴 | M28 | Reconstructs memory state at timestamp; uses memory_versions + decay math |
-| as_of support on POST /v1/retrieve | 🔴 | M28 | Historical context retrieval for incident post-mortems |
-| Multi-agent scope visibility field (private \| workspace) | 🔴 | M29 | scope.visibility on MemoryUnit |
-| POST /v1/memory/:id/publish (agent → workspace pool) | 🔴 | M29 | Promoted semantic memories shared across agents |
-| Sub-agent pool subscription via workspace config | 🔴 | M29 | Team agents inherit from configured sub-agent pools |
+| Point-in-time retrieval — as_of param on GET /v1/memory | 🟢 | M28 | Reconstructs memory state at timestamp; uses memory_versions + decay math |
+| as_of support on POST /v1/retrieve | 🟢 | M28 | Historical context retrieval for incident post-mortems |
+| Multi-agent scope visibility field (private \| workspace) | 🟢 | M29 | scope_visibility on MemoryUnit |
+| POST /v1/memory/:id/publish (agent → workspace pool) | 🟢 | M29 | Published semantic memories shared across agents |
+| Sub-agent pool subscription via workspace config | 🟢 | M29 | Team agents inherit from configured sub-agent pools |
 | Memory health score (0–100 composite) | 🔴 | M30 | Decay distribution, promotion rate, DLQ rate, dedup collision rate |
 | GET /v1/workspaces/:id/health | 🔴 | M30 | Returns score + component breakdown |
 | Health score dashboard card + trend alert | 🔴 | M30 | Redis-backed threshold; webhook notification on degradation |
@@ -399,3 +412,5 @@ This document tracks all planned features across the platform with current statu
 | 0016_skills.sql | HTTP Skills registry with encrypted auth secrets | 🟢 M25 |
 | 0017_contradictions.sql | Contradiction flags and resolution status | 🟢 M26 |
 | 0018_provenance_indexes.sql | Source-event, source-episode, and memory audit lineage indexes | 🟢 M27 |
+| 0019_point_in_time.sql | Historical as-of query indexes for memory_units and memory_versions | 🟢 M28 |
+| 0020_scope_visibility.sql | scope_visibility column, publish audit action, and workspace-pool visibility index | 🟢 M29 |

@@ -131,6 +131,7 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   const llmModel = stringConfig(config.llm_model);
   const embeddingProvider = stringConfig(config.embedding_provider);
   const embeddingModel = stringConfig(config.embedding_model);
+  const subAgentPools = stringArrayConfig(config.sub_agent_pools);
 
   if (decayHalfLifeDays !== undefined) {
     normalized.decay_half_life_days = decayHalfLifeDays;
@@ -150,6 +151,9 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   if (embeddingModel !== undefined) {
     normalized.embedding_model = embeddingModel;
   }
+  if (subAgentPools !== undefined) {
+    normalized.sub_agent_pools = subAgentPools;
+  }
 
   return normalized;
 }
@@ -168,4 +172,12 @@ function numberConfig(value: JsonValue | undefined): number | undefined {
 
 function stringConfig(value: JsonValue | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function stringArrayConfig(value: JsonValue | undefined): string[] | undefined {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    return undefined;
+  }
+
+  return value as string[];
 }

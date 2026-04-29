@@ -83,6 +83,9 @@ pub async fn run(
         user_id: None,
         repo: None,
         memory_types: None,
+        as_of: None,
+        include_workspace_pool: false,
+        inherited_workspace_pool_agent_ids: Vec::new(),
     };
 
     let results = match mode {

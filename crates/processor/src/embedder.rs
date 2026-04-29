@@ -2,9 +2,13 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use common::{
-    error::AppResult, models::MemoryType, providers::EmbeddingProvider,
-    telemetry::EMBEDDING_LATENCY, AppError, AppState,
+    error::AppResult,
+    models::{MemoryType, ScopeVisibility},
+    providers::EmbeddingProvider,
+    telemetry::EMBEDDING_LATENCY,
+    AppError, AppState,
 };
 use qdrant_client::{
     qdrant::{
@@ -24,8 +28,10 @@ pub const COLLECTION_NAME: &str = "memoryops_memories";
 pub struct QdrantPayload {
     pub workspace_id: Uuid,
     pub memory_type: MemoryType,
+    pub scope_visibility: ScopeVisibility,
     pub importance_score: f32,
     pub decay_score: f32,
+    pub created_at: DateTime<Utc>,
     pub agent_id: Option<String>,
     pub user_id: Option<String>,
     pub repo: Option<String>,
@@ -37,8 +43,10 @@ impl QdrantPayload {
         Self {
             workspace_id: memory.workspace_id,
             memory_type: memory.memory_type,
+            scope_visibility: memory.scope_visibility,
             importance_score: memory.importance_score,
             decay_score: memory.decay_score,
+            created_at: memory.created_at,
             agent_id: memory.scope.agent_id.clone(),
             user_id: memory.scope.user_id.clone(),
             repo: memory.scope.repo.clone(),
@@ -56,8 +64,13 @@ impl QdrantPayload {
                 "memory_type".to_owned(),
                 json!(memory_type_as_str(self.memory_type)),
             ),
+            (
+                "scope_visibility".to_owned(),
+                json!(scope_visibility_as_str(self.scope_visibility)),
+            ),
             ("importance_score".to_owned(), json!(self.importance_score)),
             ("decay_score".to_owned(), json!(self.decay_score)),
+            ("created_at".to_owned(), json!(self.created_at.to_rfc3339())),
             ("agent_id".to_owned(), json!(self.agent_id)),
             ("user_id".to_owned(), json!(self.user_id)),
             ("repo".to_owned(), json!(self.repo)),
@@ -190,6 +203,13 @@ fn memory_type_as_str(memory_type: MemoryType) -> &'static str {
     }
 }
 
+fn scope_visibility_as_str(scope_visibility: ScopeVisibility) -> &'static str {
+    match scope_visibility {
+        ScopeVisibility::Private => "private",
+        ScopeVisibility::Workspace => "workspace",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -254,8 +274,10 @@ mod tests {
         let payload = QdrantPayload {
             workspace_id: Uuid::now_v7(),
             memory_type: MemoryType::Episodic,
+            scope_visibility: ScopeVisibility::Private,
             importance_score: 0.8,
             decay_score: 0.7,
+            created_at: Utc::now(),
             agent_id: None,
             user_id: None,
             repo: None,
@@ -303,8 +325,10 @@ mod tests {
         let payload = QdrantPayload {
             workspace_id,
             memory_type: MemoryType::Episodic,
+            scope_visibility: ScopeVisibility::Private,
             importance_score: 0.8,
             decay_score: 0.7,
+            created_at: Utc::now(),
             agent_id: Some("agent".to_owned()),
             user_id: None,
             repo: Some("Quazmoz/memoryops".to_owned()),
@@ -331,5 +355,7 @@ mod tests {
         assert_eq!(point_id, memory_id.to_string());
         assert_eq!(upserted.len(), 1);
         assert!(upserted[0].payload.contains_key("workspace_id"));
+        assert!(upserted[0].payload.contains_key("scope_visibility"));
+        assert!(upserted[0].payload.contains_key("created_at"));
     }
 }

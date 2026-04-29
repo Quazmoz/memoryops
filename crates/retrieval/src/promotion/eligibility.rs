@@ -23,7 +23,7 @@ mod tests {
     use chrono::Utc;
     use common::{
         config::AppConfig,
-        models::{Entity, MemoryScope},
+        models::{Entity, MemoryScope, ScopeVisibility},
     };
     use sqlx::types::Json;
     use uuid::Uuid;
@@ -104,6 +104,7 @@ mod tests {
                 repo: Some("Quazmoz/memoryops".to_owned()),
             },
             memory_type,
+            scope_visibility: ScopeVisibility::Private,
             content: format!("memory accessed {access_count} times"),
             entities: Json(Vec::<Entity>::new()),
             importance_score,

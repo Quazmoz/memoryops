@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, Query, State},
     Extension, Json,
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use common::{
     auth::AuthContext,
     error::AppResult,
@@ -18,7 +18,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    dto::{MemoryResult, ScopeFilter, SearchMode, SearchRequest, MAX_LIMIT},
+    dto::{MemoryResult, ScopeFilter, SearchMode, SearchRequest, WorkspacePoolAccess, MAX_LIMIT},
     search::{hybrid, keyword, vector},
     store,
 };
@@ -38,6 +38,9 @@ pub struct RetrieveRequest {
     pub token_budget: Option<usize>,
     pub mode: Option<SearchMode>,
     pub include_trace: Option<bool>,
+    pub as_of: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub include_workspace_pool: bool,
 }
 
 impl RetrieveRequest {
@@ -90,6 +93,7 @@ pub struct PackedMemory {
 pub struct RetrievalTrace {
     pub query_id: Uuid,
     pub query: String,
+    pub as_of: Option<DateTime<Utc>>,
     pub mode: SearchMode,
     pub candidates_evaluated: usize,
     pub included_count: usize,
@@ -141,7 +145,8 @@ pub async fn handle_retrieve(
         .unwrap_or(state.config.retrieval.default_token_budget);
     let query_id = Uuid::now_v7();
     let scope_filter = request.resolved_scope_filter();
-    let search_request = SearchRequest {
+    let config = super::fetch_workspace_config(&state, workspace_id).await?;
+    let mut search_request = SearchRequest {
         query: request.query.clone(),
         workspace_id,
         mode,
@@ -153,7 +158,12 @@ pub async fn handle_retrieve(
         user_id: None,
         repo: None,
         memory_types: None,
+        as_of: request.as_of,
+        include_workspace_pool: request.include_workspace_pool,
+        inherited_workspace_pool_agent_ids: Vec::new(),
     };
+    search_request.apply_workspace_config(&config);
+    let workspace_pool = search_request.workspace_pool_access();
 
     let search_results = search_candidates(&state, &search_request, mode).await?;
     let candidates = hydrate_candidates(
@@ -161,6 +171,8 @@ pub async fn handle_retrieve(
         workspace_id,
         search_results,
         scope_filter.as_ref(),
+        request.as_of,
+        &workspace_pool,
         mode,
     )
     .await?;
@@ -172,6 +184,7 @@ pub async fn handle_retrieve(
     let trace = RetrievalTrace {
         query_id,
         query: request.query,
+        as_of: request.as_of,
         mode,
         candidates_evaluated: packed.entries.len(),
         included_count: packed.memories.len(),
@@ -245,13 +258,19 @@ async fn hydrate_candidates(
     workspace_id: Uuid,
     search_results: Vec<MemoryResult>,
     scope: Option<&ScopeFilter>,
+    as_of: Option<DateTime<Utc>>,
+    workspace_pool: &WorkspacePoolAccess,
     mode: SearchMode,
 ) -> AppResult<Vec<CandidateMemory>> {
     let ids = search_results
         .iter()
         .map(|result| result.memory.id)
         .collect::<Vec<_>>();
-    let units = store::get_memory_units_by_ids(&state.db, &ids, workspace_id).await?;
+    let units = if let Some(as_of) = as_of {
+        store::get_memory_units_by_ids_at(&state.db, &ids, workspace_id, as_of).await?
+    } else {
+        store::get_memory_units_by_ids(&state.db, &ids, workspace_id).await?
+    };
     let mut units_by_id = units
         .into_iter()
         .map(|unit| (unit.id, unit))
@@ -263,7 +282,7 @@ async fn hydrate_candidates(
             continue;
         };
         if let Some(scope) = scope {
-            if !scope_matches(&unit.scope, scope) {
+            if !store::scope_matches_workspace_pool(&unit, scope, workspace_pool) {
                 continue;
             }
         }
@@ -353,26 +372,6 @@ fn score_breakdown(unit: &MemoryUnit, score: f32, mode: SearchMode) -> ScoreBrea
     }
 }
 
-fn scope_matches(unit_scope: &common::models::MemoryScope, requested_scope: &ScopeFilter) -> bool {
-    if let Some(agent_id) = &requested_scope.agent_id {
-        if unit_scope.agent_id.as_ref() != Some(agent_id) {
-            return false;
-        }
-    }
-    if let Some(user_id) = &requested_scope.user_id {
-        if unit_scope.user_id.as_ref() != Some(user_id) {
-            return false;
-        }
-    }
-    if let Some(repo) = &requested_scope.repo {
-        if unit_scope.repo.as_ref() != Some(repo) {
-            return false;
-        }
-    }
-
-    true
-}
-
 fn first_scope_value(values: [Option<&String>; 2]) -> Option<String> {
     values.into_iter().find_map(|value| {
         let trimmed = value?.trim();
@@ -423,7 +422,7 @@ mod tests {
 
     use std::collections::HashSet;
 
-    use common::models::{MemoryScope, MemoryType};
+    use common::models::{MemoryScope, MemoryType, ScopeVisibility};
     use proptest::prelude::*;
     use sqlx::types::Json;
 
@@ -462,6 +461,7 @@ mod tests {
                         repo: None,
                     },
                     memory_type: MemoryType::Semantic,
+                    scope_visibility: ScopeVisibility::Private,
                     content: self.content,
                     entities: Json(Vec::new()),
                     importance_score: self.importance_score as f32,

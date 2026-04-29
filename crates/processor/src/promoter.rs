@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Duration};
 use anyhow::{anyhow, Context};
 use chrono::Utc;
 use common::{
-    models::{MemoryType, MemoryUnit},
+    models::{MemoryType, MemoryUnit, ScopeVisibility},
     providers::{EmbeddingProvider, LlmProvider},
 };
 use qdrant_client::{
@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::embedder::{QdrantPayload, COLLECTION_NAME};
 
-const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
+const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, scope_visibility, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
 const PROMOTION_SUMMARY_MAX_TOKENS: usize = 256;
 const EMBED_MAX_ATTEMPTS: usize = 3;
 
@@ -282,8 +282,10 @@ async fn embed_and_store_semantic(
     let payload = QdrantPayload {
         workspace_id,
         memory_type: MemoryType::Semantic,
+        scope_visibility: ScopeVisibility::Private,
         importance_score,
         decay_score,
+        created_at: Utc::now(),
         agent_id: None,
         user_id: None,
         repo: None,

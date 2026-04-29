@@ -49,6 +49,8 @@ pub struct WorkspaceConfig {
     pub contradiction_threshold: f32,
     #[serde(default = "default_contradiction_candidates")]
     pub contradiction_candidates: usize,
+    #[serde(default)]
+    pub sub_agent_pools: Vec<String>,
 }
 
 impl Default for WorkspaceConfig {
@@ -69,6 +71,7 @@ impl Default for WorkspaceConfig {
             contradiction_mode: default_contradiction_mode(),
             contradiction_threshold: default_contradiction_threshold(),
             contradiction_candidates: default_contradiction_candidates(),
+            sub_agent_pools: Vec::new(),
         }
     }
 }

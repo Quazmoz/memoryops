@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use common::{auth::AuthContext, error::AppResult, AppError};
+use common::{auth::AuthContext, error::AppResult, models::WorkspaceConfig, AppError, AppState};
 use uuid::Uuid;
 
 pub mod get;
@@ -41,4 +41,22 @@ pub(crate) fn resolve_workspace_id(
 pub(crate) fn audit_actor(auth: Option<&AuthContext>) -> String {
     auth.map(AuthContext::actor)
         .unwrap_or_else(|| "anonymous".to_owned())
+}
+
+pub(crate) async fn fetch_workspace_config(
+    state: &AppState,
+    workspace_id: Uuid,
+) -> AppResult<WorkspaceConfig> {
+    let value = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT config FROM workspaces WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(workspace_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound {
+        resource: format!("workspace:{workspace_id}"),
+    })?;
+
+    Ok(serde_json::from_value::<WorkspaceConfig>(value).unwrap_or_default())
 }

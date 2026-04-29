@@ -60,6 +60,7 @@ function memoryFactory(overrides: Partial<MemoryUnit> = {}): MemoryUnit {
       repo: "Quazmoz/memoryops",
     },
     memory_type: "episodic",
+    scope_visibility: "private",
     content: "Mona opened a retrieval scoring pull request.",
     entities: [{ entity_type: "person", value: "mona", confidence: 0.99 }],
     importance_score: 0.4,

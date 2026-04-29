@@ -37,6 +37,10 @@ pub fn retrieval_router() -> Router<AppState> {
             post(handlers::lifecycle::handle_promote),
         )
         .route(
+            "/v1/memory/{id}/publish",
+            post(handlers::lifecycle::handle_publish),
+        )
+        .route(
             "/v1/memory/{id}/history",
             get(handlers::lifecycle::handle_history),
         )

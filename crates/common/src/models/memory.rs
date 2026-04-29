@@ -14,6 +14,7 @@ pub struct MemoryUnit {
     pub workspace_id: Uuid,
     pub scope: MemoryScope,
     pub memory_type: MemoryType,
+    pub scope_visibility: ScopeVisibility,
     pub content: String,
     pub entities: Json<Vec<Entity>>,
     pub importance_score: f32,
@@ -50,6 +51,15 @@ impl MemoryUnit {
 pub enum MemoryType {
     Episodic,
     Semantic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "varchar", rename_all = "lowercase")]
+pub enum ScopeVisibility {
+    #[default]
+    Private,
+    Workspace,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

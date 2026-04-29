@@ -33,6 +33,7 @@ pub enum AuditAction {
     KeyRevoked,
     ConfigUpdated,
     WorkspaceConfigUpdated,
+    Publish,
     #[serde(rename = "workspace.promote")]
     #[sqlx(rename = "workspace.promote")]
     WorkspacePromote,

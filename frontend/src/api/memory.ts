@@ -29,6 +29,7 @@ export type MemoryListParams = {
   repo?: string;
   sort?: SortField;
   direction?: SortDirection;
+  asOf?: string;
 };
 
 export type SearchCriteria = {
@@ -40,6 +41,8 @@ export type SearchCriteria = {
   agentId?: string;
   userId?: string;
   repo?: string;
+  asOf?: string;
+  includeWorkspacePool?: boolean;
   limit: number;
   offset: number;
 };
@@ -69,6 +72,7 @@ export function listMemory(workspaceId: string, params: MemoryListParams): Promi
     repo: optionalText(params.repo),
     sort: params.sort,
     direction: params.direction,
+    as_of: params.asOf,
   });
 
   return apiRequest<ListMemoryResponse>(`/v1/memory${search}`);
@@ -86,6 +90,12 @@ export function patchMemory(workspaceId: string, id: string, patch: UpdateMemory
   return apiRequest<MemoryUnit>(`/v1/memory/${id}${queryString({ workspace_id: workspaceId })}`, {
     method: "PATCH",
     body: patch,
+  });
+}
+
+export function publishMemory(workspaceId: string, id: string): Promise<MemoryUnit> {
+  return apiRequest<MemoryUnit>(`/v1/memory/${id}/publish${queryString({ workspace_id: workspaceId })}`, {
+    method: "POST",
   });
 }
 
@@ -129,6 +139,14 @@ function retrieveRequestBody(workspaceId: string, request: RetrieveRequest): Rec
 
   if (request.include_trace !== undefined) {
     body.include_trace = request.include_trace;
+  }
+
+  if (request.as_of !== undefined) {
+    body.as_of = request.as_of;
+  }
+
+  if (request.include_workspace_pool !== undefined) {
+    body.include_workspace_pool = request.include_workspace_pool;
   }
 
   if (request.scope !== undefined) {
@@ -190,6 +208,14 @@ export function buildSearchRequest(workspaceId: string, criteria: SearchCriteria
 
   if (criteria.memoryType !== "all") {
     request.memory_types = [criteria.memoryType];
+  }
+
+  if (criteria.asOf) {
+    request.as_of = criteria.asOf;
+  }
+
+  if (criteria.includeWorkspacePool) {
+    request.include_workspace_pool = true;
   }
 
   if (Object.keys(filters).length > 0) {

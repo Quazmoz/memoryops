@@ -1,4 +1,4 @@
-import { ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, Filter, Search, Send, Tag, X } from "lucide-react";
+import { ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, Filter, Search, Send, Share2, Tag, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
@@ -42,8 +42,10 @@ export function MemoryExplorer() {
   const [query, setQuery] = useState(initialQuery);
   const [submittedQuery, setSubmittedQuery] = useState(initialQuery);
   const [memoryType, setMemoryType] = useState<MemoryTypeFilter>("all");
+  const [includeWorkspacePool, setIncludeWorkspacePool] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [minImportance, setMinImportance] = useState(0);
+  const [asOfDateTime, setAsOfDateTime] = useState("");
   const [scopeDraft, setScopeDraft] = useState<ScopeFilterDraft>(emptyScopeFilter);
   const [debouncedScope, setDebouncedScope] = useState<ScopeFilterDraft>(emptyScopeFilter);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -60,6 +62,8 @@ export function MemoryExplorer() {
     return () => window.clearTimeout(timeoutId);
   }, [scopeDraft]);
 
+  const asOfIso = useMemo(() => localDateTimeToIso(asOfDateTime), [asOfDateTime]);
+
   const listParams = useMemo<MemoryListParams>(
     () => {
       const params: MemoryListParams = {
@@ -74,30 +78,37 @@ export function MemoryExplorer() {
         direction: sortDirection,
       };
 
+      if (asOfIso) {
+        params.asOf = asOfIso;
+      }
+
       if (pinned) {
         params.pinned = true;
       }
 
       return params;
     },
-    [debouncedScope, memoryType, minImportance, offset, pinned, sortDirection, sortField],
+    [asOfIso, debouncedScope, memoryType, minImportance, offset, pinned, sortDirection, sortField],
   );
   const searchText = submittedQuery || selectedTags.join(" ");
-  const searchCriteria = useMemo(
-    () => ({
+  const searchCriteria = useMemo(() => {
+    const criteria = {
       query: searchText,
       memoryType,
       pinned,
       minImportance,
+      includeWorkspacePool,
       agentId: debouncedScope.agentId,
       userId: debouncedScope.userId,
       repo: debouncedScope.repo,
       tags: selectedTags,
       limit: 50,
       offset,
-    }),
-    [debouncedScope, memoryType, minImportance, offset, pinned, searchText, selectedTags],
-  );
+      ...(asOfIso ? { asOf: asOfIso } : {}),
+    };
+
+    return criteria;
+  }, [asOfIso, debouncedScope, includeWorkspacePool, memoryType, minImportance, offset, pinned, searchText, selectedTags]);
   const listQuery = useMemoryList(workspaceId, listParams);
   const searchQuery = useMemorySearch(workspaceId, searchCriteria);
   const tagsQuery = useTags(workspaceId);
@@ -127,6 +138,11 @@ export function MemoryExplorer() {
 
   function selectMemoryType(type: MemoryTypeFilter) {
     setMemoryType(type);
+    setOffset(0);
+  }
+
+  function toggleWorkspacePool() {
+    setIncludeWorkspacePool((value) => !value);
     setOffset(0);
   }
 
@@ -206,7 +222,7 @@ export function MemoryExplorer() {
 
       <section className="grid gap-3 rounded-lg border border-line bg-white p-4 xl:grid-cols-[1fr_auto] xl:items-end">
         <div className="grid gap-4">
-          <div className="grid gap-4 lg:grid-cols-[auto_auto_1fr] lg:items-center">
+          <div className="grid gap-4 lg:grid-cols-[auto_auto_auto_1fr] lg:items-center">
             <div className="flex flex-wrap gap-2" aria-label="Memory type filters">
               {(["all", "episodic", "semantic"] as MemoryTypeFilter[]).map((type) => (
                 <button
@@ -224,6 +240,11 @@ export function MemoryExplorer() {
             <button type="button" data-testid="filter-pinned" onClick={togglePinnedFilter} className={filterButtonClass(pinned)}>
               <Filter className="h-3.5 w-3.5" aria-hidden="true" />
               Pinned
+            </button>
+
+            <button type="button" data-testid="filter-workspace-pool" onClick={toggleWorkspacePool} className={filterButtonClass(includeWorkspacePool)}>
+              <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Workspace Pool
             </button>
 
             <label className="grid min-w-[16rem] gap-2 text-sm text-ink/70">
@@ -244,10 +265,40 @@ export function MemoryExplorer() {
             </label>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <ScopeFilterInput label="Agent ID" testId="filter-agent-id" value={scopeDraft.agentId} onChange={(value) => changeScopeFilter("agentId", value)} />
             <ScopeFilterInput label="User ID" testId="filter-user-id" value={scopeDraft.userId} onChange={(value) => changeScopeFilter("userId", value)} />
             <ScopeFilterInput label="Repo" testId="filter-repo" value={scopeDraft.repo} onChange={(value) => changeScopeFilter("repo", value)} placeholder="owner/repo" />
+            <label className="grid gap-1 text-xs font-medium uppercase text-ink/45">
+              As Of
+              <div className="flex gap-2">
+                <Input
+                  type="datetime-local"
+                  value={asOfDateTime}
+                  data-testid="as-of-input"
+                  onChange={(event) => {
+                    setAsOfDateTime(event.target.value);
+                    setOffset(0);
+                  }}
+                  className="normal-case"
+                />
+                {asOfDateTime ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Clear as of"
+                    title="Clear as of"
+                    onClick={() => {
+                      setAsOfDateTime("");
+                      setOffset(0);
+                    }}
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                ) : null}
+              </div>
+            </label>
           </div>
         </div>
 
@@ -434,4 +485,17 @@ function ScopeFilterInput({ label, testId, value, onChange, placeholder }: { lab
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Memory results could not be loaded.";
+}
+
+function localDateTimeToIso(value: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return date.toISOString();
 }

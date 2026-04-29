@@ -13,6 +13,7 @@ import {
   getReadiness,
   listMemory,
   patchMemory,
+  publishMemory,
   searchMemory,
   type MemoryListParams,
   type SearchCriteria,
@@ -36,6 +37,8 @@ export const memoryKeys = {
 type OptimisticContext = {
   snapshots: Array<[QueryKey, unknown]>;
 };
+
+type MemoryCachePatch = UpdateMemoryRequest | Partial<MemoryUnit> | MemoryUnit;
 
 export function useReadiness(workspaceId: string) {
   return useQuery({
@@ -116,11 +119,40 @@ export function useUpdateMemory(workspaceId: string) {
   });
 }
 
+export function usePublishMemory(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<MemoryUnit, Error, { id: string }, OptimisticContext>({
+    mutationKey: ["workspace", workspaceId, "memory", "publish"],
+    mutationFn: ({ id }) => publishMemory(workspaceId, id),
+    onMutate: async ({ id }) => {
+      await queryClient.cancelQueries({ queryKey: memoryKeys.all(workspaceId) });
+      const snapshots = queryClient.getQueriesData({ queryKey: memoryKeys.all(workspaceId) });
+      optimisticallyPatchMemoryCaches(queryClient, workspaceId, id, { scope_visibility: "workspace" });
+      return { snapshots };
+    },
+    onError: (_error, _variables, context) => {
+      context?.snapshots.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+    },
+    onSuccess: (memory) => {
+      queryClient.setQueryData(memoryKeys.detail(workspaceId, memory.id), memory);
+      optimisticallyPatchMemoryCaches(queryClient, workspaceId, memory.id, memory);
+    },
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({ queryKey: memoryKeys.detail(workspaceId, variables.id) });
+      void queryClient.invalidateQueries({ queryKey: memoryKeys.lists(workspaceId) });
+      void queryClient.invalidateQueries({ queryKey: memoryKeys.searches(workspaceId) });
+    },
+  });
+}
+
 export function optimisticallyPatchMemoryCaches(
   queryClient: QueryClient,
   workspaceId: string,
   memoryId: string,
-  patch: UpdateMemoryRequest | MemoryUnit,
+  patch: MemoryCachePatch,
 ): void {
   queryClient.setQueryData<MemoryUnit | undefined>(memoryKeys.detail(workspaceId, memoryId), (current) =>
     current ? applyMemoryPatch(current, patch) : current,
@@ -152,7 +184,7 @@ export function optimisticallyPatchMemoryCaches(
   });
 }
 
-export function applyMemoryPatch(memory: MemoryUnit, patch: UpdateMemoryRequest | MemoryUnit): MemoryUnit {
+export function applyMemoryPatch(memory: MemoryUnit, patch: MemoryCachePatch): MemoryUnit {
   if (isMemoryUnit(patch)) {
     return {
       ...memory,
@@ -172,7 +204,7 @@ export function applyMemoryPatch(memory: MemoryUnit, patch: UpdateMemoryRequest 
   return next;
 }
 
-function isMemoryUnit(value: UpdateMemoryRequest | MemoryUnit): value is MemoryUnit {
+function isMemoryUnit(value: MemoryCachePatch): value is MemoryUnit {
   return "content" in value && "workspace_id" in value;
 }
 

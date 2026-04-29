@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: MemoryOps API
-  version: 0.15.0
+  version: 0.17.0
   description: Control plane API for AI-agent memory ingestion, lifecycle management, retrieval, and audit.
   contact:
     name: MemoryOps
@@ -192,6 +192,12 @@ paths:
           schema:
             type: string
             format: date-time
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Reconstruct memory state and decay scores as of this timestamp.
       responses:
         '200':
           description: Paginated memory units
@@ -262,6 +268,31 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/memory/search:
+    post:
+      tags: [Memory]
+      operationId: searchMemory
+      summary: Search memory units
+      description: Runs keyword, vector, or hybrid search with scope, point-in-time, and workspace-pool filters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemorySearchRequest'
+      responses:
+        '200':
+          description: Ranked memory search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemorySearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /v1/memory/{id}/promote:
     post:
       tags: [Memory]
@@ -281,6 +312,27 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/memory/{id}/publish:
+    post:
+      tags: [Memory]
+      operationId: publishMemory
+      summary: Publish semantic memory to the workspace pool
+      description: Sets scope_visibility to workspace for a semantic memory and writes a publish audit entry.
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+      responses:
+        '200':
+          description: Published memory unit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryUnit'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
   /v1/memory/{id}/restore:
     post:
       tags: [Memory]
@@ -868,6 +920,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
+    UnprocessableEntity:
+      description: Request is syntactically valid but cannot be applied to this resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
     RateLimited:
       description: Rate limit exceeded
       headers:
@@ -974,6 +1032,12 @@ components:
     MemoryType:
       type: string
       enum: [episodic, semantic]
+    ScopeVisibility:
+      type: string
+      enum: [private, workspace]
+    SearchMode:
+      type: string
+      enum: [hybrid, vector, keyword]
     EntityType:
       type: string
       enum: [person, repo, branch, topic, file, team]
@@ -992,6 +1056,7 @@ components:
         - key_created
         - key_revoked
         - workspace_config_updated
+        - publish
         - integration_added
         - integration_removed
     IntegrationStatus:
@@ -1030,6 +1095,7 @@ components:
         - workspace_id
         - scope
         - memory_type
+        - scope_visibility
         - content
         - entities
         - importance_score
@@ -1052,6 +1118,8 @@ components:
           $ref: '#/components/schemas/MemoryScope'
         memory_type:
           $ref: '#/components/schemas/MemoryType'
+        scope_visibility:
+          $ref: '#/components/schemas/ScopeVisibility'
         content:
           type: string
         entities:
@@ -1184,6 +1252,99 @@ components:
             $ref: '#/components/schemas/MemoryUnit'
         next_cursor:
           type: [string, 'null']
+    MemorySearchRequest:
+      type: object
+      required: [query, workspace_id, mode]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        workspace_id:
+          type: string
+          format: uuid
+        mode:
+          $ref: '#/components/schemas/SearchMode'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        offset:
+          type: integer
+          minimum: 0
+        agent_id:
+          type: string
+        user_id:
+          type: string
+        repo:
+          type: string
+        scope:
+          $ref: '#/components/schemas/ScopeFilter'
+        memory_types:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryType'
+        filters:
+          $ref: '#/components/schemas/MemorySearchFilters'
+        as_of:
+          type: string
+          format: date-time
+        include_workspace_pool:
+          type: boolean
+          default: false
+    ScopeFilter:
+      type: object
+      properties:
+        agent_id:
+          type: string
+        user_id:
+          type: string
+        repo:
+          type: string
+    MemorySearchFilters:
+      type: object
+      properties:
+        memory_type:
+          $ref: '#/components/schemas/MemoryType'
+        source:
+          type: string
+        min_importance:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        pinned:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+    MemorySearchResponse:
+      type: object
+      required: [results, total, query_id]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemorySearchResult'
+        total:
+          type: integer
+          minimum: 0
+        query_id:
+          type: string
+          format: uuid
+    MemorySearchResult:
+      type: object
+      required: [memory, score, rank]
+      properties:
+        memory:
+          $ref: '#/components/schemas/MemoryUnit'
+        score:
+          type: number
+          format: float
+        rank:
+          type: integer
+          minimum: 1
     RetrievalRequest:
       type: object
       required: [query]
@@ -1196,6 +1357,20 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+        mode:
+          $ref: '#/components/schemas/SearchMode'
+        agent_id:
+          type: string
+        user_id:
+          type: string
+        repo:
+          type: string
+        as_of:
+          type: string
+          format: date-time
+        include_workspace_pool:
+          type: boolean
+          default: false
         token_budget:
           type: integer
           minimum: 256
@@ -1307,6 +1482,9 @@ components:
         query_id:
           type: string
           format: uuid
+        as_of:
+          type: [string, 'null']
+          format: date-time
         trace:
           type: array
           items:
@@ -1392,6 +1570,11 @@ components:
             Decay score below which a memory is soft-deleted.
             Defaults to 0.10 when null.
           example: 0.10
+        sub_agent_pools:
+          type: array
+          items:
+            type: string
+          description: Agent IDs whose published workspace-pool memories are inherited by retrieval/search.
     WorkspaceStatsHistory:
       type: object
       required: [days, series]

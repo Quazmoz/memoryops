@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::{
     dto::{
-        normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto, ScopeFilter,
-        SearchFilters, SearchRequest, DEFAULT_OFFSET,
+        normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto, SearchFilters,
+        SearchRequest, DEFAULT_OFFSET,
     },
     store,
 };
@@ -24,7 +24,11 @@ pub async fn keyword_search(
     let offset = req.offset.unwrap_or(DEFAULT_OFFSET);
     let hits = keyword_hits(state, req, limit, offset).await?;
     let ids = hits.iter().map(|hit| hit.id).collect::<Vec<_>>();
-    let units = store::get_memory_units_by_ids(&state.db, &ids, req.workspace_id).await?;
+    let units = if let Some(as_of) = req.as_of {
+        store::get_memory_units_by_ids_at(&state.db, &ids, req.workspace_id, as_of).await?
+    } else {
+        store::get_memory_units_by_ids(&state.db, &ids, req.workspace_id).await?
+    };
     let mut units_by_id = units
         .into_iter()
         .map(|unit| (unit.id, unit))
@@ -57,7 +61,16 @@ async fn keyword_hits(
     builder.push_bind(&req.query);
     builder.push(")) AS rank_score FROM memory_units WHERE workspace_id = ");
     builder.push_bind(req.workspace_id);
-    builder.push(" AND deleted_at IS NULL AND to_tsvector('english', content) @@ plainto_tsquery('english', ");
+    if let Some(as_of) = req.as_of {
+        builder.push(" AND created_at <= ");
+        builder.push_bind(as_of);
+        builder.push(" AND (deleted_at IS NULL OR deleted_at > ");
+        builder.push_bind(as_of);
+        builder.push(")");
+    } else {
+        builder.push(" AND deleted_at IS NULL");
+    }
+    builder.push(" AND to_tsvector('english', content) @@ plainto_tsquery('english', ");
     builder.push_bind(&req.query);
     builder.push(")");
 
@@ -65,7 +78,7 @@ async fn keyword_hits(
         push_search_filters(&mut builder, filters);
     }
     if let Some(scope) = req.resolved_scope_filter() {
-        push_scope_filter(&mut builder, &scope);
+        store::push_scope_filter(&mut builder, &scope, &req.workspace_pool_access(), None);
     }
     if let Some(memory_types) = normalized_memory_types(req)? {
         builder.push(" AND memory_type::text = ANY(");
@@ -110,36 +123,14 @@ fn push_search_filters<'a>(builder: &mut QueryBuilder<'a, Postgres>, filters: &'
     }
 }
 
-fn push_scope_filter(builder: &mut QueryBuilder<'_, Postgres>, scope: &ScopeFilter) {
-    if scope.is_empty() {
-        return;
-    }
-
-    push_scope_field(builder, "agent_id", scope.agent_id.clone());
-    push_scope_field(builder, "user_id", scope.user_id.clone());
-    push_scope_field(builder, "repo", scope.repo.clone());
-}
-
-fn push_scope_field(
-    builder: &mut QueryBuilder<'_, Postgres>,
-    column: &'static str,
-    value: Option<String>,
-) {
-    builder.push(" AND (");
-    builder.push(column);
-    builder.push(" = ");
-    builder.push_bind(value.clone());
-    builder.push(" OR ");
-    builder.push_bind(value);
-    builder.push(" IS NULL)");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::dto::ScopeFilter;
+
     #[test]
-    fn scope_filter_with_all_fields_adds_optional_where_clauses() {
+    fn scope_filter_with_all_fields_adds_where_clauses() {
         let mut builder = QueryBuilder::<Postgres>::new(
             "SELECT id, 1.0 AS rank_score FROM memory_units WHERE workspace_id = ",
         );
@@ -150,14 +141,18 @@ mod tests {
             repo: Some("Quazmoz/memoryops".to_owned()),
         };
 
-        push_scope_filter(&mut builder, &scope);
+        store::push_scope_filter(
+            &mut builder,
+            &scope,
+            &crate::dto::WorkspacePoolAccess::default(),
+            None,
+        );
         let sql = builder.sql();
 
         assert!(sql.contains("AND (agent_id ="));
         assert!(sql.contains("AND (user_id ="));
         assert!(sql.contains("AND (repo ="));
-        assert!(sql.matches("OR").count() >= 3);
-        assert!(sql.matches("IS NULL").count() >= 3);
+        assert!(!sql.contains("scope_visibility"));
     }
 
     #[test]
@@ -168,7 +163,12 @@ mod tests {
         builder.push_bind(Uuid::now_v7());
         let before = builder.sql().to_owned();
 
-        push_scope_filter(&mut builder, &ScopeFilter::default());
+        store::push_scope_filter(
+            &mut builder,
+            &ScopeFilter::default(),
+            &crate::dto::WorkspacePoolAccess::default(),
+            None,
+        );
 
         assert_eq!(builder.sql(), before);
     }

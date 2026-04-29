@@ -45,6 +45,7 @@ pub struct UpdateWorkspaceConfigRequest {
     pub contradiction_mode: Option<ContradictionMode>,
     pub contradiction_threshold: Option<f32>,
     pub contradiction_candidates: Option<usize>,
+    pub sub_agent_pools: Option<Vec<String>>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -267,6 +268,7 @@ pub async fn update_workspace_config(
     )?;
     validate_lifecycle_config(&config)?;
     validate_contradiction_config(&config)?;
+    validate_sub_agent_pools(&config)?;
 
     let before = get_workspace_by_id(&state, id)
         .await?
@@ -485,6 +487,7 @@ async fn upsert_imported_memory(db: &PgPool, memory: &MemoryUnit) -> AppResult<U
             workspace_id,
             scope,
             memory_type,
+            scope_visibility,
             content,
             entities,
             importance_score,
@@ -504,11 +507,12 @@ async fn upsert_imported_memory(db: &PgPool, memory: &MemoryUnit) -> AppResult<U
             created_at,
             updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10, $11, $12, $13, $14, $15, $16, $17, NULL, $18, $19, $20)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11, $12, $13, $14, $15, $16, $17, $18, NULL, $19, $20, $21)
         ON CONFLICT (id) DO UPDATE SET
             workspace_id = EXCLUDED.workspace_id,
             scope = EXCLUDED.scope,
             memory_type = EXCLUDED.memory_type,
+            scope_visibility = EXCLUDED.scope_visibility,
             content = EXCLUDED.content,
             entities = EXCLUDED.entities,
             importance_score = EXCLUDED.importance_score,
@@ -533,6 +537,7 @@ async fn upsert_imported_memory(db: &PgPool, memory: &MemoryUnit) -> AppResult<U
     .bind(memory.workspace_id)
     .bind(scope)
     .bind(memory.memory_type)
+    .bind(memory.scope_visibility)
     .bind(&memory.content)
     .bind(entities)
     .bind(memory.importance_score)
@@ -703,9 +708,47 @@ fn merge_workspace_config(target: &mut serde_json::Value, patch: &UpdateWorkspac
     if let Some(value) = patch.contradiction_candidates {
         object.insert("contradiction_candidates".to_owned(), json!(value));
     }
+    if let Some(value) = &patch.sub_agent_pools {
+        object.insert(
+            "sub_agent_pools".to_owned(),
+            json!(normalized_sub_agent_pools(value)),
+        );
+    }
     for (key, value) in &patch.extra {
         object.insert(key.clone(), value.clone());
     }
+}
+
+fn validate_sub_agent_pools(config: &UpdateWorkspaceConfigRequest) -> AppResult<()> {
+    let Some(agent_ids) = &config.sub_agent_pools else {
+        return Ok(());
+    };
+
+    if agent_ids.len() > 100 {
+        return Err(AppError::Validation(
+            "sub_agent_pools is limited to 100 agent ids".to_owned(),
+        ));
+    }
+
+    if agent_ids.iter().any(|agent_id| agent_id.trim().is_empty()) {
+        return Err(AppError::Validation(
+            "sub_agent_pools cannot contain empty agent ids".to_owned(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn normalized_sub_agent_pools(agent_ids: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for agent_id in agent_ids {
+        let trimmed = agent_id.trim();
+        if normalized.iter().any(|existing| existing == trimmed) {
+            continue;
+        }
+        normalized.push(trimmed.to_owned());
+    }
+    normalized
 }
 
 fn validate_contradiction_config(config: &UpdateWorkspaceConfigRequest) -> AppResult<()> {
@@ -777,7 +820,7 @@ mod tests {
     };
     use common::{
         config::AppConfig,
-        models::{MemoryScope, MemoryType, MemoryUnit},
+        models::{MemoryScope, MemoryType, MemoryUnit, ScopeVisibility},
         providers::{FastEmbedProvider, OllamaProvider},
     };
     use qdrant_client::Qdrant;
@@ -948,6 +991,7 @@ mod tests {
             contradiction_mode: None,
             contradiction_threshold: None,
             contradiction_candidates: None,
+            sub_agent_pools: None,
             extra: serde_json::Map::new(),
         }
     }
@@ -980,6 +1024,7 @@ mod tests {
                 repo: Some("Quazmoz/memoryops".to_owned()),
             },
             memory_type: MemoryType::Episodic,
+            scope_visibility: ScopeVisibility::Private,
             content: "imported memory".to_owned(),
             entities: Json(Vec::new()),
             importance_score: 0.8,

@@ -47,7 +47,11 @@ pub async fn hybrid_search(
         .collect::<Vec<_>>();
     let fused = fuse_ranked_ids(&vector_ids, &keyword_ids, limit as usize);
     let ids = fused.iter().map(|rank| rank.id).collect::<Vec<_>>();
-    let units = store::get_memory_units_by_ids(&state.db, &ids, req.workspace_id).await?;
+    let units = if let Some(as_of) = req.as_of {
+        store::get_memory_units_by_ids_at(&state.db, &ids, req.workspace_id, as_of).await?
+    } else {
+        store::get_memory_units_by_ids(&state.db, &ids, req.workspace_id).await?
+    };
     let mut units_by_id = units
         .into_iter()
         .map(|unit| (unit.id, unit))
@@ -188,6 +192,7 @@ mod tests {
                 source_episode_ids: Vec::new(),
                 corroboration_count: 1,
                 promoted_at: None,
+                scope_visibility: "private".to_owned(),
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             },

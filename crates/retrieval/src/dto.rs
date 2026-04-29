@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use common::{
     error::AppResult,
-    models::{MemoryType, MemoryUnit},
+    models::{MemoryType, MemoryUnit, ScopeVisibility, WorkspaceConfig},
     AppError,
 };
 use serde::{Deserialize, Serialize};
@@ -42,9 +42,18 @@ pub struct SearchRequest {
     pub user_id: Option<String>,
     pub repo: Option<String>,
     pub memory_types: Option<Vec<String>>,
+    pub as_of: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub include_workspace_pool: bool,
+    #[serde(default, skip_deserializing)]
+    pub inherited_workspace_pool_agent_ids: Vec<String>,
 }
 
 impl SearchRequest {
+    pub fn apply_workspace_config(&mut self, config: &WorkspaceConfig) {
+        self.inherited_workspace_pool_agent_ids = normalized_agent_ids(&config.sub_agent_pools);
+    }
+
     pub fn resolved_scope_filter(&self) -> Option<ScopeFilter> {
         let scope = ScopeFilter {
             agent_id: first_scope_value([
@@ -77,6 +86,25 @@ impl SearchRequest {
         } else {
             Some(scope)
         }
+    }
+
+    pub fn workspace_pool_access(&self) -> WorkspacePoolAccess {
+        WorkspacePoolAccess {
+            include_all_workspace: self.include_workspace_pool,
+            inherited_agent_ids: normalized_agent_ids(&self.inherited_workspace_pool_agent_ids),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkspacePoolAccess {
+    pub include_all_workspace: bool,
+    pub inherited_agent_ids: Vec<String>,
+}
+
+impl WorkspacePoolAccess {
+    pub fn includes_any_workspace_pool(&self) -> bool {
+        self.include_all_workspace || !self.inherited_agent_ids.is_empty()
     }
 }
 
@@ -121,6 +149,7 @@ pub struct MemoryUnitDto {
     pub workspace_id: Uuid,
     pub scope: serde_json::Value,
     pub memory_type: String,
+    pub scope_visibility: String,
     pub content: String,
     pub importance_score: f32,
     pub decay_score: f32,
@@ -148,6 +177,7 @@ impl From<MemoryUnit> for MemoryUnitDto {
             workspace_id: unit.workspace_id,
             scope,
             memory_type: memory_type_as_str(unit.memory_type).to_owned(),
+            scope_visibility: scope_visibility_as_str(unit.scope_visibility).to_owned(),
             content: unit.content,
             importance_score: unit.importance_score,
             decay_score: unit.decay_score,
@@ -177,6 +207,7 @@ pub struct ListQuery {
     pub agent_id: Option<String>,
     pub user_id: Option<String>,
     pub repo: Option<String>,
+    pub as_of: Option<DateTime<Utc>>,
     pub sort: Option<SortField>,
     pub direction: Option<SortDirection>,
 }
@@ -246,6 +277,13 @@ pub fn memory_type_as_str(memory_type: MemoryType) -> &'static str {
     }
 }
 
+pub fn scope_visibility_as_str(scope_visibility: ScopeVisibility) -> &'static str {
+    match scope_visibility {
+        ScopeVisibility::Private => "private",
+        ScopeVisibility::Workspace => "workspace",
+    }
+}
+
 pub fn parse_memory_type(value: &str) -> AppResult<MemoryType> {
     match value.to_ascii_lowercase().as_str() {
         "episodic" => Ok(MemoryType::Episodic),
@@ -286,6 +324,18 @@ fn first_scope_value(values: [Option<&String>; 3]) -> Option<String> {
             Some(trimmed.to_owned())
         }
     })
+}
+
+fn normalized_agent_ids(values: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || normalized.iter().any(|agent_id| agent_id == trimmed) {
+            continue;
+        }
+        normalized.push(trimmed.to_owned());
+    }
+    normalized
 }
 
 pub fn rank_from_index(index: usize) -> u32 {
@@ -358,6 +408,9 @@ mod tests {
             user_id: None,
             repo: None,
             memory_types: None,
+            as_of: None,
+            include_workspace_pool: false,
+            inherited_workspace_pool_agent_ids: Vec::new(),
         };
 
         let scope = match request.resolved_scope_filter() {

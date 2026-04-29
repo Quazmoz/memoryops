@@ -1,4 +1,4 @@
-use common::{error::AppResult, AppError, AppState};
+use common::{error::AppResult, models::WorkspaceConfig, AppError, AppState};
 use retrieval::{
     dto::{SearchMode, SearchRequest},
     search::hybrid,
@@ -19,6 +19,8 @@ pub struct RetrieveInput {
     pub limit: u32,
     #[serde(default)]
     pub min_score: f32,
+    #[serde(default)]
+    pub include_workspace_pool: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
@@ -38,7 +40,8 @@ pub fn definition() -> ToolDefinition {
             "properties": {
                 "query": { "type": "string" },
                 "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "default": DEFAULT_LIMIT },
-                "min_score": { "type": "number", "minimum": 0.0, "default": 0.0 }
+                "min_score": { "type": "number", "minimum": 0.0, "default": 0.0 },
+                "include_workspace_pool": { "type": "boolean", "default": false }
             }
         }),
     }
@@ -54,7 +57,7 @@ pub async fn run(
     }
 
     let limit = input.limit.clamp(1, MAX_LIMIT);
-    let request = SearchRequest {
+    let mut request = SearchRequest {
         query: input.query,
         workspace_id,
         mode: SearchMode::Hybrid,
@@ -66,7 +69,11 @@ pub async fn run(
         user_id: None,
         repo: None,
         memory_types: None,
+        as_of: None,
+        include_workspace_pool: input.include_workspace_pool,
+        inherited_workspace_pool_agent_ids: Vec::new(),
     };
+    request.apply_workspace_config(&load_workspace_config(state, workspace_id).await?);
     let results = hybrid::hybrid_search(state, &request, limit).await?;
     let min_score = input.min_score.max(0.0);
     let token_budget = state.config.retrieval.default_token_budget;
@@ -75,6 +82,21 @@ pub async fn run(
     let skills = load_enabled_skills(state, workspace_id).await?;
 
     Ok(RetrieveOutput { memories, skills })
+}
+
+async fn load_workspace_config(state: &AppState, workspace_id: Uuid) -> AppResult<WorkspaceConfig> {
+    let value = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT config FROM workspaces WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(workspace_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound {
+        resource: format!("workspace:{workspace_id}"),
+    })?;
+
+    Ok(serde_json::from_value::<WorkspaceConfig>(value).unwrap_or_default())
 }
 
 async fn load_enabled_skills(

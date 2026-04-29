@@ -810,6 +810,7 @@ mod tests {
                 repo: Some("Quazmoz/memoryops".to_owned()),
             },
             memory_type: MemoryType::Episodic,
+            scope_visibility: common::models::ScopeVisibility::Private,
             content: "already embedded memory".to_owned(),
             entities: Json(Vec::new()),
             importance_score: 0.8,

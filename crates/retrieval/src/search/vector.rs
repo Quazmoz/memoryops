@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use chrono::{DateTime, Utc};
 use common::{
     error::{AppResult, ProviderError},
     models::MemoryType,
@@ -7,7 +8,10 @@ use common::{
     AppError, AppState,
 };
 use qdrant_client::{
-    qdrant::{point_id::PointIdOptions, Condition, Filter, ScoredPoint, SearchPointsBuilder},
+    qdrant::{
+        point_id::PointIdOptions, Condition, DatetimeRange, Filter, ScoredPoint,
+        SearchPointsBuilder, Timestamp,
+    },
     Qdrant as QdrantClient,
 };
 use uuid::Uuid;
@@ -15,12 +19,12 @@ use uuid::Uuid;
 use crate::{
     dto::{
         memory_type_as_str, normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto,
-        ScopeFilter, SearchRequest, MIN_SCORE_THRESHOLD,
+        ScopeFilter, SearchRequest, WorkspacePoolAccess, MIN_SCORE_THRESHOLD,
     },
     store,
 };
 
-const COLLECTION_NAME: &str = "memoryops_memories";
+pub(crate) const COLLECTION_NAME: &str = "memoryops_memories";
 const VECTOR_CANDIDATE_LIMIT: u64 = 50;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,16 +33,23 @@ pub struct ScoredCandidate {
     pub score: f32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct VectorSearchOptions<'a> {
+    pub workspace_id: Uuid,
+    pub query: &'a str,
+    pub scope: Option<&'a ScopeFilter>,
+    pub memory_types: Option<&'a [String]>,
+    pub as_of: Option<DateTime<Utc>>,
+    pub workspace_pool: &'a WorkspacePoolAccess,
+    pub limit: u64,
+}
+
 pub async fn vector_search(
     qdrant: &QdrantClient,
     embedding_provider: &Arc<dyn EmbeddingProvider>,
-    workspace_id: Uuid,
-    query: &str,
-    scope: Option<&ScopeFilter>,
-    memory_types: Option<&[String]>,
-    limit: u64,
+    options: VectorSearchOptions<'_>,
 ) -> AppResult<Vec<ScoredCandidate>> {
-    let embedding = match embedding_provider.embed(query).await {
+    let embedding = match embedding_provider.embed(options.query).await {
         Ok(embedding) => embedding,
         Err(ProviderError::NotConfigured) => {
             tracing::warn!("embedding provider not configured; skipping vector search");
@@ -47,9 +58,15 @@ pub async fn vector_search(
         Err(error) => return Err(AppError::Provider(error)),
     };
 
-    let request = SearchPointsBuilder::new(COLLECTION_NAME, embedding, limit)
+    let request = SearchPointsBuilder::new(COLLECTION_NAME, embedding, options.limit)
         .score_threshold(MIN_SCORE_THRESHOLD)
-        .filter(build_vector_filter(workspace_id, scope, memory_types));
+        .filter(build_vector_filter(
+            options.workspace_id,
+            options.scope,
+            options.memory_types,
+            options.as_of,
+            options.workspace_pool,
+        ));
 
     let response = match qdrant.search_points(request).await {
         Ok(response) => response,
@@ -81,14 +98,19 @@ pub async fn vector_search_results(
 ) -> AppResult<Vec<MemoryResult>> {
     let memory_types = normalized_memory_types(req)?;
     let scope = req.resolved_scope_filter();
+    let workspace_pool = req.workspace_pool_access();
     let candidates = vector_search(
         &state.qdrant,
         &state.embedding_provider,
-        req.workspace_id,
-        &req.query,
-        scope.as_ref(),
-        memory_types.as_deref(),
-        VECTOR_CANDIDATE_LIMIT.max(u64::from(limit)),
+        VectorSearchOptions {
+            workspace_id: req.workspace_id,
+            query: &req.query,
+            scope: scope.as_ref(),
+            memory_types: memory_types.as_deref(),
+            as_of: req.as_of,
+            workspace_pool: &workspace_pool,
+            limit: VECTOR_CANDIDATE_LIMIT.max(u64::from(limit)),
+        },
     )
     .await?;
 
@@ -97,7 +119,11 @@ pub async fn vector_search_results(
         .map(|candidate| (candidate.memory_id, candidate.score))
         .collect::<Vec<_>>();
     let ids = scored_ids.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-    let units = store::get_memory_units_by_ids(&state.db, &ids, req.workspace_id).await?;
+    let units = if let Some(as_of) = req.as_of {
+        store::get_memory_units_by_ids_at(&state.db, &ids, req.workspace_id, as_of).await?
+    } else {
+        store::get_memory_units_by_ids(&state.db, &ids, req.workspace_id).await?
+    };
     let mut units_by_id = units
         .into_iter()
         .map(|unit| (unit.id, unit))
@@ -106,6 +132,11 @@ pub async fn vector_search_results(
     let mut results = Vec::with_capacity(scored_ids.len());
     for (id, score) in scored_ids {
         if let Some(unit) = units_by_id.remove(&id) {
+            if let Some(scope) = scope.as_ref() {
+                if !store::scope_matches_workspace_pool(&unit, scope, &workspace_pool) {
+                    continue;
+                }
+            }
             if !matches_memory_type(unit.memory_type, memory_types.as_deref()) {
                 continue;
             }
@@ -128,6 +159,8 @@ pub fn build_vector_filter(
     workspace_id: Uuid,
     scope: Option<&ScopeFilter>,
     memory_types: Option<&[String]>,
+    as_of: Option<DateTime<Utc>>,
+    workspace_pool: &crate::dto::WorkspacePoolAccess,
 ) -> Filter {
     let mut conditions = vec![Condition::matches("workspace_id", workspace_id.to_string())];
     if let Some(memory_types) = memory_types {
@@ -135,9 +168,18 @@ pub fn build_vector_filter(
             conditions.push(Condition::matches("memory_type", memory_types.to_vec()));
         }
     }
+    if let Some(as_of) = as_of {
+        conditions.push(Condition::datetime_range(
+            "created_at",
+            DatetimeRange {
+                lte: Some(timestamp_from_datetime(as_of)),
+                ..Default::default()
+            },
+        ));
+    }
     if let Some(scope) = scope {
         if let Some(agent_id) = &scope.agent_id {
-            conditions.push(Condition::matches("agent_id", agent_id.clone()));
+            conditions.push(agent_scope_condition(agent_id, workspace_pool));
         }
         if let Some(user_id) = &scope.user_id {
             conditions.push(Condition::matches("user_id", user_id.clone()));
@@ -148,6 +190,40 @@ pub fn build_vector_filter(
     }
 
     Filter::must(conditions)
+}
+
+fn agent_scope_condition(
+    agent_id: &str,
+    workspace_pool: &crate::dto::WorkspacePoolAccess,
+) -> Condition {
+    if workspace_pool.include_all_workspace {
+        return Filter::should([
+            Condition::matches("agent_id", agent_id.to_owned()),
+            Condition::matches("scope_visibility", "workspace".to_owned()),
+        ])
+        .into();
+    }
+
+    if !workspace_pool.inherited_agent_ids.is_empty() {
+        return Filter::should([
+            Condition::matches("agent_id", agent_id.to_owned()),
+            Filter::must([
+                Condition::matches("scope_visibility", "workspace".to_owned()),
+                Condition::matches("agent_id", workspace_pool.inherited_agent_ids.clone()),
+            ])
+            .into(),
+        ])
+        .into();
+    }
+
+    Condition::matches("agent_id", agent_id.to_owned())
+}
+
+fn timestamp_from_datetime(value: DateTime<Utc>) -> Timestamp {
+    Timestamp {
+        seconds: value.timestamp(),
+        nanos: value.timestamp_subsec_nanos() as i32,
+    }
 }
 
 fn scored_point_uuid(point: &ScoredPoint) -> Option<Uuid> {
@@ -178,7 +254,13 @@ mod tests {
             repo: Some("Quazmoz/memoryops".to_owned()),
         };
 
-        let filter = build_vector_filter(workspace_id, Some(&scope), None);
+        let filter = build_vector_filter(
+            workspace_id,
+            Some(&scope),
+            None,
+            None,
+            &crate::dto::WorkspacePoolAccess::default(),
+        );
         let debug = format!("{filter:?}");
 
         assert!(debug.contains("workspace_id"));
@@ -192,10 +274,31 @@ mod tests {
         let workspace_id = Uuid::now_v7();
         let memory_types = vec!["semantic".to_owned()];
 
-        let filter = build_vector_filter(workspace_id, None, Some(&memory_types));
+        let filter = build_vector_filter(
+            workspace_id,
+            None,
+            Some(&memory_types),
+            None,
+            &crate::dto::WorkspacePoolAccess::default(),
+        );
         let debug = format!("{filter:?}");
 
         assert!(debug.contains("memory_type"));
         assert!(debug.contains("semantic"));
+    }
+
+    #[test]
+    fn vector_filter_includes_as_of_datetime_range() {
+        let workspace_id = Uuid::now_v7();
+        let filter = build_vector_filter(
+            workspace_id,
+            None,
+            None,
+            Some(Utc::now()),
+            &crate::dto::WorkspacePoolAccess::default(),
+        );
+        let debug = format!("{filter:?}");
+
+        assert!(debug.contains("created_at"));
     }
 }

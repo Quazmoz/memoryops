@@ -16,13 +16,16 @@ use super::resolve_workspace_id;
 pub async fn handle_search(
     State(state): State<AppState>,
     auth: Option<Extension<AuthContext>>,
-    Json(req): Json<SearchRequest>,
+    Json(mut req): Json<SearchRequest>,
 ) -> AppResult<Json<SearchResponse>> {
     Validate::validate(&req).map_err(|error| AppError::Validation(error.to_string()))?;
 
     let limit = req.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
     let auth_context = auth.as_ref().map(|extension| &extension.0);
     let workspace_id = resolve_workspace_id(auth_context, Some(req.workspace_id))?;
+    req.workspace_id = workspace_id;
+    let config = super::fetch_workspace_config(&state, workspace_id).await?;
+    req.apply_workspace_config(&config);
     let results = match req.mode {
         SearchMode::Vector => vector::vector_search_results(&state, &req, limit).await?,
         SearchMode::Keyword => keyword::keyword_search(&state, &req, limit).await?,

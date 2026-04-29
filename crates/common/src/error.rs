@@ -47,6 +47,8 @@ pub enum AppError {
     Forbidden,
     #[error("validation error: {0}")]
     Validation(String),
+    #[error("unprocessable entity: {0}")]
+    Unprocessable(String),
     #[error("conflict: {0}")]
     Conflict(String),
     #[error("rate limited")]
@@ -78,6 +80,9 @@ impl AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             AppError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             AppError::Validation(_) => (StatusCode::BAD_REQUEST, "validation_error"),
+            AppError::Unprocessable(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable_entity")
+            }
             AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             AppError::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             AppError::Provider(_) => (StatusCode::BAD_GATEWAY, "provider_error"),
