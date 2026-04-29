@@ -94,6 +94,7 @@ dependencies = [
  "qdrant-client",
  "rand 0.8.6",
  "redis",
+ "reqwest",
  "retrieval",
  "serde",
  "serde_json",

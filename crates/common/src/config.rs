@@ -82,7 +82,7 @@ pub struct EmbeddingConfig {
     pub openai: Option<OpenAiEmbeddingConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum EmbeddingProviderKind {
     #[serde(rename = "fastembed")]
@@ -107,7 +107,7 @@ pub struct LlmConfig {
     pub anthropic: Option<AnthropicConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProviderKind {
     Ollama,

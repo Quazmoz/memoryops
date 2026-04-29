@@ -1,4 +1,4 @@
-import { Activity, CheckCircle2, Download, GitMerge, Loader2, Play, RefreshCw, Save, ServerCog, ShieldAlert, ShieldCheck, SlidersHorizontal, Upload, XCircle } from "lucide-react";
+import { Activity, CheckCircle2, Download, GitMerge, KeyRound, Loader2, Play, RefreshCw, Save, ServerCog, ShieldAlert, ShieldCheck, SlidersHorizontal, Upload, XCircle } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 

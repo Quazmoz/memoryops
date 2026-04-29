@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use axum::{http::StatusCode, middleware as axum_middleware, routing::get, Json, Router};
+use axum::{extract::State, http::StatusCode, middleware as axum_middleware, routing::get, Json, Router};
 use chrono::Utc;
 use common::{
     config::{AppConfig, EmbeddingProviderKind, LlmProviderKind},

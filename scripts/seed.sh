@@ -13,7 +13,7 @@ fi
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 API_KEY="${API_KEY:-}"
-WORKSPACE_NAME="dev-workspace"
+WORKSPACE_NAME="${WORKSPACE_NAME:-dev-workspace}"
 HALF_LIFE_DAYS=30
 
 if [[ -z "$API_KEY" ]]; then
