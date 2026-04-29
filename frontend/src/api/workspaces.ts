@@ -1,4 +1,4 @@
-import { ApiError, apiRequest, extractDetail, parseResponse, requestHeaders } from "./client";
+import { ApiError, apiRequest, apiUrl, extractDetail, parseResponse, requestHeaders } from "./client";
 import type {
   CreatedApiKey,
   CreateApiKeyResponse,
@@ -82,7 +82,7 @@ export function triggerPromotion(workspaceId: string): Promise<PromotionReport> 
 }
 
 export async function exportMemories(workspaceId: string): Promise<Blob> {
-  const response = await fetch(`/v1/workspaces/${workspaceId}/export`, {
+  const response = await fetch(apiUrl(`/v1/workspaces/${workspaceId}/export`), {
     headers: requestHeaders(),
   });
   const payload = response.ok ? null : await parseResponse(response);
@@ -96,7 +96,7 @@ export async function exportMemories(workspaceId: string): Promise<Blob> {
 
 export async function importMemories(workspaceId: string, file: File): Promise<ImportMemoriesResponse> {
   const headers = requestHeaders({ headers: { "content-type": "application/x-ndjson" } });
-  const response = await fetch(`/v1/workspaces/${workspaceId}/import`, {
+  const response = await fetch(apiUrl(`/v1/workspaces/${workspaceId}/import`), {
     method: "POST",
     headers,
     body: file,

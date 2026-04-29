@@ -1,4 +1,4 @@
-import { apiRequest, parseResponse, queryString } from "./client";
+import { apiRequest, apiUrl, parseResponse, queryString } from "./client";
 import type {
   ListMemoryResponse,
   JsonValue,
@@ -48,7 +48,7 @@ export type SearchCriteria = {
 };
 
 export async function getReadiness(): Promise<ReadinessResponse> {
-  const response = await fetch("/health/ready");
+  const response = await fetch(apiUrl("/health/ready"));
   const payload = await parseResponse(response);
   const base = isReadinessPayload(payload) ? payload : { status: response.ok ? "ok" : "unavailable" };
 

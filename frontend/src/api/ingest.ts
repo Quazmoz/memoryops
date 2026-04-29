@@ -1,4 +1,4 @@
-import { extractDetail, parseResponse, requestHeaders } from "./client";
+import { apiUrl, extractDetail, parseResponse, requestHeaders } from "./client";
 import type { IngestResult, JsonValue } from "./types";
 
 export type WebhookSource = "github" | "slack" | "linear" | "jira";
@@ -530,7 +530,7 @@ export async function fireWebhook(workspaceId: string, fixture: WebhookFixture, 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
   
-  const response = await fetch(endpoint, {
+  const response = await fetch(apiUrl(endpoint), {
     method: "POST",
     headers,
     body: bodyString,

@@ -1,6 +1,8 @@
 import { useAppStore } from "../store/app-store";
 import type { JsonValue } from "./types";
 
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
+
 type ApiRequestOptions = Omit<RequestInit, "body"> & {
   body?: JsonValue;
   auth?: boolean;
@@ -29,7 +31,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     init.body = JSON.stringify(body);
   }
 
-  const response = await fetch(path, init);
+  const response = await fetch(apiUrl(path), init);
   const payload = await parseResponse(response);
 
   if (!response.ok) {
@@ -37,6 +39,16 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   }
 
   return payload as T;
+}
+
+export function apiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  const base = BASE_URL.replace(/\/+$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
 }
 
 export function queryString(params: Record<string, string | number | boolean | null | undefined>): string {
