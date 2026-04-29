@@ -1,10 +1,11 @@
 import { ArrowLeft, Check, Clock3, Database, GitCommit, GitMerge, Plus, Save, Share2, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import type { MemoryScope, MemoryUnit, ProvenanceGraph, ProvenanceNode } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EntityChip } from "../components/EntityChip";
+import { FeedbackPanel } from "../components/FeedbackPanel";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -18,6 +19,7 @@ import { useAppStore } from "../store/app-store";
 
 export function MemoryDetail() {
   const { id } = useParams<{ id?: string }>();
+  const [searchParams] = useSearchParams();
   const workspaceId = useAppStore((state) => state.workspaceId);
   const memoryQuery = useMemoryDetail(workspaceId, id);
   const provenanceQuery = useMemoryProvenance(workspaceId, id);
@@ -29,6 +31,7 @@ export function MemoryDetail() {
   const [tagInput, setTagInput] = useState("");
   const [importanceDraft, setImportanceDraft] = useState(0);
   const [importanceError, setImportanceError] = useState<string | null>(null);
+  const initialQueryId = searchParams.get("query_id") ?? "";
 
   useEffect(() => {
     if (memory) {
@@ -147,17 +150,21 @@ export function MemoryDetail() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Scores</CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-3">
-                <ScoreLine label="Importance" value={formatScore(memory.importance_score)} />
-                <ScoreLine label="Decay" value={formatScore(memory.decay_score)} />
-                <ScoreLine label="Access count" value={formatCount(memory.access_count)} />
-                {memory.promoted_at ? <ScoreLine label="Promoted" value={formatRelativeTime(memory.promoted_at)} /> : null}
-              </CardContent>
-            </Card>
+            <div className="grid gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Scores</CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  <ScoreLine label="Importance" value={formatScore(memory.importance_score)} />
+                  <ScoreLine label="Decay" value={formatScore(memory.decay_score)} />
+                  <ScoreLine label="Access count" value={formatCount(memory.access_count)} />
+                  {memory.promoted_at ? <ScoreLine label="Promoted" value={formatRelativeTime(memory.promoted_at)} /> : null}
+                  <RelevanceMeter score={memory.relevance_score} />
+                </CardContent>
+              </Card>
+              <FeedbackPanel workspaceId={workspaceId} memoryId={memory.id} initialQueryId={initialQueryId} />
+            </div>
           </section>
 
           <section className="grid gap-4 xl:grid-cols-2">
@@ -419,6 +426,23 @@ function ScoreLine({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between rounded-md border border-line bg-soft px-3 py-2">
       <span className="text-sm text-ink/65">{label}</span>
       <span className="font-mono text-sm font-semibold">{value}</span>
+    </div>
+  );
+}
+
+function RelevanceMeter({ score }: { score: number }) {
+  const clamped = Math.min(Math.max(score, 0), 1);
+  const percentage = Math.round(clamped * 100);
+
+  return (
+    <div className="grid gap-2 rounded-md border border-line bg-soft px-3 py-2">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-ink/65">Relevance</span>
+        <span className="font-mono text-sm font-semibold">{percentage}%</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-white">
+        <div className="h-full rounded-full bg-accent" style={{ width: `${percentage}%` }} />
+      </div>
     </div>
   );
 }

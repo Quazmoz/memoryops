@@ -496,6 +496,7 @@ async fn upsert_imported_memory(db: &PgPool, memory: &MemoryUnit) -> AppResult<U
             embedding_id,
             token_count,
             decay_score,
+            relevance_score,
             pinned,
             tags,
             version,
@@ -507,7 +508,7 @@ async fn upsert_imported_memory(db: &PgPool, memory: &MemoryUnit) -> AppResult<U
             created_at,
             updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11, $12, $13, $14, $15, $16, $17, $18, NULL, $19, $20, $21)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11, $12, $13, $14, $15, $16, $17, $18, $19, NULL, $20, $21, $22)
         ON CONFLICT (id) DO UPDATE SET
             workspace_id = EXCLUDED.workspace_id,
             scope = EXCLUDED.scope,
@@ -521,6 +522,7 @@ async fn upsert_imported_memory(db: &PgPool, memory: &MemoryUnit) -> AppResult<U
             embedding_id = NULL,
             token_count = EXCLUDED.token_count,
             decay_score = EXCLUDED.decay_score,
+            relevance_score = EXCLUDED.relevance_score,
             pinned = EXCLUDED.pinned,
             tags = EXCLUDED.tags,
             version = EXCLUDED.version,
@@ -545,6 +547,7 @@ async fn upsert_imported_memory(db: &PgPool, memory: &MemoryUnit) -> AppResult<U
     .bind(&memory.source_events)
     .bind(memory.token_count)
     .bind(memory.decay_score)
+    .bind(memory.relevance_score)
     .bind(memory.pinned)
     .bind(&memory.tags)
     .bind(memory.version)
@@ -1033,6 +1036,7 @@ mod tests {
             embedding_id: Some("stale-embedding".to_owned()),
             token_count: Some(4),
             decay_score: 1.0,
+            relevance_score: 0.5,
             pinned: false,
             tags: vec!["import".to_owned()],
             version: 1,

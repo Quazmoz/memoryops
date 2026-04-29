@@ -113,6 +113,7 @@ mod tests {
             embedding_id: None,
             token_count: None,
             decay_score: 1.0,
+            relevance_score: 0.5,
             pinned,
             tags: Vec::new(),
             version: 1,

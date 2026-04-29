@@ -8,6 +8,7 @@ import {
 
 import {
   buildSearchRequest,
+  getMemoryFeedback,
   getMemory,
   getMemoryProvenance,
   getReadiness,
@@ -15,10 +16,12 @@ import {
   patchMemory,
   publishMemory,
   searchMemory,
+  submitFeedback,
   type MemoryListParams,
   type SearchCriteria,
 } from "../api/memory";
-import type { ListMemoryResponse, MemoryUnit, SearchResponse, UpdateMemoryRequest } from "../api/types";
+import type { FeedbackResponse, ListMemoryResponse, MemoryUnit, SearchResponse, SubmitFeedbackRequest, UpdateMemoryRequest } from "../api/types";
+import { hasWorkspaceAuth } from "../lib/auth";
 import { validateImportanceScore } from "../lib/validation";
 import { useAppStore } from "../store/app-store";
 
@@ -87,7 +90,7 @@ export function useMemorySearch(workspaceId: string, criteria: SearchCriteria) {
   return useQuery({
     queryKey: memoryKeys.search(workspaceId, criteria),
     queryFn: () => searchMemory(buildSearchRequest(workspaceId, criteria)),
-    enabled: hasWorkspaceAuth(workspaceId, apiKey) && criteria.query.trim().length > 0,
+    enabled: hasWorkspaceAuth(workspaceId, apiKey) && criteria.query.trim() !== "",
   });
 }
 
@@ -147,6 +150,39 @@ export function usePublishMemory(workspaceId: string) {
       void queryClient.invalidateQueries({ queryKey: memoryKeys.lists(workspaceId) });
       void queryClient.invalidateQueries({ queryKey: memoryKeys.searches(workspaceId) });
     },
+  });
+}
+
+export function useSubmitFeedback(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<MemoryUnit, Error, { memoryId: string; request: SubmitFeedbackRequest }>({
+    mutationKey: ["workspace", workspaceId, "memory", "feedback"],
+    mutationFn: ({ memoryId, request }) => submitFeedback(workspaceId, memoryId, request),
+    onSuccess: (memory) => {
+      queryClient.setQueryData(memoryKeys.detail(workspaceId, memory.id), memory);
+      optimisticallyPatchMemoryCaches(queryClient, workspaceId, memory.id, memory);
+    },
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: [...memoryKeys.detail(workspaceId, variables.memoryId), "feedback"],
+      });
+    },
+  });
+}
+
+export function useMemoryFeedback(
+  workspaceId: string,
+  memoryId: string | undefined,
+  params: { limit?: number; offset?: number } = {},
+) {
+  const apiKey = useAppStore((state) => state.apiKey);
+
+  return useQuery<FeedbackResponse>({
+    queryKey: [...memoryKeys.detail(workspaceId, memoryId ?? "missing"), "feedback", params],
+    queryFn: () => getMemoryFeedback(workspaceId, memoryId ?? "", params),
+    enabled: hasWorkspaceAuth(workspaceId, apiKey) && Boolean(memoryId?.trim()),
+    staleTime: 30_000,
   });
 }
 
@@ -221,6 +257,3 @@ function validatePatch(patch: UpdateMemoryRequest): void {
   }
 }
 
-function hasWorkspaceAuth(workspaceId: string, apiKey: string): boolean {
-  return workspaceId.trim().length > 0 && apiKey.trim().length > 0;
-}

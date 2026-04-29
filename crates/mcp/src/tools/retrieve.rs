@@ -2,6 +2,7 @@ use common::{error::AppResult, models::WorkspaceConfig, AppError, AppState};
 use retrieval::{
     dto::{SearchMode, SearchRequest},
     search::hybrid,
+    store::{self, FeedbackWrite},
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -21,6 +22,19 @@ pub struct RetrieveInput {
     pub min_score: f32,
     #[serde(default)]
     pub include_workspace_pool: bool,
+    pub feedback: Option<RetrieveFeedbackInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RetrieveFeedbackInput {
+    pub query_id: String,
+    pub ratings: Vec<RetrieveFeedbackRating>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RetrieveFeedbackRating {
+    pub memory_id: Uuid,
+    pub rating: i16,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
@@ -41,7 +55,25 @@ pub fn definition() -> ToolDefinition {
                 "query": { "type": "string" },
                 "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "default": DEFAULT_LIMIT },
                 "min_score": { "type": "number", "minimum": 0.0, "default": 0.0 },
-                "include_workspace_pool": { "type": "boolean", "default": false }
+                "include_workspace_pool": { "type": "boolean", "default": false },
+                "feedback": {
+                    "type": "object",
+                    "required": ["query_id", "ratings"],
+                    "properties": {
+                        "query_id": { "type": "string" },
+                        "ratings": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["memory_id", "rating"],
+                                "properties": {
+                                    "memory_id": { "type": "string", "format": "uuid" },
+                                    "rating": { "type": "integer", "enum": [-1, 0, 1] }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }),
     }
@@ -56,6 +88,7 @@ pub async fn run(
         return Err(AppError::Validation("query is required".to_owned()));
     }
 
+    let feedback = input.feedback.clone();
     let limit = input.limit.clamp(1, MAX_LIMIT);
     let mut request = SearchRequest {
         query: input.query,
@@ -80,8 +113,38 @@ pub async fn run(
 
     let memories = pack_results(results, min_score, token_budget, limit as usize);
     let skills = load_enabled_skills(state, workspace_id).await?;
+    let output = RetrieveOutput { memories, skills };
 
-    Ok(RetrieveOutput { memories, skills })
+    if let Some(feedback) = feedback.as_ref() {
+        submit_feedback_batch(state, workspace_id, feedback).await?;
+    }
+
+    Ok(output)
+}
+
+async fn submit_feedback_batch(
+    state: &AppState,
+    workspace_id: Uuid,
+    feedback: &RetrieveFeedbackInput,
+) -> AppResult<()> {
+    for rating in &feedback.ratings {
+        if !(-1..=1).contains(&rating.rating) {
+            return Err(AppError::Validation(
+                "feedback rating must be one of -1, 0, 1".to_owned(),
+            ));
+        }
+
+        let write = FeedbackWrite {
+            query_id: &feedback.query_id,
+            agent_id: None,
+            user_id: None,
+            rating: rating.rating,
+            comment: None,
+        };
+        store::submit_retrieval_feedback(&state.db, workspace_id, rating.memory_id, &write).await?;
+    }
+
+    Ok(())
 }
 
 async fn load_workspace_config(state: &AppState, workspace_id: Uuid) -> AppResult<WorkspaceConfig> {

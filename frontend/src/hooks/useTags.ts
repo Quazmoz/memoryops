@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { listWorkspaceTags } from "../api/workspaces";
+import { hasWorkspaceAuth } from "../lib/auth";
 import { useAppStore } from "../store/app-store";
 
 export function useTags(workspaceId: string) {
@@ -9,7 +10,7 @@ export function useTags(workspaceId: string) {
   return useQuery({
     queryKey: ["tags", workspaceId],
     queryFn: () => listWorkspaceTags(workspaceId),
-    enabled: workspaceId.trim().length > 0 && apiKey.trim().length > 0,
+    enabled: hasWorkspaceAuth(workspaceId, apiKey),
     staleTime: 60_000,
   });
 }

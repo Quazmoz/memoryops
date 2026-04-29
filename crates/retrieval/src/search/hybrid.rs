@@ -11,6 +11,7 @@ use crate::{
 use super::{keyword::keyword_search, vector::vector_search_results};
 
 pub const RRF_K: f32 = 60.0;
+pub const RELEVANCE_SCORE_WEIGHT: f32 = 0.10;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FusedRank {
@@ -45,7 +46,7 @@ pub async fn hybrid_search(
         .iter()
         .map(|result| result.memory.id)
         .collect::<Vec<_>>();
-    let fused = fuse_ranked_ids(&vector_ids, &keyword_ids, limit as usize);
+    let fused = fuse_ranked_ids(&vector_ids, &keyword_ids, candidate_limit as usize);
     let ids = fused.iter().map(|rank| rank.id).collect::<Vec<_>>();
     let units = if let Some(as_of) = req.as_of {
         store::get_memory_units_by_ids_at(&state.db, &ids, req.workspace_id, as_of).await?
@@ -60,16 +61,32 @@ pub async fn hybrid_search(
     let mut results = Vec::with_capacity(fused.len());
     for fused_rank in fused {
         if let Some(unit) = units_by_id.remove(&fused_rank.id) {
-            let rank = rank_from_index(results.len());
+            let score = apply_relevance_score(fused_rank.score, unit.relevance_score);
             results.push(MemoryResult {
                 memory: MemoryUnitDto::from(unit),
-                score: fused_rank.score,
-                rank,
+                score,
+                rank: 0,
             });
         }
     }
 
+    results.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left.memory.id.as_u128().cmp(&right.memory.id.as_u128()))
+    });
+    results.truncate(limit as usize);
+    for (index, result) in results.iter_mut().enumerate() {
+        result.rank = rank_from_index(index);
+    }
+
     Ok(results)
+}
+
+pub fn apply_relevance_score(rrf_score: f32, relevance_score: f64) -> f32 {
+    let relevance_delta = relevance_score as f32 - 0.5;
+    rrf_score * (1.0 + RELEVANCE_SCORE_WEIGHT * relevance_delta)
 }
 
 pub fn rrf_score(rank: u32) -> f32 {
@@ -162,6 +179,31 @@ mod tests {
     }
 
     #[test]
+    fn relevance_score_neutral_keeps_rrf_score() {
+        let score = apply_relevance_score(0.8, 0.5);
+
+        assert!((score - 0.8).abs() < 0.0001);
+    }
+
+    #[test]
+    fn relevance_score_boosts_loved_and_dampens_hated() {
+        let base = 0.8;
+        let loved = apply_relevance_score(base, 1.0);
+        let hated = apply_relevance_score(base, 0.0);
+
+        assert!((loved - 0.84).abs() < 0.0001);
+        assert!((hated - 0.76).abs() < 0.0001);
+    }
+
+    #[test]
+    fn relevance_score_breaks_identical_content_tie() {
+        let neutral = apply_relevance_score(0.8, 0.5);
+        let loved = apply_relevance_score(0.8, 1.0);
+
+        assert!(loved > neutral);
+    }
+
+    #[test]
     fn vector_empty_falls_back_to_keyword_only() {
         let id = Uuid::from_u128(10);
         let keyword = vec![memory_result(id, 0.75, 4)];
@@ -191,6 +233,7 @@ mod tests {
                 source_events: Vec::new(),
                 source_episode_ids: Vec::new(),
                 corroboration_count: 1,
+                relevance_score: 0.5,
                 promoted_at: None,
                 scope_visibility: "private".to_owned(),
                 created_at: Utc::now(),

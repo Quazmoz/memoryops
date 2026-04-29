@@ -3,8 +3,9 @@ use chrono::{DateTime, Utc};
 use common::{
     error::AppResult,
     models::{
-        Entity, MemoryScope, MemoryType, MemoryUnit, MemoryVersion, ScopeVisibility,
-        WorkspaceConfig, DEFAULT_DECAY_HALF_LIFE_DAYS, DEFAULT_PRUNING_THRESHOLD,
+        Entity, FeedbackEntry, FeedbackResponse, MemoryScope, MemoryType, MemoryUnit,
+        MemoryVersion, ScopeVisibility, WorkspaceConfig, DEFAULT_DECAY_HALF_LIFE_DAYS,
+        DEFAULT_PRUNING_THRESHOLD,
     },
     AppError,
 };
@@ -16,8 +17,24 @@ use crate::dto::{
     WorkspacePoolAccess, MAX_LIMIT,
 };
 
-const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, scope_visibility, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
+const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, scope_visibility, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, relevance_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
 const SECONDS_PER_DAY: f64 = 86_400.0;
+const DEFAULT_RELEVANCE_SCORE: f64 = 0.5;
+const FEEDBACK_ROLLING_LIMIT: i64 = 100;
+
+pub struct FeedbackWrite<'a> {
+    pub query_id: &'a str,
+    pub agent_id: Option<&'a str>,
+    pub user_id: Option<&'a str>,
+    pub rating: i16,
+    pub comment: Option<&'a str>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct FeedbackStats {
+    total: i64,
+    avg_rating: Option<f64>,
+}
 
 #[derive(Debug, sqlx::FromRow)]
 struct MemoryUnitWithTotal {
@@ -34,6 +51,7 @@ struct MemoryUnitWithTotal {
     embedding_id: Option<String>,
     token_count: Option<i32>,
     decay_score: f32,
+    relevance_score: f64,
     pinned: bool,
     tags: Vec<String>,
     version: i32,
@@ -63,6 +81,7 @@ impl From<MemoryUnitWithTotal> for MemoryUnit {
             embedding_id: row.embedding_id,
             token_count: row.token_count,
             decay_score: row.decay_score,
+            relevance_score: row.relevance_score,
             pinned: row.pinned,
             tags: row.tags,
             version: row.version,
@@ -408,6 +427,152 @@ pub async fn publish_memory_unit(
         .map_err(AppError::Database)
 }
 
+pub async fn submit_retrieval_feedback(
+    db: &PgPool,
+    workspace_id: Uuid,
+    memory_id: Uuid,
+    feedback: &FeedbackWrite<'_>,
+) -> AppResult<MemoryUnit> {
+    let mut transaction = db.begin().await.map_err(AppError::Database)?;
+    let locked_memory = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        SELECT id
+        FROM memory_units
+        WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
+        FOR UPDATE
+        "#,
+    )
+    .bind(memory_id)
+    .bind(workspace_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(AppError::Database)?;
+
+    if locked_memory.is_none() {
+        transaction.rollback().await.map_err(AppError::Database)?;
+        return Err(AppError::NotFound {
+            resource: format!("memory:{memory_id}"),
+        });
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO retrieval_feedback (
+            id, workspace_id, memory_id, query_id, agent_id, user_id, rating, comment
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(workspace_id)
+    .bind(memory_id)
+    .bind(feedback.query_id)
+    .bind(feedback.agent_id)
+    .bind(feedback.user_id)
+    .bind(feedback.rating)
+    .bind(feedback.comment)
+    .execute(&mut *transaction)
+    .await
+    .map_err(AppError::Database)?;
+
+    let ratings = sqlx::query_scalar::<_, i16>(
+        r#"
+        SELECT rating
+        FROM retrieval_feedback
+        WHERE workspace_id = $1 AND memory_id = $2
+        ORDER BY occurred_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(memory_id)
+    .bind(FEEDBACK_ROLLING_LIMIT)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(AppError::Database)?;
+    let relevance_score = relevance_score_from_ratings(&ratings);
+
+    let sql = format!(
+        "UPDATE memory_units SET relevance_score = $3, updated_at = now() WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+    );
+    let updated = sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(memory_id)
+        .bind(workspace_id)
+        .bind(relevance_score)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(AppError::Database)?
+        .ok_or_else(|| AppError::NotFound {
+            resource: format!("memory:{memory_id}"),
+        })?;
+
+    transaction.commit().await.map_err(AppError::Database)?;
+    Ok(updated)
+}
+
+pub async fn list_retrieval_feedback(
+    db: &PgPool,
+    workspace_id: Uuid,
+    memory_id: Uuid,
+    limit: u32,
+    offset: u32,
+) -> AppResult<FeedbackResponse> {
+    let memory = get_memory_unit_by_id(db, memory_id, workspace_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            resource: format!("memory:{memory_id}"),
+        })?;
+
+    let stats = sqlx::query_as::<_, FeedbackStats>(
+        r#"
+        SELECT COUNT(*) AS total, AVG(rating::DOUBLE PRECISION) AS avg_rating
+        FROM retrieval_feedback
+        WHERE workspace_id = $1 AND memory_id = $2
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(memory_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    let items = sqlx::query_as::<_, FeedbackEntry>(
+        r#"
+        SELECT id, memory_id, query_id, agent_id, user_id, rating, comment, occurred_at
+        FROM retrieval_feedback
+        WHERE workspace_id = $1 AND memory_id = $2
+        ORDER BY occurred_at DESC
+        LIMIT $3 OFFSET $4
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(memory_id)
+    .bind(i64::from(limit))
+    .bind(i64::from(offset))
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(FeedbackResponse {
+        items,
+        total: nonnegative_i64_to_u64(stats.total),
+        memory_id,
+        avg_rating: stats.avg_rating.unwrap_or(0.0),
+        relevance_score: memory.relevance_score,
+    })
+}
+
+pub fn relevance_score_from_ratings(ratings: &[i16]) -> f64 {
+    if ratings.is_empty() {
+        return DEFAULT_RELEVANCE_SCORE;
+    }
+
+    let sum = ratings.iter().map(|rating| i32::from(*rating)).sum::<i32>();
+    let avg_rating = f64::from(sum) / ratings.len() as f64;
+
+    ((avg_rating + 1.0) / 2.0).clamp(0.0, 1.0)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BulkStoreAction {
     Pin,
@@ -664,6 +829,7 @@ fn sort_column(field: SortField) -> &'static str {
     match field {
         SortField::ImportanceScore => "importance_score",
         SortField::DecayScore => "decay_score",
+        SortField::RelevanceScore => "relevance_score",
         SortField::UpdatedAt => "updated_at",
         SortField::CreatedAt => "created_at",
     }
@@ -825,7 +991,7 @@ fn push_historical_memory_columns(
     builder.push(" - m.created_at)) / ");
     builder.push_bind(half_life_secs);
     builder.push(
-        "))::real AS decay_score, m.pinned, COALESCE(mv.tags, m.tags) AS tags, COALESCE(mv.version, m.version) AS version, m.promoted_at, m.source_episode_ids, m.corroboration_count, m.deleted_at, m.last_accessed_at, m.created_at, m.updated_at",
+        "))::real AS decay_score, m.relevance_score, m.pinned, COALESCE(mv.tags, m.tags) AS tags, COALESCE(mv.version, m.version) AS version, m.promoted_at, m.source_episode_ids, m.corroboration_count, m.deleted_at, m.last_accessed_at, m.created_at, m.updated_at",
     );
 }
 
@@ -890,6 +1056,26 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn relevance_score_formula_defaults_to_neutral() {
+        assert_eq!(relevance_score_from_ratings(&[]), 0.5);
+    }
+
+    #[test]
+    fn relevance_score_formula_maps_all_up_to_one() {
+        assert_eq!(relevance_score_from_ratings(&[1, 1, 1]), 1.0);
+    }
+
+    #[test]
+    fn relevance_score_formula_maps_all_down_to_zero() {
+        assert_eq!(relevance_score_from_ratings(&[-1, -1, -1]), 0.0);
+    }
+
+    #[test]
+    fn relevance_score_formula_maps_opposing_ratings_to_neutral() {
+        assert_eq!(relevance_score_from_ratings(&[1, -1]), 0.5);
+    }
 
     async fn insert_workspace(pool: &PgPool, workspace_id: Uuid) {
         let result = sqlx::query("INSERT INTO workspaces (id, name, config) VALUES ($1, $2, $3)")
@@ -1231,6 +1417,77 @@ mod tests {
         };
 
         assert_eq!(promoted.memory_type, MemoryType::Semantic);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
+    async fn feedback_round_trip_updates_relevance_score(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+        let memory_id = insert_memory(&pool, workspace_id, "feedback target", 0.8).await;
+        let feedback = FeedbackWrite {
+            query_id: "query-1",
+            agent_id: Some("agent-1"),
+            user_id: None,
+            rating: 1,
+            comment: Some("useful"),
+        };
+
+        let updated =
+            match submit_retrieval_feedback(&pool, workspace_id, memory_id, &feedback).await {
+                Ok(updated) => updated,
+                Err(error) => panic!("feedback submit should succeed: {error}"),
+            };
+        let response = match list_retrieval_feedback(&pool, workspace_id, memory_id, 20, 0).await {
+            Ok(response) => response,
+            Err(error) => panic!("feedback list should succeed: {error}"),
+        };
+
+        assert_eq!(updated.relevance_score, 1.0);
+        assert_eq!(response.total, 1);
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].query_id, "query-1");
+        assert_eq!(response.avg_rating, 1.0);
+        assert_eq!(response.relevance_score, 1.0);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
+    async fn opposing_feedback_averages_to_neutral(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+        let memory_id = insert_memory(&pool, workspace_id, "mixed feedback target", 0.8).await;
+        let up = FeedbackWrite {
+            query_id: "query-up",
+            agent_id: None,
+            user_id: None,
+            rating: 1,
+            comment: None,
+        };
+        let down = FeedbackWrite {
+            query_id: "query-down",
+            agent_id: None,
+            user_id: None,
+            rating: -1,
+            comment: None,
+        };
+
+        if let Err(error) = submit_retrieval_feedback(&pool, workspace_id, memory_id, &up).await {
+            panic!("up feedback should succeed: {error}");
+        }
+        let updated = match submit_retrieval_feedback(&pool, workspace_id, memory_id, &down).await {
+            Ok(updated) => updated,
+            Err(error) => panic!("down feedback should succeed: {error}"),
+        };
+        let response = match list_retrieval_feedback(&pool, workspace_id, memory_id, 20, 0).await {
+            Ok(response) => response,
+            Err(error) => panic!("feedback list should succeed: {error}"),
+        };
+
+        assert_eq!(updated.relevance_score, 0.5);
+        assert_eq!(response.total, 2);
+        assert_eq!(response.avg_rating, 0.0);
+        assert_eq!(response.relevance_score, 0.5);
     }
 
     fn list_query_with_scope(

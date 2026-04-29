@@ -1,6 +1,6 @@
 # MemoryOps — Feature List
 
-**Version:** 0.17.0
+**Version:** 0.18.0
 **Last Updated:** 2026-04-29
 
 This document tracks all planned features across the platform with current status and target milestone.
@@ -50,7 +50,7 @@ This document tracks all planned features across the platform with current statu
 | M27 | Provenance graph + lineage API | 🟢 Complete |
 | M28 | Point-in-time memory queries | 🟢 Complete |
 | M29 | Multi-agent scope inheritance + publish | 🟢 Complete |
-| M30 | Memory health score + drift alerts | 🔴 Not started |
+| M30 | Retrieval feedback loop | 🟢 Complete |
 | M31 | Compliance mode (retention + right-to-erasure) | 🔴 Not started |
 | M32 | Agent-authored observation ingest | 🔴 Not started |
 | M33 | LOCOMO benchmark integration | 🔴 Not started |
@@ -64,7 +64,7 @@ This document tracks all planned features across the platform with current statu
 | Cargo workspace root | 🟢 | M1 | 5 crates wired |
 | docker-compose (dev) | 🟢 | M1 | Postgres, Redis, Qdrant |
 | docker-compose.test.yml | 🟢 | M1 | Isolated test infra |
-| sqlx migrations scaffold | 🟢 | M1 | 0001–0020 tracked |
+| sqlx migrations scaffold | 🟢 | M1 | 0001–0021 tracked |
 | rust-toolchain.toml (MSRV 1.88) | 🟢 | M1 | |
 | GitHub Actions CI (fmt + clippy + test + integration) | 🟢 | M1/M6 | Integration job added in M6 |
 | common crate (models, traits, error, config, telemetry) | 🟢 | M1 | |
@@ -160,6 +160,8 @@ This document tracks all planned features across the platform with current statu
 | Point-in-time memory list/search | 🟢 | M28 | GET /v1/memory?as_of=... and historical hydration via memory_versions |
 | Point-in-time retrieval | 🟢 | M28 | POST /v1/retrieve as_of with historical decay math and trace persistence |
 | Workspace-pool retrieval inheritance | 🟢 | M29 | include_workspace_pool and sub_agent_pools allow agent-scoped searches to include published semantic memory |
+| Retrieval feedback relevance scoring | 🟢 | M30 | Last-100 rolling feedback average updates relevance_score and nudges hybrid scoring by 10% |
+| Retrieval trace feedback fields | 🟢 | M30 | feedback_applied plus per-candidate relevance_score in trace JSON |
 
 ---
 
@@ -206,6 +208,8 @@ This document tracks all planned features across the platform with current statu
 | POST /v1/memory/:id/publish | 🟢 | M29 | Publishes semantic memory to workspace pool and writes audit action |
 | POST /v1/memory/search include_workspace_pool | 🟢 | M29 | Agent searches can include workspace-published memories |
 | PATCH /v1/workspaces/:id/config sub_agent_pools | 🟢 | M29 | Configures automatic workspace-pool inheritance for sub-agents |
+| POST /v1/memory/:id/feedback | 🟢 | M30 | Stores explicit retrieval feedback and returns updated MemoryUnit relevance_score |
+| GET /v1/memory/:id/feedback | 🟢 | M30 | Paginated feedback history with avg_rating and current relevance_score |
 
 ---
 
@@ -221,6 +225,7 @@ This document tracks all planned features across the platform with current statu
 | MCP endpoint in docker-compose | 🟢 | M11 | profile-gated service on port 3003 |
 | memory_retrieve returns enabled workspace skills | 🟢 | M25 | Skills array includes endpoint and JSON schemas without secrets |
 | memory_retrieve include_workspace_pool | 🟢 | M29 | Tool schema supports workspace-pool inheritance for agent context |
+| memory_retrieve feedback batch | 🟢 | M30 | Optional feedback payload records ratings after retrieval response assembly |
 
 ---
 
@@ -303,6 +308,9 @@ This document tracks all planned features across the platform with current statu
 | Memory visibility badges | 🟢 | M29 | Detail and list rows show Private vs Workspace Pool visibility |
 | Publish semantic memory action | 🟢 | M29 | Memory Detail publishes private semantic memories with optimistic cache update |
 | Settings sub-agent pools field | 🟢 | M29 | Workspace config writes comma-separated inherited agent pools |
+| Memory Detail feedback panel | 🟢 | M30 | Rating buttons, optional comment, query_id, recent feedback, and relevance meter |
+| Retrieval Trace relevance display | 🟢 | M30 | Feedback-applied badge and per-candidate relevance_score column |
+| Memory Explorer relevance sorting | 🟢 | M30 | Relevance up/down sort options backed by relevance_score |
 
 ---
 
@@ -377,9 +385,9 @@ This document tracks all planned features across the platform with current statu
 | Multi-agent scope visibility field (private \| workspace) | 🟢 | M29 | scope_visibility on MemoryUnit |
 | POST /v1/memory/:id/publish (agent → workspace pool) | 🟢 | M29 | Published semantic memories shared across agents |
 | Sub-agent pool subscription via workspace config | 🟢 | M29 | Team agents inherit from configured sub-agent pools |
-| Memory health score (0–100 composite) | 🔴 | M30 | Decay distribution, promotion rate, DLQ rate, dedup collision rate |
-| GET /v1/workspaces/:id/health | 🔴 | M30 | Returns score + component breakdown |
-| Health score dashboard card + trend alert | 🔴 | M30 | Redis-backed threshold; webhook notification on degradation |
+| Retrieval feedback table + relevance_score | 🟢 | M30 | Stores explicit ratings and updates MemoryUnit relevance_score |
+| POST/GET /v1/memory/:id/feedback | 🟢 | M30 | Submit and inspect feedback history per memory |
+| Feedback-biased retrieval + UI | 🟢 | M30 | Hybrid scorer nudge, trace relevance column, detail feedback panel, and relevance sorting |
 | Per-workspace retention policy (max age + auto hard-purge) | 🔴 | M31 | Configured via WorkspaceConfig |
 | DELETE /v1/workspaces/:id/forget/user/:user_id | 🔴 | M31 | Hard-purges all memories with matching scope.user_id |
 | Compliance deletion audit trail | 🔴 | M31 | Separate compliance_audit_log table; GDPR/CCPA ready |
@@ -414,3 +422,4 @@ This document tracks all planned features across the platform with current statu
 | 0018_provenance_indexes.sql | Source-event, source-episode, and memory audit lineage indexes | 🟢 M27 |
 | 0019_point_in_time.sql | Historical as-of query indexes for memory_units and memory_versions | 🟢 M28 |
 | 0020_scope_visibility.sql | scope_visibility column, publish audit action, and workspace-pool visibility index | 🟢 M29 |
+| 0021_retrieval_feedback.sql | retrieval_feedback table and memory_units.relevance_score index | 🟢 M30 |

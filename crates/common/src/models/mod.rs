@@ -5,7 +5,8 @@ pub mod workspace;
 
 pub use audit::{AuditAction, AuditEntry};
 pub use memory::{
-    Entity, EntityType, MemoryScope, MemoryType, MemoryUnit, MemoryVersion, ScopeVisibility,
+    Entity, EntityType, FeedbackEntry, FeedbackResponse, MemoryScope, MemoryType, MemoryUnit,
+    MemoryVersion, ScopeVisibility,
 };
 pub use raw_event::{EventType, RawEvent, Source};
 pub use workspace::{

@@ -49,6 +49,11 @@ pub fn retrieval_router() -> Router<AppState> {
             get(handlers::provenance::handle_provenance),
         )
         .route(
+            "/v1/memory/{id}/feedback",
+            get(handlers::feedback::handle_list_feedback)
+                .post(handlers::feedback::handle_submit_feedback),
+        )
+        .route(
             "/v1/memory/{id}",
             get(handlers::get::handle_get)
                 .patch(handlers::update::handle_update)

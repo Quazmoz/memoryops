@@ -23,6 +23,8 @@ pub struct MemoryUnit {
     pub embedding_id: Option<String>,
     pub token_count: Option<i32>,
     pub decay_score: f32,
+    #[serde(default = "default_relevance_score")]
+    pub relevance_score: f64,
     pub pinned: bool,
     pub tags: Vec<String>,
     pub version: i32,
@@ -43,6 +45,10 @@ impl MemoryUnit {
     pub fn is_episodic(&self) -> bool {
         self.memory_type == MemoryType::Episodic
     }
+}
+
+fn default_relevance_score() -> f64 {
+    0.5
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
@@ -132,6 +138,27 @@ pub struct MemoryVersion {
     pub tags: Vec<String>,
     pub edited_by: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct FeedbackEntry {
+    pub id: Uuid,
+    pub memory_id: Uuid,
+    pub query_id: String,
+    pub agent_id: Option<String>,
+    pub user_id: Option<String>,
+    pub rating: i16,
+    pub comment: Option<String>,
+    pub occurred_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedbackResponse {
+    pub items: Vec<FeedbackEntry>,
+    pub total: u64,
+    pub memory_id: Uuid,
+    pub avg_rating: f64,
+    pub relevance_score: f64,
 }
 
 #[cfg(test)]

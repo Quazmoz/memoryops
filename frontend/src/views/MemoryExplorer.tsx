@@ -15,11 +15,13 @@ import { useTags } from "../hooks/useTags";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
-const sortFields: Array<{ value: SortField; label: string }> = [
-  { value: "importance_score", label: "Importance" },
-  { value: "decay_score", label: "Decay" },
-  { value: "updated_at", label: "Updated" },
-  { value: "created_at", label: "Created" },
+const sortFields: Array<{ value: string; label: string; field: SortField; direction?: SortDirection }> = [
+  { value: "importance_score", label: "Importance", field: "importance_score" },
+  { value: "decay_score", label: "Decay", field: "decay_score" },
+  { value: "relevance_score:desc", label: "Relevance ↑", field: "relevance_score", direction: "desc" },
+  { value: "relevance_score:asc", label: "Relevance ↓", field: "relevance_score", direction: "asc" },
+  { value: "updated_at", label: "Updated", field: "updated_at" },
+  { value: "created_at", label: "Created", field: "created_at" },
 ];
 const FILTER_DEBOUNCE_MS = 300;
 
@@ -156,8 +158,12 @@ export function MemoryExplorer() {
     setOffset(0);
   }
 
-  function changeSortField(value: SortField) {
-    setSortField(value);
+  function changeSortField(value: string) {
+    const option = sortFields.find((field) => field.value === value);
+    setSortField(option?.field ?? (value as SortField));
+    if (option?.direction) {
+      setSortDirection(option.direction);
+    }
     setOffset(0);
   }
 
@@ -307,8 +313,8 @@ export function MemoryExplorer() {
             Sort
             <select
               data-testid="sort-field-select"
-              value={sortField}
-              onChange={(event) => changeSortField(event.target.value as SortField)}
+              value={sortSelectValue(sortField, sortDirection)}
+              onChange={(event) => changeSortField(event.target.value)}
               className="h-10 rounded-md border border-line bg-white px-3 text-sm normal-case text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
             >
               {sortFields.map((field) => (
@@ -455,9 +461,16 @@ function rowValue(row: MemoryRow, field: SortField): number {
   if (field === "decay_score") {
     return row.decay_score;
   }
+  if (field === "relevance_score") {
+    return row.relevance_score ?? 0.5;
+  }
 
   const timestamp = Date.parse(field === "created_at" ? row.created_at : row.updated_at);
   return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function sortSelectValue(field: SortField, direction: SortDirection): string {
+  return field === "relevance_score" ? `${field}:${direction}` : field;
 }
 
 function filterButtonClass(active: boolean): string {

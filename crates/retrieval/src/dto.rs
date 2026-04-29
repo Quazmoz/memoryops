@@ -160,6 +160,7 @@ pub struct MemoryUnitDto {
     pub source_events: Vec<Uuid>,
     pub source_episode_ids: Vec<Uuid>,
     pub corroboration_count: i32,
+    pub relevance_score: f64,
     pub promoted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -188,6 +189,7 @@ impl From<MemoryUnit> for MemoryUnitDto {
             source_events: unit.source_events,
             source_episode_ids: unit.source_episode_ids,
             corroboration_count: unit.corroboration_count,
+            relevance_score: unit.relevance_score,
             promoted_at: unit.promoted_at,
             created_at: unit.created_at,
             updated_at: unit.updated_at,
@@ -236,6 +238,7 @@ pub enum SortField {
     #[default]
     ImportanceScore,
     DecayScore,
+    RelevanceScore,
     UpdatedAt,
     CreatedAt,
 }

@@ -1,5 +1,6 @@
-import { apiRequest, apiUrl, parseResponse, queryString } from "./client";
+import { apiRequest, apiUrl, isAbortError, parseResponse, queryString } from "./client";
 import type {
+  FeedbackResponse,
   ListMemoryResponse,
   JsonValue,
   MemoryType,
@@ -15,6 +16,7 @@ import type {
   ScopeFilter,
   SortDirection,
   SortField,
+  SubmitFeedbackRequest,
   UpdateMemoryRequest,
 } from "./types";
 
@@ -102,6 +104,31 @@ export function getMemory(workspaceId: string, id: string): Promise<MemoryUnit> 
 
 export function getMemoryProvenance(workspaceId: string, id: string): Promise<ProvenanceGraph> {
   return apiRequest<ProvenanceGraph>(`/v1/memory/${id}/provenance${queryString({ workspace_id: workspaceId })}`);
+}
+
+export function submitFeedback(
+  workspaceId: string,
+  memoryId: string,
+  request: SubmitFeedbackRequest,
+): Promise<MemoryUnit> {
+  return apiRequest<MemoryUnit>(`/v1/memory/${memoryId}/feedback${queryString({ workspace_id: workspaceId })}`, {
+    method: "POST",
+    body: request,
+  });
+}
+
+export function getMemoryFeedback(
+  workspaceId: string,
+  memoryId: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<FeedbackResponse> {
+  return apiRequest<FeedbackResponse>(
+    `/v1/memory/${memoryId}/feedback${queryString({
+      workspace_id: workspaceId,
+      limit: params.limit,
+      offset: params.offset,
+    })}`,
+  );
 }
 
 export function patchMemory(workspaceId: string, id: string, patch: UpdateMemoryRequest): Promise<MemoryUnit> {
@@ -271,15 +298,13 @@ function sortableValue(memory: MemoryUnit, field: SortField): number {
     return memory.decay_score;
   }
 
+  if (field === "relevance_score") {
+    return memory.relevance_score ?? 0.5;
+  }
+
   const raw = field === "created_at" ? memory.created_at : memory.updated_at;
   const timestamp = Date.parse(raw);
   return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException
-    ? error.name === "AbortError"
-    : error instanceof Error && error.name === "AbortError";
 }
 
 function scopeFilter(agentId: string | undefined, userId: string | undefined, repo: string | undefined): ScopeFilter {

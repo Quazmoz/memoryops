@@ -819,6 +819,7 @@ mod tests {
             embedding_id,
             token_count: Some(3),
             decay_score: 1.0,
+            relevance_score: 0.5,
             pinned: false,
             tags: Vec::new(),
             version: 1,

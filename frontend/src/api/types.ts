@@ -5,8 +5,9 @@ export type MemoryType = "episodic" | "semantic";
 export type ScopeVisibility = "private" | "workspace";
 export type MemoryTypeFilter = "all" | MemoryType;
 export type SearchMode = "hybrid" | "vector" | "keyword";
-export type SortField = "importance_score" | "decay_score" | "updated_at" | "created_at";
+export type SortField = "importance_score" | "decay_score" | "relevance_score" | "updated_at" | "created_at";
 export type SortDirection = "asc" | "desc";
+export type FeedbackRating = -1 | 0 | 1;
 
 export type EntityType = "person" | "repo" | "branch" | "file" | "team" | "topic";
 
@@ -40,6 +41,7 @@ export type MemoryUnit = {
   importance_score: number;
   importance_overridden?: boolean;
   decay_score: number;
+  relevance_score: number;
   pinned: boolean;
   tags: string[];
   embedding_id?: string | null;
@@ -124,6 +126,33 @@ export type TagsResponse = {
   next_cursor?: string | null;
 };
 
+export type FeedbackEntry = {
+  id: string;
+  memory_id: string;
+  query_id: string;
+  agent_id?: string | null;
+  user_id?: string | null;
+  rating: FeedbackRating;
+  comment?: string | null;
+  occurred_at: string;
+};
+
+export type FeedbackResponse = {
+  items: FeedbackEntry[];
+  total: number;
+  memory_id: string;
+  avg_rating: number;
+  relevance_score: number;
+};
+
+export type SubmitFeedbackRequest = {
+  query_id: string;
+  rating: FeedbackRating;
+  agent_id?: string;
+  user_id?: string;
+  comment?: string;
+};
+
 export type ImportMemoriesResponse = {
   imported: number;
   skipped: number;
@@ -145,6 +174,7 @@ export type PackedMemory = {
   memory_type: MemoryType | string;
   importance_score: number;
   decay_score: number;
+  relevance_score?: number;
   rrf_score?: number;
   token_count?: number | null;
   tags?: string[];
@@ -161,6 +191,7 @@ export type TraceCandidate = {
   vector_score?: number | null;
   rrf_score?: number;
   decay_score?: number;
+  relevance_score?: number;
   importance_score?: number;
   final_score?: number;
   token_count?: number | null;
@@ -178,6 +209,7 @@ export type RetrievalTrace = {
   query_text?: string;
   as_of?: string | null;
   mode?: SearchMode;
+  feedback_applied?: boolean;
   search_mode?: string;
   created_at?: string;
   elapsed_ms?: number;
@@ -342,8 +374,6 @@ export type AuditEvent = {
   diff?: JsonValue | null;
   occurred_at: string;
 };
-
-export type AuditEntry = AuditEvent;
 
 export type AuditResponse = {
   items: AuditEvent[];

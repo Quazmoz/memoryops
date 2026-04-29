@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::embedder::{QdrantPayload, COLLECTION_NAME};
 
-const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, scope_visibility, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
+const MEMORY_COLUMNS: &str = "id, workspace_id, scope, memory_type, scope_visibility, content, entities, importance_score, importance_overridden, source_events, embedding_id, token_count, decay_score, relevance_score, pinned, tags, version, promoted_at, source_episode_ids, corroboration_count, deleted_at, last_accessed_at, created_at, updated_at";
 const PROMOTION_SUMMARY_MAX_TOKENS: usize = 256;
 const EMBED_MAX_ATTEMPTS: usize = 3;
 

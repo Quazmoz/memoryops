@@ -263,7 +263,10 @@ function TracePanel({
     <div className="grid gap-4">
       <Card>
         <CardHeader>
-          <CardTitle>Trace metadata</CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle>Trace metadata</CardTitle>
+            {trace.feedback_applied ? <Badge variant="green">Feedback applied</Badge> : null}
+          </div>
         </CardHeader>
         <CardContent>
           <dl className="grid gap-3 md:grid-cols-2">
@@ -285,7 +288,7 @@ function TracePanel({
         </CardHeader>
         <CardContent>
           <div className="thin-scrollbar overflow-x-auto rounded-md border border-line">
-            <table className="w-full min-w-[1060px] border-collapse text-left text-sm" data-testid="trace-candidates-table">
+            <table className="w-full min-w-[1120px] border-collapse text-left text-sm" data-testid="trace-candidates-table">
               <thead className="bg-soft text-xs uppercase text-ink/55">
                 <tr>
                   <th className="px-3 py-2 font-medium">Memory ID</th>
@@ -293,6 +296,7 @@ function TracePanel({
                   <th className="px-3 py-2 font-medium">Keyword</th>
                   <th className="px-3 py-2 font-medium">Vector</th>
                   <th className="px-3 py-2 font-medium">RRF</th>
+                  <th className="px-3 py-2 font-medium">Relevance</th>
                   <th className="px-3 py-2 font-medium">Decay</th>
                   <th className="px-3 py-2 font-medium">Importance</th>
                   <th className="px-3 py-2 font-medium">Final</th>
@@ -342,6 +346,7 @@ function TraceCandidateRow({ candidate }: { candidate: RetrievalTraceEntry }) {
       <td className="px-3 py-3">{formatTraceScore(candidate.keyword_score ?? candidate.score_breakdown?.keyword_rank)}</td>
       <td className="px-3 py-3">{formatTraceScore(candidate.vector_score ?? candidate.score_breakdown?.semantic_similarity)}</td>
       <td className="px-3 py-3">{formatTraceScore(candidate.rrf_score ?? candidate.score)}</td>
+      <td className="px-3 py-3">{formatTraceScore(candidate.relevance_score, 2)}</td>
       <td className="px-3 py-3">{formatTraceScore(candidate.decay_score ?? candidate.score_breakdown?.recency)}</td>
       <td className="px-3 py-3">{formatTraceScore(candidate.importance_score ?? candidate.score_breakdown?.importance)}</td>
       <td className="px-3 py-3 font-medium text-ink">{formatTraceScore(candidate.final_score ?? candidate.score)}</td>
@@ -421,12 +426,12 @@ function estimateTokens(content: string): number {
   return Math.max(1, Math.floor(content.length / 4));
 }
 
-function formatTraceScore(value: number | null | undefined): string {
+function formatTraceScore(value: number | null | undefined, digits = 3): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "—";
   }
 
-  return value.toFixed(3);
+  return value.toFixed(digits);
 }
 
 function memoryKey(memory: PackedMemory, index: number): string {

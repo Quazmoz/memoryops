@@ -85,6 +85,7 @@ pub struct PackedMemory {
     pub memory_type: String,
     pub importance_score: f32,
     pub decay_score: f32,
+    pub relevance_score: f64,
     pub entities: Vec<Entity>,
     pub score_breakdown: ScoreBreakdown,
 }
@@ -95,6 +96,8 @@ pub struct RetrievalTrace {
     pub query: String,
     pub as_of: Option<DateTime<Utc>>,
     pub mode: SearchMode,
+    #[serde(default)]
+    pub feedback_applied: bool,
     pub candidates_evaluated: usize,
     pub included_count: usize,
     pub excluded_count: usize,
@@ -107,6 +110,8 @@ pub struct TraceEntry {
     pub score: f32,
     pub included: bool,
     pub exclusion_reason: Option<String>,
+    #[serde(default)]
+    pub relevance_score: Option<f64>,
     pub score_breakdown: ScoreBreakdown,
 }
 
@@ -186,6 +191,7 @@ pub async fn handle_retrieve(
         query: request.query,
         as_of: request.as_of,
         mode,
+        feedback_applied: packed.feedback_applied,
         candidates_evaluated: packed.entries.len(),
         included_count: packed.memories.len(),
         excluded_count: packed
@@ -302,14 +308,17 @@ struct PackedResult {
     memories: Vec<PackedMemory>,
     total_tokens: usize,
     entries: Vec<TraceEntry>,
+    feedback_applied: bool,
 }
 
 fn pack_memories(candidates: Vec<CandidateMemory>, token_budget: usize) -> PackedResult {
     let mut memories = Vec::new();
     let mut entries = Vec::with_capacity(candidates.len());
     let mut total_tokens = 0_usize;
+    let mut feedback_applied = false;
 
     for candidate in candidates {
+        feedback_applied |= (candidate.unit.relevance_score - 0.5).abs() > f64::EPSILON;
         let estimated_tokens = estimate_tokens(&candidate.unit.content);
         if total_tokens.saturating_add(estimated_tokens) > token_budget {
             entries.push(trace_entry(
@@ -328,6 +337,7 @@ fn pack_memories(candidates: Vec<CandidateMemory>, token_budget: usize) -> Packe
             memory_type: crate::dto::memory_type_as_str(candidate.unit.memory_type).to_owned(),
             importance_score: candidate.unit.importance_score,
             decay_score: candidate.unit.decay_score,
+            relevance_score: candidate.unit.relevance_score,
             entities: candidate.unit.entities.0,
             score_breakdown: candidate.score_breakdown,
         });
@@ -337,6 +347,7 @@ fn pack_memories(candidates: Vec<CandidateMemory>, token_budget: usize) -> Packe
         memories,
         total_tokens,
         entries,
+        feedback_applied,
     }
 }
 
@@ -350,6 +361,7 @@ fn trace_entry(
         score: candidate.score,
         included,
         exclusion_reason,
+        relevance_score: Some(candidate.unit.relevance_score),
         score_breakdown: candidate.score_breakdown.clone(),
     }
 }
@@ -470,6 +482,7 @@ mod tests {
                     embedding_id: None,
                     token_count: Some(self.token_count as i32),
                     decay_score: self.decay_score as f32,
+                    relevance_score: 0.5,
                     pinned: false,
                     tags: Vec::new(),
                     version: 1,
