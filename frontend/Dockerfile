@@ -1,11 +1,13 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm install
 COPY . .
-# VITE_API_BASE_URL is injected at build time via --build-arg
+# VITE environment variables injected at build time via --build-arg
 ARG VITE_API_BASE_URL=/api
+ARG VITE_MEMORYOPS_WORKSPACE_ID
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_MEMORYOPS_WORKSPACE_ID=$VITE_MEMORYOPS_WORKSPACE_ID
 RUN npm run build
 
 FROM nginx:1.27-alpine

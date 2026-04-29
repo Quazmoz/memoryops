@@ -50,6 +50,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api
+        VITE_MEMORYOPS_WORKSPACE_ID: ${VITE_MEMORYOPS_WORKSPACE_ID:-}
     container_name: memoryops-frontend
     ports:
       - "5173:80"
