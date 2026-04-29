@@ -11,6 +11,7 @@ import { LifecycleView } from "./views/LifecycleView";
 import { MemoryDetail } from "./views/MemoryDetail";
 import { MemoryExplorer } from "./views/MemoryExplorer";
 import { RetrievalTraceView } from "./views/RetrievalTraceView";
+import { GuideView } from "./views/GuideView";
 import { SettingsView } from "./views/SettingsView";
 import { SkillsView } from "./views/SkillsView";
 
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/skills" element={<SkillsView />} />
           <Route path="/contradictions" element={<ContradictionsView />} />
           <Route path="/audit" element={<AuditView />} />
+          <Route path="/guide" element={<GuideView />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell>

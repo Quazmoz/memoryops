@@ -1,8 +1,9 @@
-import { Check, Edit3, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Check, Edit3, FlaskConical, Loader2, Play, Plus, Trash2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
 
-import { createSkill, deleteSkill, listSkills, updateSkill, type CreateSkillPayload, type Skill } from "../api/skills";
+import { createSkill, deleteSkill, listSkills, testSkill, updateSkill, type CreateSkillPayload, type Skill, type SkillTestResponse } from "../api/skills";
+import type { JsonValue } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
@@ -37,6 +38,10 @@ export function SkillsView() {
   const [draft, setDraft] = useState<SkillDraft>(emptyDraft);
   const [errors, setErrors] = useState<FormErrors>({});
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  const [testingSkillName, setTestingSkillName] = useState<string | null>(null);
+  const [testBody, setTestBody] = useState("");
+  const [testResult, setTestResult] = useState<SkillTestResponse | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
   const hasAuth = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
 
   const skillsQuery = useQuery({
@@ -88,6 +93,19 @@ export function SkillsView() {
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: skillsKey(workspaceId) });
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "skills", "test"],
+    mutationFn: ({ name, body }: { name: string; body: JsonValue }) => testSkill(workspaceId, name, { body }),
+    onSuccess: (data) => {
+      setTestResult(data);
+      setTestError(null);
+    },
+    onError: (error) => {
+      setTestError(error instanceof Error ? error.message : "Test request failed.");
+      setTestResult(null);
     },
   });
 
@@ -154,6 +172,29 @@ export function SkillsView() {
     updateMutation.mutate({ name: skill.name, patch: { enabled: !skill.enabled } });
   }
 
+  function openTestPanel(skill: Skill) {
+    if (testingSkillName === skill.name) {
+      setTestingSkillName(null);
+      return;
+    }
+    setTestingSkillName(skill.name);
+    setTestBody(JSON.stringify(skill.input_schema ?? {}, null, 2));
+    setTestResult(null);
+    setTestError(null);
+  }
+
+  function runTest(name: string) {
+    let body: JsonValue;
+    try {
+      body = JSON.parse(testBody || "{}") as JsonValue;
+    } catch {
+      setTestError("Invalid JSON in request body.");
+      return;
+    }
+    setTestError(null);
+    testMutation.mutate({ name, body });
+  }
+
   return (
     <div className="mx-auto grid max-w-7xl gap-5">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -194,7 +235,8 @@ export function SkillsView() {
               </thead>
               <tbody>
                 {rows.map((skill) => (
-                  <tr key={skill.id} data-testid={`skill-row-${skill.name}`} className="border-b border-line/80 last:border-b-0">
+                  <Fragment key={skill.id}>
+                  <tr data-testid={`skill-row-${skill.name}`} className="border-b border-line/80 last:border-b-0">
                     <td className="px-4 py-4 align-middle font-mono text-sm text-ink">{skill.name}</td>
                     <td className="max-w-[22rem] px-4 py-4 align-middle text-sm text-ink/70">{previewText(skill.description, 96)}</td>
                     <td className="px-4 py-4 align-middle">
@@ -215,6 +257,17 @@ export function SkillsView() {
                     </td>
                     <td className="relative px-4 py-4 align-middle">
                       <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          data-testid={`skill-test-open-${skill.name}`}
+                          aria-label={`Test ${skill.name}`}
+                          aria-pressed={testingSkillName === skill.name}
+                          onClick={() => openTestPanel(skill)}
+                        >
+                          <FlaskConical className="h-4 w-4" aria-hidden="true" />
+                        </Button>
                         <Button type="button" variant="ghost" size="icon" data-testid={`skill-edit-${skill.name}`} aria-label={`Edit ${skill.name}`} onClick={() => openEditDrawer(skill)}>
                           <Edit3 className="h-4 w-4" aria-hidden="true" />
                         </Button>
@@ -236,6 +289,64 @@ export function SkillsView() {
                       ) : null}
                     </td>
                   </tr>
+                  {testingSkillName === skill.name ? (
+                    <tr>
+                      <td colSpan={6} className="border-b border-line/80 bg-soft/40 px-5 py-4">
+                        <div className="grid max-w-3xl gap-4">
+                          <div className="flex flex-wrap gap-6 text-sm">
+                            <div>
+                              <span className="text-xs font-medium uppercase text-ink/45">Method</span>
+                              <p className="mt-0.5 font-mono text-ink">{skill.http_method}</p>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <span className="text-xs font-medium uppercase text-ink/45">Endpoint</span>
+                              <p className="mt-0.5 truncate font-mono text-xs text-ink/70">{skill.endpoint_url}</p>
+                            </div>
+                          </div>
+                          <label className="grid gap-1">
+                            <span className="text-xs font-medium uppercase text-ink/45">Request body (JSON)</span>
+                            <textarea
+                              data-testid={`skill-test-body-${skill.name}`}
+                              value={testBody}
+                              onChange={(e) => setTestBody(e.target.value)}
+                              rows={5}
+                              className="rounded-md border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                            />
+                          </label>
+                          {testError ? <p className="text-sm text-rust">{testError}</p> : null}
+                          <div className="flex items-center gap-3">
+                            <Button
+                              type="button"
+                              size="sm"
+                              data-testid={`skill-test-run-${skill.name}`}
+                              onClick={() => runTest(skill.name)}
+                              disabled={testMutation.isPending}
+                            >
+                              {testMutation.isPending
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                                : <Play className="h-3.5 w-3.5" aria-hidden="true" />}
+                              Run
+                            </Button>
+                            {testResult ? (
+                              <span className="text-sm text-ink/60">
+                                <span className={statusColor(testResult.status)}>{testResult.status}</span>
+                                {" · "}{testResult.latency_ms} ms
+                              </span>
+                            ) : null}
+                          </div>
+                          {testResult ? (
+                            <pre
+                              data-testid={`skill-test-response-${skill.name}`}
+                              className="max-h-64 overflow-auto rounded-md bg-ink px-4 py-3 font-mono text-xs text-white/90"
+                            >
+                              {JSON.stringify(testResult.body, null, 2)}
+                            </pre>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -402,4 +513,10 @@ function skillsKey(workspaceId: string) {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Skills could not be loaded.";
+}
+
+function statusColor(status: number): string {
+  if (status < 300) return "font-semibold text-green-600";
+  if (status < 500) return "font-semibold text-yellow-600";
+  return "font-semibold text-rust";
 }

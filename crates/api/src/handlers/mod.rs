@@ -66,6 +66,14 @@ pub fn protected_router() -> Router<AppState> {
             axum::routing::post(contradictions::resolve_contradiction),
         )
         .route(
+            "/v1/workspaces/{id}/contradictions/bulk-dismiss",
+            axum::routing::post(contradictions::bulk_dismiss_contradictions),
+        )
+        .route(
+            "/v1/workspaces/{id}/reindex",
+            axum::routing::post(workspaces::reindex_workspace),
+        )
+        .route(
             "/v1/workspaces/{id}/skills",
             axum::routing::post(skills::create_skill).get(skills::list_skills),
         )
@@ -78,6 +86,10 @@ pub fn protected_router() -> Router<AppState> {
         .route(
             "/v1/workspaces/{id}/skills/{name}/secret",
             get(skills::get_skill_secret),
+        )
+        .route(
+            "/v1/workspaces/{id}/skills/{name}/test",
+            axum::routing::post(skills::test_skill),
         )
         .route(
             "/v1/workspaces/{id}/integrations",

@@ -1,4 +1,4 @@
-import { Activity, Database, GitBranch, Home, KeyRound, PlugZap, ScrollText, Settings, ShieldAlert, Send, Wrench } from "lucide-react";
+import { Activity, BookOpen, Database, GitBranch, Home, KeyRound, PlugZap, ScrollText, Settings, ShieldAlert, Send, Wrench } from "lucide-react";
 import type { ComponentType, ReactNode, SVGProps } from "react";
 import { NavLink } from "react-router-dom";
 
@@ -18,6 +18,7 @@ const primaryLinks = [
   { to: "/skills", label: "Skills", icon: Wrench, testId: "nav-skills" },
   { to: "/contradictions", label: "Contradictions", icon: ShieldAlert, testId: "nav-contradictions" },
   { to: "/audit", label: "Audit", icon: ScrollText, testId: "nav-audit" },
+  { to: "/guide", label: "Guide", icon: BookOpen, testId: "nav-guide" },
   { to: "/settings", label: "Settings", icon: Settings, testId: "nav-settings" },
 ];
 

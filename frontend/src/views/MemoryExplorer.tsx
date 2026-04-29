@@ -43,7 +43,10 @@ export function MemoryExplorer() {
   const initialQuery = searchParams.get("q") ?? "";
   const [query, setQuery] = useState(initialQuery);
   const [submittedQuery, setSubmittedQuery] = useState(initialQuery);
-  const [memoryType, setMemoryType] = useState<MemoryTypeFilter>("all");
+  const initialType = (searchParams.get("type") ?? "all") as MemoryTypeFilter;
+  const [memoryType, setMemoryType] = useState<MemoryTypeFilter>(
+    ["all", "episodic", "semantic"].includes(initialType) ? initialType : "all",
+  );
   const [includeWorkspacePool, setIncludeWorkspacePool] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [minImportance, setMinImportance] = useState(0);
@@ -141,6 +144,15 @@ export function MemoryExplorer() {
   function selectMemoryType(type: MemoryTypeFilter) {
     setMemoryType(type);
     setOffset(0);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (type === "all") {
+        next.delete("type");
+      } else {
+        next.set("type", type);
+      }
+      return next;
+    });
   }
 
   function toggleWorkspacePool() {

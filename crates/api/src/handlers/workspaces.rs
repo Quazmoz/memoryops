@@ -835,6 +835,99 @@ fn validate_threshold(
     }
 }
 
+const REINDEX_PAGE_SIZE: i64 = 1000;
+
+#[derive(Debug, Deserialize)]
+pub struct ReindexQuery {
+    pub force: Option<bool>,
+    pub after: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReindexResponse {
+    pub enqueued: usize,
+    pub next_cursor: Option<Uuid>,
+}
+
+#[axum::debug_handler]
+pub async fn reindex_workspace(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<ReindexQuery>,
+) -> AppResult<Json<ReindexResponse>> {
+    require_workspace(&auth, id)?;
+
+    let force = query.force.unwrap_or(false);
+
+    // If force mode: clear embedding_ids for all non-deleted memories first
+    if force {
+        sqlx::query(
+            "UPDATE memory_units SET embedding_id = NULL WHERE workspace_id = $1 AND deleted_at IS NULL AND ($2::UUID IS NULL OR id > $2)",
+        )
+        .bind(id)
+        .bind(query.after)
+        .execute(&state.db)
+        .await
+        .map_err(AppError::Database)?;
+    }
+
+    // Fetch memories that need embedding (missing embedding_id), with cursor pagination
+    #[derive(sqlx::FromRow)]
+    struct MemoryIdRow {
+        id: Uuid,
+        workspace_id: Uuid,
+    }
+
+    let mut rows: Vec<MemoryIdRow> = sqlx::query_as::<_, MemoryIdRow>(
+        r#"
+        SELECT id, workspace_id
+        FROM memory_units
+        WHERE workspace_id = $1
+          AND deleted_at IS NULL
+          AND embedding_id IS NULL
+          AND ($2::UUID IS NULL OR id > $2)
+        ORDER BY id ASC
+        LIMIT $3
+        "#,
+    )
+    .bind(id)
+    .bind(query.after)
+    .bind(REINDEX_PAGE_SIZE + 1)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    let next_cursor = if rows.len() > REINDEX_PAGE_SIZE as usize {
+        rows.pop().map(|row| row.id)
+    } else {
+        None
+    };
+
+    let enqueued = rows.len();
+    let mut redis = state.redis.clone();
+    for row in &rows {
+        if let Err(error) = enqueue_slow_job(&mut redis, row.id, row.workspace_id, 0).await {
+            tracing::warn!(error = ?error, memory_id = %row.id, "failed to enqueue memory for reindex");
+        }
+    }
+
+    spawn_audit_log(
+        state.db.clone(),
+        id,
+        format!("user:{}", auth.key_id),
+        AuditAction::WorkspaceReindexed,
+        id,
+        "workspace",
+        Some(json!({ "enqueued": enqueued, "force": force })),
+    );
+
+    Ok(Json(ReindexResponse {
+        enqueued,
+        next_cursor,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

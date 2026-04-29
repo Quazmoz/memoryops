@@ -1,6 +1,6 @@
 # MemoryOps — Feature List
 
-**Version:** 0.18.0
+**Version:** 0.20.0
 **Last Updated:** 2026-04-29
 
 This document tracks all planned features across the platform with current status and target milestone.
@@ -54,6 +54,8 @@ This document tracks all planned features across the platform with current statu
 | M31 | Compliance mode (retention + right-to-erasure) | 🔴 Not started |
 | M32 | Agent-authored observation ingest | 🔴 Not started |
 | M33 | LOCOMO benchmark integration | 🔴 Not started |
+| M34 | UX Gap Completeness Pass | 🟢 Complete |
+| M35 | In-App Walkthrough Guide + Connection Wizard | 🟢 Complete |
 
 ---
 
@@ -202,6 +204,10 @@ This document tracks all planned features across the platform with current statu
 | POST /v1/workspaces/:id/import | 🟢 | M21 | JSONL import; idempotent on id |
 | POST/GET/PATCH/DELETE /v1/workspaces/:id/skills[/:name] | 🟢 | M25 | Workspace HTTP Skills registry; secret read is isolated at /secret |
 | GET /v1/workspaces/:id/contradictions, POST /v1/workspaces/:id/contradictions/:flag_id/resolve, GET /v1/workspaces/:id/contradictions/count | 🟢 | M26 | Review and resolve contradiction flags |
+| POST /v1/workspaces/:id/contradictions/bulk-dismiss | 🟢 | M34 | Dismiss up to 50 open contradiction flags in one call |
+| POST /v1/workspaces/:id/reindex | 🟢 | M34 | Trigger cursor-paginated re-embedding for missing/stale embedding_ids; force=true clears all first |
+| POST /v1/workspaces/:id/skills/:name/test | 🟢 | M34 | Server-side skill test proxy (injects auth, returns status+latency+body) |
+| GET /health/system | 🟢 | M34 | Structured health check for Postgres, Redis, Qdrant, Ollama, FastEmbed |
 | GET /v1/memory/:id/provenance | 🟢 | M27 | Source events, source episodes, merge audit records, and access summary as DAG |
 | GET /v1/memory?as_of=... | 🟢 | M28 | Reconstructs active memories as of an ISO8601 timestamp |
 | POST /v1/retrieve with as_of | 🟢 | M28 | Historical retrieval packs memory state and scores at timestamp |
@@ -311,6 +317,16 @@ This document tracks all planned features across the platform with current statu
 | Memory Detail feedback panel | 🟢 | M30 | Rating buttons, optional comment, query_id, recent feedback, and relevance meter |
 | Retrieval Trace relevance display | 🟢 | M30 | Feedback-applied badge and per-candidate relevance_score column |
 | Memory Explorer relevance sorting | 🟢 | M30 | Relevance up/down sort options backed by relevance_score |
+| Contradiction winner selection (Keep A / Keep B) | 🟢 | M34 | Soft-deletes the losing memory and records kept/discarded IDs on the flag |
+| Bulk contradiction dismiss (up to 50) | 🟢 | M34 | Checkbox selection + "Dismiss Selected" bar in ContradictionsView |
+| Memory-type filter with URL persistence | 🟢 | M34 | All / Episodic / Semantic chips in MemoryExplorer persist via ?type= query param |
+| Auto-resolve contradiction config toggle | 🟢 | M34 | Toggle between quarantine and auto_resolve modes in SettingsView |
+| Workspace re-index trigger | 🟢 | M34 | Confirmation flow + enqueued count display in SettingsView |
+| Skills test button + inline test panel | 🟢 | M34 | Per-row FlaskConical button expands Method/URL/body editor + Run/response panel |
+| System health panel | 🟢 | M34 | Live status strip in SettingsView with per-check latency badges |
+| CodeBlock component | 🟢 | M35 | Dark pre/code block with copy button and live {{WORKSPACE_ID}}/{{API_KEY}}/{{API_URL}} substitution |
+| GuideView (/guide) | 🟢 | M35 | Two-panel layout, 14 content sections, sticky TOC sidebar, connection status strip |
+| Guide nav item (BookOpen) | 🟢 | M35 | Sidebar nav link above Settings |
 
 ---
 
@@ -388,6 +404,8 @@ This document tracks all planned features across the platform with current statu
 | Retrieval feedback table + relevance_score | 🟢 | M30 | Stores explicit ratings and updates MemoryUnit relevance_score |
 | POST/GET /v1/memory/:id/feedback | 🟢 | M30 | Submit and inspect feedback history per memory |
 | Feedback-biased retrieval + UI | 🟢 | M30 | Hybrid scorer nudge, trace relevance column, detail feedback panel, and relevance sorting |
+| UX Gap Completeness Pass | 🟢 | M34 | Keep A/B resolution, bulk dismiss, memory-type URL filter, auto-resolve toggle, reindex, skill test panel, health panel |
+| In-App Walkthrough Guide + Connection Wizard | 🟢 | M35 | /guide with 14 sections, CodeBlock with live substitution, health strip, sticky TOC |
 | Per-workspace retention policy (max age + auto hard-purge) | 🔴 | M31 | Configured via WorkspaceConfig |
 | DELETE /v1/workspaces/:id/forget/user/:user_id | 🔴 | M31 | Hard-purges all memories with matching scope.user_id |
 | Compliance deletion audit trail | 🔴 | M31 | Separate compliance_audit_log table; GDPR/CCPA ready |
@@ -423,3 +441,4 @@ This document tracks all planned features across the platform with current statu
 | 0019_point_in_time.sql | Historical as-of query indexes for memory_units and memory_versions | 🟢 M28 |
 | 0020_scope_visibility.sql | scope_visibility column, publish audit action, and workspace-pool visibility index | 🟢 M29 |
 | 0021_retrieval_feedback.sql | retrieval_feedback table and memory_units.relevance_score index | 🟢 M30 |
+| 0022_contradiction_keep.sql | keep_a/keep_b ENUM values; kept/discarded columns; contradiction_resolved/workspace_reindexed audit actions | 🟢 M34 |

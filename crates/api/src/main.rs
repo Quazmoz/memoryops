@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use axum::{http::StatusCode, middleware as axum_middleware, routing::get, Json, Router};
+use chrono::Utc;
 use common::{
     config::{AppConfig, EmbeddingProviderKind, LlmProviderKind},
     providers::{
@@ -13,6 +14,7 @@ use common::{
 use qdrant_client::Qdrant;
 use redis::aio::ConnectionManager;
 use retrieval::retrieval_router;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 
@@ -66,6 +68,7 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/health/ready", get(readiness))
+        .route("/health/system", get(system_health))
         .merge(handlers::bootstrap_router())
         .merge(ingestion_router)
         .merge(retrieval_router)
@@ -287,6 +290,130 @@ async fn check_redis() -> DependencyStatus {
         Err(_) => DependencyStatus::Unavailable,
     }
 }
+
+// ── Structured system health (/health/system) ─────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SystemHealthResponse {
+    pub status: String,
+    pub checks: Vec<HealthCheck>,
+    pub checked_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HealthCheck {
+    pub name: String,
+    pub status: String,
+    pub latency_ms: Option<u64>,
+    pub message: Option<String>,
+}
+
+async fn system_health(State(state): axum::extract::State<AppState>) -> Json<SystemHealthResponse> {
+    let config = state.config.clone();
+    let db = state.db.clone();
+    let redis = state.redis.clone();
+    let qdrant = state.qdrant.clone();
+
+    let (pg, rd, qd, ollama) = tokio::join!(
+        probe_postgres(db),
+        probe_redis(redis),
+        probe_qdrant(qdrant),
+        probe_ollama(config.clone()),
+    );
+    let fastembed = probe_fastembed(&config);
+
+    let checks = vec![pg, rd, qd, ollama, fastembed];
+    let overall = overall_health_status(&checks);
+
+    Json(SystemHealthResponse {
+        status: overall.to_owned(),
+        checks,
+        checked_at: Utc::now(),
+    })
+}
+
+async fn probe_postgres(db: sqlx::PgPool) -> HealthCheck {
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        sqlx::query("SELECT 1").execute(&db),
+    )
+    .await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(Ok(_)) => HealthCheck { name: "postgres".to_owned(), status: "ok".to_owned(), latency_ms: Some(latency_ms), message: None },
+        Ok(Err(error)) => HealthCheck { name: "postgres".to_owned(), status: "error".to_owned(), latency_ms: Some(latency_ms), message: Some(error.to_string()) },
+        Err(_) => HealthCheck { name: "postgres".to_owned(), status: "error".to_owned(), latency_ms: Some(2000), message: Some("timeout".to_owned()) },
+    }
+}
+
+async fn probe_redis(mut redis: redis::aio::ConnectionManager) -> HealthCheck {
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        redis::cmd("PING").query_async::<String>(&mut redis),
+    )
+    .await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(Ok(_)) => HealthCheck { name: "redis".to_owned(), status: "ok".to_owned(), latency_ms: Some(latency_ms), message: None },
+        Ok(Err(error)) => HealthCheck { name: "redis".to_owned(), status: "error".to_owned(), latency_ms: Some(latency_ms), message: Some(error.to_string()) },
+        Err(_) => HealthCheck { name: "redis".to_owned(), status: "error".to_owned(), latency_ms: Some(2000), message: Some("timeout".to_owned()) },
+    }
+}
+
+async fn probe_qdrant(qdrant: Qdrant) -> HealthCheck {
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(Duration::from_secs(2), qdrant.health_check()).await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(Ok(_)) => HealthCheck { name: "qdrant".to_owned(), status: "ok".to_owned(), latency_ms: Some(latency_ms), message: None },
+        Ok(Err(error)) => HealthCheck { name: "qdrant".to_owned(), status: "error".to_owned(), latency_ms: Some(latency_ms), message: Some(error.to_string()) },
+        Err(_) => HealthCheck { name: "qdrant".to_owned(), status: "error".to_owned(), latency_ms: Some(2000), message: Some("timeout".to_owned()) },
+    }
+}
+
+async fn probe_ollama(config: Arc<common::config::AppConfig>) -> HealthCheck {
+    use common::config::LlmProviderKind;
+    if config.llm.provider != LlmProviderKind::Ollama {
+        return HealthCheck { name: "ollama".to_owned(), status: "ok".to_owned(), latency_ms: None, message: Some("not configured".to_owned()) };
+    }
+    let url = format!("{}/api/tags", config.llm.base_url.trim_end_matches('/'));
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        reqwest::get(&url),
+    )
+    .await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(Ok(resp)) if resp.status().is_success() => HealthCheck { name: "ollama".to_owned(), status: "ok".to_owned(), latency_ms: Some(latency_ms), message: None },
+        Ok(Ok(resp)) => HealthCheck { name: "ollama".to_owned(), status: "warn".to_owned(), latency_ms: Some(latency_ms), message: Some(format!("HTTP {}", resp.status())) },
+        Ok(Err(error)) => HealthCheck { name: "ollama".to_owned(), status: "error".to_owned(), latency_ms: Some(latency_ms), message: Some(error.to_string()) },
+        Err(_) => HealthCheck { name: "ollama".to_owned(), status: "error".to_owned(), latency_ms: Some(2000), message: Some("timeout".to_owned()) },
+    }
+}
+
+fn overall_health_status(checks: &[HealthCheck]) -> &'static str {
+    if checks.iter().any(|c| c.status == "error") {
+        "unhealthy"
+    } else if checks.iter().any(|c| c.status == "warn") {
+        "degraded"
+    } else {
+        "healthy"
+    }
+}
+
+fn probe_fastembed(config: &AppConfig) -> HealthCheck {
+    use common::config::EmbeddingProviderKind;
+    if config.embedding.provider != EmbeddingProviderKind::FastEmbed {
+        return HealthCheck { name: "fastembed".to_owned(), status: "ok".to_owned(), latency_ms: None, message: Some("not configured".to_owned()) };
+    }
+    // FastEmbed is always in-process; if the binary is running, the model is loaded.
+    HealthCheck { name: "fastembed".to_owned(), status: "ok".to_owned(), latency_ms: Some(0), message: None }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 
 async fn check_qdrant() -> DependencyStatus {
     let Ok(qdrant_url) = std::env::var("QDRANT_URL") else {
@@ -1375,6 +1502,47 @@ mod tests {
         };
 
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    fn ok_check(name: &str) -> HealthCheck {
+        HealthCheck { name: name.to_owned(), status: "ok".to_owned(), latency_ms: Some(1), message: None }
+    }
+
+    fn warn_check(name: &str) -> HealthCheck {
+        HealthCheck { name: name.to_owned(), status: "warn".to_owned(), latency_ms: Some(1), message: None }
+    }
+
+    fn error_check(name: &str) -> HealthCheck {
+        HealthCheck { name: name.to_owned(), status: "error".to_owned(), latency_ms: Some(1), message: Some("down".to_owned()) }
+    }
+
+    #[test]
+    fn health_status_all_ok_is_healthy() {
+        let checks = vec![ok_check("postgres"), ok_check("redis"), ok_check("qdrant")];
+        assert_eq!(overall_health_status(&checks), "healthy");
+    }
+
+    #[test]
+    fn health_status_one_warn_is_degraded() {
+        let checks = vec![ok_check("postgres"), warn_check("ollama"), ok_check("qdrant")];
+        assert_eq!(overall_health_status(&checks), "degraded");
+    }
+
+    #[test]
+    fn health_status_one_error_is_unhealthy() {
+        let checks = vec![ok_check("postgres"), error_check("redis"), ok_check("qdrant")];
+        assert_eq!(overall_health_status(&checks), "unhealthy");
+    }
+
+    #[test]
+    fn health_status_error_wins_over_warn() {
+        let checks = vec![warn_check("ollama"), error_check("redis"), ok_check("qdrant")];
+        assert_eq!(overall_health_status(&checks), "unhealthy");
+    }
+
+    #[test]
+    fn health_status_empty_checks_is_healthy() {
+        assert_eq!(overall_health_status(&[]), "healthy");
     }
 
     async fn seed_rate_limit(redis: &ConnectionManager, workspace_id: Uuid) {

@@ -39,4 +39,6 @@ pub enum AuditAction {
     WorkspacePromote,
     IntegrationAdded,
     IntegrationRemoved,
+    ContradictionResolved,
+    WorkspaceReindexed,
 }

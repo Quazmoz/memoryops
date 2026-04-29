@@ -39,6 +39,15 @@ textarea {
   min-height: 100vh;
 }
 
+.inline-code {
+  border-radius: 0.25rem;
+  background: var(--color-soft);
+  border: 1px solid var(--color-line);
+  padding: 0.1em 0.35em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8em;
+}
+
 .thin-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: #b8c6bd transparent;

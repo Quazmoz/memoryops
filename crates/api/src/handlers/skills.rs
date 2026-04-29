@@ -1,3 +1,5 @@
+use std::{collections::HashMap, time::Instant};
+
 use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
@@ -407,6 +409,100 @@ fn encrypted_secret(value: Option<&str>) -> AppResult<Option<String>> {
     encrypt_secret(&secret).map(Some)
 }
 
+/// Request body for the skill test proxy.
+#[derive(Debug, Deserialize)]
+pub struct SkillTestRequest {
+    pub body: Option<Value>,
+    pub headers: Option<HashMap<String, String>>,
+}
+
+/// Response from the skill test proxy.
+#[derive(Debug, Serialize)]
+pub struct SkillTestResponse {
+    pub status: u16,
+    pub latency_ms: u64,
+    pub body: Value,
+}
+
+#[axum::debug_handler]
+pub async fn test_skill(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((id, name)): Path<(Uuid, String)>,
+    Json(request): Json<SkillTestRequest>,
+) -> AppResult<Json<SkillTestResponse>> {
+    require_workspace(&auth, id)?;
+
+    #[derive(Debug, sqlx::FromRow)]
+    struct SkillForTest {
+        endpoint_url: String,
+        http_method: String,
+        auth_header: Option<String>,
+        auth_secret_enc: Option<String>,
+    }
+
+    let skill = sqlx::query_as::<_, SkillForTest>(
+        "SELECT endpoint_url, http_method, auth_header, auth_secret_enc FROM workspace_skills WHERE workspace_id = $1 AND name = $2",
+    )
+    .bind(id)
+    .bind(&name)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound {
+        resource: format!("workspace_skill:{name}"),
+    })?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|error| AppError::Internal(anyhow::anyhow!(error)))?;
+
+    let method = reqwest::Method::from_bytes(skill.http_method.as_bytes())
+        .unwrap_or(reqwest::Method::POST);
+
+    let mut req_builder = client.request(method, &skill.endpoint_url);
+
+    // Inject auth header server-side (never expose the secret to the client)
+    if let (Some(header_name), Some(enc)) = (skill.auth_header.as_deref(), skill.auth_secret_enc.as_deref()) {
+        let secret = decrypt_secret(enc)?;
+        req_builder = req_builder.header(header_name, secret);
+    }
+
+    // Forward caller-supplied headers (cannot override the auth header)
+    if let Some(headers) = &request.headers {
+        for (k, v) in headers {
+            req_builder = req_builder.header(k.as_str(), v.as_str());
+        }
+    }
+
+    if let Some(body) = &request.body {
+        req_builder = req_builder
+            .header("Content-Type", "application/json")
+            .body(body.to_string());
+    }
+
+    let started = Instant::now();
+    let response = req_builder.send().await;
+    let latency_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+
+    match response {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let body: Value = resp
+                .json()
+                .await
+                .unwrap_or_else(|_| json!({ "error": "response was not JSON" }));
+            Ok(Json(SkillTestResponse { status, latency_ms, body }))
+        }
+        Err(error) => Ok(Json(SkillTestResponse {
+            status: 502,
+            latency_ms,
+            body: json!({ "error": error.to_string() }),
+        })),
+    }
+}
+
 fn map_skill_insert_error(error: sqlx::Error) -> AppError {
     if let sqlx::Error::Database(database_error) = &error {
         if database_error.is_unique_violation() {
@@ -414,4 +510,28 @@ fn map_skill_insert_error(error: sqlx::Error) -> AppError {
         }
     }
     AppError::Database(error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_method_as_str_roundtrips_all_variants() {
+        assert_eq!(HttpMethod::Get.as_str(), "GET");
+        assert_eq!(HttpMethod::Post.as_str(), "POST");
+        assert_eq!(HttpMethod::Put.as_str(), "PUT");
+    }
+
+    #[test]
+    fn skill_test_response_encodes_502_on_connection_error() {
+        let body = serde_json::json!({ "error": "connection refused" });
+        let resp = SkillTestResponse { status: 502, latency_ms: 5, body };
+        let encoded = match serde_json::to_value(&resp) {
+            Ok(encoded) => encoded,
+            Err(error) => panic!("SkillTestResponse should serialize: {error}"),
+        };
+        assert_eq!(encoded["status"], 502);
+        assert!(encoded["body"]["error"].as_str().is_some_and(|s| s.contains("connection refused")));
+    }
 }

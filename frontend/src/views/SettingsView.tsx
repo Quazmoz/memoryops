@@ -1,14 +1,16 @@
-import { Download, GitMerge, KeyRound, Loader2, Play, Save, ServerCog, ShieldCheck, SlidersHorizontal, Upload } from "lucide-react";
+import { Activity, CheckCircle2, Download, GitMerge, Loader2, Play, RefreshCw, Save, ServerCog, ShieldAlert, ShieldCheck, SlidersHorizontal, Upload, XCircle } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import type { ImportMemoriesResponse, PromotionReport, WorkspaceConfig } from "../api/types";
-import { exportMemories, getWorkspace, importMemories, triggerPromotion, updateWorkspaceConfig } from "../api/workspaces";
+import { getSystemHealth, type HealthCheck } from "../api/health";
+import { exportMemories, getWorkspace, importMemories, triggerPromotion, triggerReindex, updateWorkspaceConfig } from "../api/workspaces";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
 export function SettingsView() {
@@ -30,10 +32,37 @@ export function SettingsView() {
   const [llmProvider, setLlmProvider] = useState("ollama");
   const [llmModel, setLlmModel] = useState("llama3");
   const [subAgentPools, setSubAgentPools] = useState("");
+  const [contradictionMode, setContradictionMode] = useState<"quarantine" | "auto_resolve">("quarantine");
+  const [reindexResult, setReindexResult] = useState<{ enqueued: number; next_cursor: string | null } | null>(null);
+  const [reindexError, setReindexError] = useState<string | null>(null);
+  const [confirmReindex, setConfirmReindex] = useState(false);
   const embeddingModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const llmModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const hasApiKey = apiKey.trim().length > 0;
+  const canAct = hasApiKey && workspaceId.trim().length > 0;
+
+  const healthQuery = useQuery({
+    queryKey: ["health", "system"],
+    queryFn: () => getSystemHealth(),
+    enabled: canAct,
+    refetchInterval: 30_000,
+  });
+
+  const reindexMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "reindex"],
+    mutationFn: () => triggerReindex(workspaceId, true),
+    onSuccess: (result) => {
+      setReindexError(null);
+      setReindexResult(result);
+      setConfirmReindex(false);
+    },
+    onError: (error: Error) => {
+      setReindexError(error.message);
+      setConfirmReindex(false);
+    },
+  });
+
   const workspaceQuery = useQuery({
     queryKey: ["workspace", workspaceId, "settings"],
     queryFn: () => getWorkspace(workspaceId),
@@ -76,6 +105,10 @@ export function SettingsView() {
       setLlmProvider(workspace.llm_provider ?? "ollama");
       setLlmModel(workspace.llm_model ?? "llama3");
       setSubAgentPools((workspace.sub_agent_pools ?? []).join(", "));
+      const mode = workspace.contradiction_mode;
+      if (mode === "quarantine" || mode === "auto_resolve") {
+        setContradictionMode(mode);
+      }
     },
     onError: (error: Error) => setConfigError(error.message),
   });
@@ -104,6 +137,10 @@ export function SettingsView() {
       setLlmProvider(workspaceQuery.data.llm_provider ?? "ollama");
       setLlmModel(workspaceQuery.data.llm_model ?? "llama3");
       setSubAgentPools((workspaceQuery.data.sub_agent_pools ?? []).join(", "));
+      const mode = workspaceQuery.data.contradiction_mode;
+      if (mode === "quarantine" || mode === "auto_resolve") {
+        setContradictionMode(mode);
+      }
     }
   }, [workspaceQuery.data]);
 
@@ -170,6 +207,12 @@ export function SettingsView() {
 
   function saveSubAgentPools() {
     configMutation.mutate({ sub_agent_pools: commaSeparatedValues(subAgentPools) });
+  }
+
+  function toggleContradictionMode() {
+    const next = contradictionMode === "quarantine" ? "auto_resolve" : "quarantine";
+    setContradictionMode(next);
+    configMutation.mutate({ contradiction_mode: next });
   }
 
   function chooseImportFile() {
@@ -373,6 +416,50 @@ export function SettingsView() {
         </CardContent>
       </Card>
 
+      {/* Contradiction Detection ─────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle>Contradiction Detection</CardTitle>
+          <ShieldAlert className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-ink">Contradiction Mode</p>
+              <p className="mt-1 text-xs text-ink/60">
+                {contradictionMode === "quarantine"
+                  ? "New contradictions are flagged for manual review"
+                  : "When a contradiction is detected, the newer memory wins automatically"}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={contradictionMode === "auto_resolve"}
+              data-testid="contradiction-mode-toggle"
+              onClick={toggleContradictionMode}
+              disabled={configMutation.isPending}
+              className={cn(
+                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50",
+                contradictionMode === "auto_resolve" ? "bg-accent" : "bg-ink/20",
+              )}
+            >
+              <span
+                className={cn(
+                  "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform",
+                  contradictionMode === "auto_resolve" ? "translate-x-5" : "translate-x-0",
+                )}
+              />
+            </button>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-ink/55">
+            <span className={contradictionMode === "quarantine" ? "font-semibold text-accent-strong" : ""}>Quarantine for review</span>
+            <span>/</span>
+            <span className={contradictionMode === "auto_resolve" ? "font-semibold text-accent-strong" : ""}>Auto-resolve (newer wins)</span>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle>Provider config</CardTitle>
@@ -429,6 +516,119 @@ export function SettingsView() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Re-Index ──────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle>Embedding Re-Index</CardTitle>
+          <RefreshCw className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <p className="text-sm text-ink/70">
+            Clears all embeddings and re-generates them with the current provider. Required after switching embedding providers.
+          </p>
+          {reindexError ? <InlineError title="Re-index failed" message={reindexError} /> : null}
+          {reindexResult ? (
+            <p className="text-sm text-ink/70">
+              Enqueued {reindexResult.enqueued} memories for re-indexing.
+              {reindexResult.next_cursor ? " More batches pending — re-index will continue automatically." : ""}
+            </p>
+          ) : null}
+          {confirmReindex ? (
+            <div className="flex flex-wrap gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="w-full text-sm font-medium text-amber-900">
+                This will re-embed all memories. Continue?
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => reindexMutation.mutate()}
+                disabled={reindexMutation.isPending}
+              >
+                {reindexMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+                Yes, re-index
+              </Button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => setConfirmReindex(false)}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button
+              type="button"
+              variant="secondary"
+              data-testid="reindex-button"
+              disabled={!canAct || reindexMutation.isPending}
+              onClick={() => setConfirmReindex(true)}
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Re-Index Workspace
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* System Health ─────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle>System Health</CardTitle>
+          <div className="flex items-center gap-2">
+            {healthQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin text-accent-strong" aria-hidden="true" /> : <Activity className="h-4 w-4 text-accent-strong" aria-hidden="true" />}
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          {healthQuery.isError ? <InlineError message="Could not fetch system health." /> : null}
+          {healthQuery.data ? (
+            <>
+              <div className="flex flex-wrap gap-2">
+                {healthQuery.data.checks.map((check) => (
+                  <HealthCheckCard key={check.name} check={check} />
+                ))}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className={cn(
+                  "text-xs font-semibold uppercase",
+                  healthQuery.data.status === "healthy" ? "text-green-700" : healthQuery.data.status === "degraded" ? "text-amber-700" : "text-red-700",
+                )}>
+                  {healthQuery.data.status}
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void healthQuery.refetch()}
+                  disabled={healthQuery.isFetching}
+                >
+                  Check Now
+                </Button>
+              </div>
+            </>
+          ) : !healthQuery.isFetching ? (
+            <p className="text-sm text-ink/55">Connect to see system health.</p>
+          ) : null}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function HealthCheckCard({ check }: { check: HealthCheck }) {
+  const statusIcon = check.status === "ok"
+    ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+    : check.status === "warn"
+    ? <ShieldAlert className="h-3.5 w-3.5 text-amber-600" />
+    : <XCircle className="h-3.5 w-3.5 text-red-600" />;
+
+  return (
+    <div className={cn(
+      "flex min-w-[120px] flex-col gap-1 rounded-lg border p-3",
+      check.status === "ok" ? "border-green-200 bg-green-50" : check.status === "warn" ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50",
+    )}>
+      <div className="flex items-center gap-1.5">
+        {statusIcon}
+        <span className="text-xs font-semibold capitalize text-ink">{check.name}</span>
+      </div>
+      {check.latency_ms != null ? <span className="text-xs text-ink/55">{check.latency_ms}ms</span> : null}
+      {check.message ? <span className="text-xs text-ink/55">{check.message}</span> : null}
     </div>
   );
 }

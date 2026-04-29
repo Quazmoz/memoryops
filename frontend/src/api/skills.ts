@@ -52,6 +52,24 @@ export async function deleteSkill(workspaceId: string, name: string): Promise<vo
   });
 }
 
+export interface SkillTestRequest {
+  body?: JsonValue;
+  headers?: Record<string, string>;
+}
+
+export interface SkillTestResponse {
+  status: number;
+  latency_ms: number;
+  body: JsonValue;
+}
+
+export async function testSkill(workspaceId: string, name: string, request: SkillTestRequest): Promise<SkillTestResponse> {
+  return apiRequest<SkillTestResponse>(`/v1/workspaces/${workspaceId}/skills/${name}/test`, {
+    method: "POST",
+    body: request as unknown as Record<string, JsonValue>,
+  });
+}
+
 function skillPayload(payload: Partial<CreateSkillPayload>): Record<string, JsonValue> {
   return Object.fromEntries(
     Object.entries(payload)

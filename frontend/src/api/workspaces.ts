@@ -110,6 +110,21 @@ export async function importMemories(workspaceId: string, file: File): Promise<I
   return payload as ImportMemoriesResponse;
 }
 
+export interface ReindexResponse {
+  enqueued: number;
+  next_cursor: string | null;
+}
+
+export function triggerReindex(workspaceId: string, force = false, after?: string): Promise<ReindexResponse> {
+  const params = new URLSearchParams();
+  if (force) params.set("force", "true");
+  if (after) params.set("after", after);
+  const qs = params.toString();
+  return apiRequest<ReindexResponse>(`/v1/workspaces/${workspaceId}/reindex${qs ? `?${qs}` : ""}`, {
+    method: "POST",
+  });
+}
+
 function configPatchBody(patch: Partial<WorkspaceConfig>): { [key: string]: JsonValue } {
   const body: { [key: string]: JsonValue } = {};
 
