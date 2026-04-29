@@ -1,5 +1,6 @@
 import { ArrowRight, BarChart2, BookMarked, CheckCircle2, Database, GitCommit, Pin, Search, Send, Settings2, ShieldAlert, TrendingUp } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { getContradictionCount } from "../api/contradictions";
@@ -20,10 +21,22 @@ export function Dashboard() {
   const readiness = useReadiness(workspaceId);
   const stats = useWorkspaceStats(workspaceId);
   const hasWorkspace = workspaceId.trim().length > 0;
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    if (!hasWorkspace) {
+      setIsMounted(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => setIsMounted(true), 500);
+    return () => window.clearTimeout(timeoutId);
+  }, [hasWorkspace, workspaceId]);
+
   const contradictionCount = useQuery({
     queryKey: ["workspace", workspaceId, "contradictions", "count"],
     queryFn: () => getContradictionCount(workspaceId),
-    enabled: hasWorkspace,
+    enabled: hasWorkspace && isMounted,
     staleTime: 60_000,
   });
 
@@ -119,7 +132,7 @@ export function Dashboard() {
         </Card>
       </section>
 
-      {hasWorkspace ? <MetricsPanel /> : null}
+      {hasWorkspace && !readiness.isPending && !stats.isPending ? <MetricsPanel /> : null}
 
       <section className="grid gap-4 md:grid-cols-2">
         <Card>

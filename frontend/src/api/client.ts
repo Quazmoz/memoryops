@@ -2,6 +2,9 @@ import { useAppStore } from "../store/app-store";
 import type { JsonValue } from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const SLOW_PATHS = ["/v1/retrieve", "/v1/memory/search"];
+const DEFAULT_TIMEOUT_MS = 15_000;
+const SLOW_TIMEOUT_MS = 30_000;
 
 type ApiRequestOptions = Omit<RequestInit, "body"> & {
   body?: JsonValue;
@@ -22,23 +25,37 @@ export class ApiError extends Error {
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const { body, auth = true, ...requestOptions } = options;
+  const timeoutMs = SLOW_PATHS.some((slowPath) => path.startsWith(slowPath)) ? SLOW_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   const init: RequestInit = {
     ...requestOptions,
     headers: requestHeaders(options, auth),
+    signal: controller.signal,
   };
 
   if (body !== undefined) {
     init.body = JSON.stringify(body);
   }
 
-  const response = await fetch(apiUrl(path), init);
-  const payload = await parseResponse(response);
+  try {
+    const response = await fetch(apiUrl(path), init);
+    const payload = await parseResponse(response);
 
-  if (!response.ok) {
-    throw new ApiError(response.status, extractDetail(payload, response.statusText));
+    if (!response.ok) {
+      throw new ApiError(response.status, extractDetail(payload, response.statusText));
+    }
+
+    return payload as T;
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new ApiError(408, `Request timed out after ${timeoutMs / 1000}s`);
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-
-  return payload as T;
 }
 
 export function apiUrl(path: string): string {
@@ -109,4 +126,10 @@ export function requestHeaders(options: Pick<RequestInit, "headers"> = {}, inclu
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
 }

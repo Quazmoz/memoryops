@@ -47,15 +47,33 @@ export type SearchCriteria = {
   offset: number;
 };
 
-export async function getReadiness(): Promise<ReadinessResponse> {
-  const response = await fetch(apiUrl("/health/ready"));
-  const payload = await parseResponse(response);
-  const base = isReadinessPayload(payload) ? payload : { status: response.ok ? "ok" : "unavailable" };
+const READINESS_TIMEOUT_MS = 5_000;
 
-  return {
-    ...base,
-    httpStatus: response.status,
-  };
+export async function getReadiness(): Promise<ReadinessResponse> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), READINESS_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(apiUrl("/health/ready"), { signal: controller.signal });
+    const payload = await parseResponse(response);
+    const base = isReadinessPayload(payload) ? payload : { status: response.ok ? "ok" : "unavailable" };
+
+    return {
+      ...base,
+      httpStatus: response.status,
+    };
+  } catch (error) {
+    if (isAbortError(error)) {
+      return {
+        status: "unavailable",
+        httpStatus: 408,
+      };
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 export function listMemory(workspaceId: string, params: MemoryListParams): Promise<ListMemoryResponse> {
@@ -256,6 +274,12 @@ function sortableValue(memory: MemoryUnit, field: SortField): number {
   const raw = field === "created_at" ? memory.created_at : memory.updated_at;
   const timestamp = Date.parse(raw);
   return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
 }
 
 function scopeFilter(agentId: string | undefined, userId: string | undefined, repo: string | undefined): ScopeFilter {

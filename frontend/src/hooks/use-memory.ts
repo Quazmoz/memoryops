@@ -41,11 +41,13 @@ type OptimisticContext = {
 type MemoryCachePatch = UpdateMemoryRequest | Partial<MemoryUnit> | MemoryUnit;
 
 export function useReadiness(workspaceId: string) {
+  const apiKey = useAppStore((state) => state.apiKey);
+
   return useQuery({
     queryKey: memoryKeys.readiness(workspaceId),
     queryFn: getReadiness,
-    refetchInterval: 10_000,
-    enabled: workspaceId.trim().length > 0,
+    refetchInterval: 30_000,
+    enabled: hasWorkspaceAuth(workspaceId, apiKey),
   });
 }
 
