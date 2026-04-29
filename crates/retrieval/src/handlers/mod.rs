@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use common::{auth::AuthContext, error::AppResult, models::WorkspaceConfig, AppError, AppState};
 use uuid::Uuid;
 
+pub mod create;
 pub mod feedback;
 pub mod get;
 pub mod list;

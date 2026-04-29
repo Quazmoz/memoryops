@@ -25,7 +25,10 @@ pub fn retrieval_router() -> Router<AppState> {
             "/v1/retrieve/trace/{query_id}",
             get(handlers::retrieve::handle_trace_get),
         )
-        .route("/v1/memory", get(handlers::list::handle_list))
+        .route(
+            "/v1/memory",
+            get(handlers::list::handle_list).post(handlers::create::handle_create),
+        )
         .route("/v1/memory/bulk", post(handlers::lifecycle::handle_bulk))
         .route("/v1/memory/merge", post(handlers::lifecycle::handle_merge))
         .route(

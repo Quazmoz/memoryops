@@ -135,12 +135,34 @@ pub async fn create_workspace(
     .bind(config.dedup_cosine_threshold)
     .execute(&state.db)
     .await
-    .map_err(AppError::Database)?;
+    .map_err(|error| {
+        if let sqlx::Error::Database(ref db_err) = error {
+            if db_err.code().as_deref() == Some("23505") {
+                return AppError::Conflict(format!(
+                    "workspace with name '{}' already exists",
+                    request.name.trim()
+                ));
+            }
+        }
+        AppError::Database(error)
+    })?;
 
     Ok(Json(CreateWorkspaceResponse { workspace_id }))
 }
 
 #[axum::debug_handler]
+pub async fn list_workspaces(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+) -> AppResult<Json<Vec<Workspace>>> {
+    let workspace = get_workspace_by_id(&state, auth.workspace_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            resource: format!("workspace:{}", auth.workspace_id),
+        })?;
+    Ok(Json(vec![workspace]))
+}
+
 pub async fn get_workspace(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,

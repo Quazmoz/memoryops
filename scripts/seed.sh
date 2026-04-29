@@ -173,7 +173,7 @@ upsert_skill() {
   payload=$(jq -n \
     --arg name "$skill_name" \
     --arg description "$skill_description" \
-    '{name: $name, description: $description}')
+    '{name: $name, description: $description, endpoint_url: "https://example.com/skills/\($name)"}')
 
   api_request POST "/v1/workspaces/${WORKSPACE_ID}/skills" "$payload"
   if ! is_success "$RESP_CODE"; then
@@ -450,7 +450,7 @@ done
 log "Step 5/6: Seeding 3 agent skills when endpoint exists"
 skills_supported=true
 
-if ! upsert_skill "incident-responder" "Handles on-call triage workflows"; then
+if ! upsert_skill "incident_responder" "Handles on-call triage workflows"; then
   rc=$?
   if [[ $rc -eq 2 ]]; then
     skills_supported=false
@@ -460,8 +460,8 @@ if ! upsert_skill "incident-responder" "Handles on-call triage workflows"; then
 fi
 
 if [[ "$skills_supported" == true ]]; then
-  upsert_skill "code-reviewer" "Reviews PRs and suggests improvements"
-  upsert_skill "deploy-monitor" "Monitors deployment pipelines and alerts"
+  upsert_skill "code_reviewer" "Reviews PRs and suggests improvements"
+  upsert_skill "deploy_monitor" "Monitors deployment pipelines and alerts"
 fi
 
 log "Step 6/6: Summary"
