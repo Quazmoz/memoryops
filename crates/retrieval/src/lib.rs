@@ -19,7 +19,10 @@ pub use promotion::decay::run_decay_pass;
 
 pub fn retrieval_router() -> Router<AppState> {
     Router::new()
-        .route("/v1/memory/search", post(handlers::search::handle_search))
+        .route(
+            "/v1/memory/search",
+            get(handlers::search::handle_memory_search).post(handlers::search::handle_search),
+        )
         .route("/v1/retrieve", post(handlers::retrieve::handle_retrieve))
         .route(
             "/v1/retrieve/trace/{query_id}",
