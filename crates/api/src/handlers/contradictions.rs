@@ -1,11 +1,8 @@
 use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
 use common::{
-    audit::spawn_audit_log,
-    auth::AuthContext,
-    error::AppResult,
-    models::AuditAction,
-    AppError, AppState,
+    audit::spawn_audit_log, auth::AuthContext, error::AppResult, models::AuditAction, AppError,
+    AppState,
 };
 use processor::embedder::Embedder;
 use retrieval::store::soft_delete_memory_unit;
@@ -319,8 +316,7 @@ async fn resolve_keep(
     }
 
     // Soft-delete the loser
-    soft_delete_memory_unit(&state.db, loser_id, workspace_id)
-        .await?;
+    soft_delete_memory_unit(&state.db, loser_id, workspace_id).await?;
 
     // Remove the loser's Qdrant point (best-effort)
     let embedder = Embedder::from_state(state);
@@ -460,7 +456,9 @@ pub async fn bulk_dismiss_contradictions(
         );
     }
 
-    Ok(Json(BulkDismissResponse { dismissed: dismissed_count }))
+    Ok(Json(BulkDismissResponse {
+        dismissed: dismissed_count,
+    }))
 }
 
 #[axum::debug_handler]
@@ -533,8 +531,18 @@ mod tests {
 
     #[test]
     fn normalize_status_accepts_all_tab_values() {
-        for status in ["open", "auto_resolved", "dismissed", "accepted", "keep_a", "keep_b"] {
-            assert!(normalize_status(Some(status)).is_ok(), "expected {status} to be accepted");
+        for status in [
+            "open",
+            "auto_resolved",
+            "dismissed",
+            "accepted",
+            "keep_a",
+            "keep_b",
+        ] {
+            assert!(
+                normalize_status(Some(status)).is_ok(),
+                "expected {status} to be accepted"
+            );
         }
     }
 }

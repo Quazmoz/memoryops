@@ -155,7 +155,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn tag_aggregation_query_returns_counts(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;

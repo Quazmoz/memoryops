@@ -134,6 +134,24 @@ pub struct ProcessorConfig {
     pub slow_path_workers: usize,
     pub max_retries: u32,
     pub dlq_ttl_days: u64,
+    #[serde(default = "default_processing_stale_threshold_secs")]
+    pub processing_stale_threshold_secs: u64,
+    #[serde(default = "default_maintenance_window_hour_utc")]
+    pub maintenance_window_hour_utc: u32,
+    #[serde(default = "default_decay_window_hour_utc")]
+    pub decay_window_hour_utc: u32,
+}
+
+fn default_processing_stale_threshold_secs() -> u64 {
+    10 * 60
+}
+
+fn default_maintenance_window_hour_utc() -> u32 {
+    2
+}
+
+fn default_decay_window_hour_utc() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, Deserialize)]

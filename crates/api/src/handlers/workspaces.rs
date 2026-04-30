@@ -14,8 +14,11 @@ use common::{
     AppError, AppState,
 };
 use futures_util::StreamExt;
-use processor::promoter::{run_promotion_pass, PromoterConfig, PromotionReport};
 use processor::worker::enqueue_slow_job;
+use processor::{
+    config::fetch_workspace_promotion_config,
+    promoter::{run_promotion_pass, PromotionReport},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
@@ -238,11 +241,10 @@ pub async fn get_stats_history(
             GROUP BY 1
         ),
         promoted AS (
-            SELECT DATE(updated_at AT TIME ZONE 'UTC') AS date, COUNT(*) AS promoted
+                        SELECT DATE(promoted_at AT TIME ZONE 'UTC') AS date, COUNT(*) AS promoted
             FROM memory_units
             WHERE workspace_id = $1
-              AND memory_type = 'semantic'
-              AND importance_score > 0
+                            AND promoted_at IS NOT NULL
             GROUP BY 1
         ),
         soft_deleted AS (
@@ -354,9 +356,9 @@ pub async fn promote(
 ) -> AppResult<Json<PromotionReport>> {
     require_workspace(&auth, id)?;
     let lock_key = format!("promotion:lock:{id}");
-    acquire_promotion_lock(&state, &lock_key).await?;
+    let lock_token = acquire_promotion_lock(&state, &lock_key).await?;
 
-    let config = fetch_workspace_promotion_config(&state, id).await?;
+    let config = fetch_workspace_promotion_config(&state.db, id).await?;
     let result = tokio::time::timeout(
         Duration::from_secs(60),
         run_promotion_pass(
@@ -370,7 +372,7 @@ pub async fn promote(
     )
     .await;
 
-    release_promotion_lock(&state, &lock_key).await;
+    release_promotion_lock(&state, &lock_key, &lock_token).await;
 
     let report = match result {
         Ok(Ok(report)) => report,
@@ -414,6 +416,11 @@ pub async fn import_memories(
             AppError::Validation("import body must be valid UTF-8 JSONL".to_owned())
         })?;
         buffer.push_str(text);
+        if buffer.len() > MAX_IMPORT_BODY_BYTES {
+            return Err(AppError::Validation(
+                "import body exceeds 50MB limit".to_owned(),
+            ));
+        }
         process_complete_import_lines(&state, workspace_id, &mut buffer, &mut response).await;
     }
 
@@ -637,44 +644,12 @@ fn stats_history_days(days: Option<u32>) -> AppResult<u32> {
     Ok(days)
 }
 
-async fn fetch_workspace_promotion_config(
-    state: &AppState,
-    workspace_id: Uuid,
-) -> AppResult<PromoterConfig> {
-    #[derive(Debug, sqlx::FromRow)]
-    struct Row {
-        promotion_threshold: f64,
-        dedup_cosine_threshold: f64,
-    }
-
-    let row = sqlx::query_as::<_, Row>(
-        r#"
-        SELECT promotion_threshold, dedup_cosine_threshold
-        FROM workspaces
-        WHERE id = $1 AND deleted_at IS NULL
-        "#,
-    )
-    .bind(workspace_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace:{workspace_id}"),
-    })?;
-
-    Ok(PromoterConfig {
-        promotion_threshold: row.promotion_threshold as f32,
-        dedup_cosine_threshold: row.dedup_cosine_threshold as f32,
-        cluster_min_size: 3,
-        batch_size: 200,
-    })
-}
-
-async fn acquire_promotion_lock(state: &AppState, key: &str) -> AppResult<()> {
+async fn acquire_promotion_lock(state: &AppState, key: &str) -> AppResult<String> {
     let mut redis = state.redis.clone();
+    let token = Uuid::new_v4().to_string();
     let acquired = redis::cmd("SET")
         .arg(key)
-        .arg("1")
+        .arg(&token)
         .arg("NX")
         .arg("EX")
         .arg(600)
@@ -684,7 +659,7 @@ async fn acquire_promotion_lock(state: &AppState, key: &str) -> AppResult<()> {
         .is_some();
 
     if acquired {
-        Ok(())
+        Ok(token)
     } else {
         Err(AppError::Conflict(
             "promotion already running for this workspace".to_owned(),
@@ -692,11 +667,21 @@ async fn acquire_promotion_lock(state: &AppState, key: &str) -> AppResult<()> {
     }
 }
 
-async fn release_promotion_lock(state: &AppState, key: &str) {
+async fn release_promotion_lock(state: &AppState, key: &str, token: &str) {
     let mut redis = state.redis.clone();
-    if let Err(error) = redis::cmd("DEL")
-        .arg(key)
-        .query_async::<i64>(&mut redis)
+    let script = redis::Script::new(
+        r#"
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+          return redis.call("del", KEYS[1])
+        else
+          return 0
+        end
+        "#,
+    );
+    if let Err(error) = script
+        .key(key)
+        .arg(token)
+        .invoke_async::<i64>(&mut redis)
         .await
     {
         tracing::warn!(error = ?error, key, "failed to release promotion lock");
@@ -1257,7 +1242,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn stats_history_returns_empty_series_for_new_workspace(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id).await;
@@ -1288,7 +1272,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn stats_history_respects_days_param(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id).await;
@@ -1314,7 +1297,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn stats_history_rejects_days_above_ninety(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id).await;
@@ -1336,7 +1318,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn stats_history_rejects_days_zero(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id).await;
@@ -1358,7 +1339,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn stats_history_counts_created_memories(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let other_workspace_id = insert_workspace(&pool).await;

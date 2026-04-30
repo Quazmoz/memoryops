@@ -10,9 +10,7 @@ const NO_CONTENT: &str = "(no content)";
 
 pub fn extract_text(event: &RawEvent) -> AppResult<String> {
     let content = match event.event_type {
-        EventType::AgentObservation => {
-            string_or_no_content(event.payload.get("content"))
-        }
+        EventType::AgentObservation => string_or_no_content(event.payload.get("content")),
         EventType::PullRequest => format!(
             "{}\n\n{}",
             string_or_no_content(event.payload.pointer("/pull_request/title")),

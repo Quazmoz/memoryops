@@ -273,7 +273,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn missing_signature_header_returns_401(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         let app = ingestion_router().with_state(test_state(pool, "secret").await);
@@ -294,7 +293,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn invalid_signature_returns_401(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         let body = pull_request_body();
@@ -316,7 +314,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn unknown_event_type_returns_400(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
@@ -335,7 +332,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn valid_pull_request_returns_202(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;

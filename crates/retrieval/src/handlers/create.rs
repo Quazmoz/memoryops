@@ -97,14 +97,9 @@ pub async fn handle_create(
     .map_err(AppError::Database)?;
 
     let mut redis = state.redis.clone();
-    if let Err(error) =
-        processor::worker::enqueue_slow_job(&mut redis, id, workspace_id, 0).await
-    {
+    if let Err(error) = processor::worker::enqueue_slow_job(&mut redis, id, workspace_id, 0).await {
         tracing::warn!(error = ?error, memory_id = %id, "failed to enqueue memory for embedding");
     }
 
-    Ok(Json(CreateMemoryResponse {
-        memory_id: id,
-        id,
-    }))
+    Ok(Json(CreateMemoryResponse { memory_id: id, id }))
 }

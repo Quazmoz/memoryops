@@ -4,6 +4,9 @@ use argon2::{
     Argon2, PasswordHasher, PasswordVerifier,
 };
 use rand::RngCore;
+use redis::aio::ConnectionManager;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -13,8 +16,9 @@ const API_KEY_PREFIX: &str = "mops";
 const WORKSPACE_PREFIX_LEN: usize = 8;
 const STORED_PREFIX_LEN: usize = 8;
 const RANDOM_BYTES_LEN: usize = 32;
+const AUTH_CACHE_TTL_SECS: u64 = 60;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthContext {
     pub workspace_id: Uuid,
     pub key_id: Uuid,
@@ -66,6 +70,47 @@ pub fn api_key_prefix(secret: &str) -> Option<String> {
 }
 
 pub async fn validate_api_key(db: &PgPool, api_key: &str) -> AppResult<AuthContext> {
+    validate_api_key_uncached(db, api_key).await
+}
+
+pub async fn validate_api_key_cached(
+    db: &PgPool,
+    redis: &mut ConnectionManager,
+    api_key: &str,
+) -> AppResult<AuthContext> {
+    let cache_key = api_key_cache_key(api_key);
+    if let Some(context) = read_auth_context_cache(redis, &cache_key).await {
+        return Ok(context);
+    }
+
+    let context = validate_api_key_uncached(db, api_key).await?;
+    write_auth_context_cache(redis, &cache_key, &context).await;
+    Ok(context)
+}
+
+pub async fn invalidate_api_key_cache(
+    redis: &mut ConnectionManager,
+    key_id: Uuid,
+) -> AppResult<()> {
+    let index_key = auth_cache_index_key(key_id);
+    let cache_key = redis::cmd("GET")
+        .arg(&index_key)
+        .query_async::<Option<String>>(&mut *redis)
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+
+    let mut pipe = redis::pipe();
+    pipe.cmd("DEL").arg(&index_key);
+    if let Some(cache_key) = cache_key {
+        pipe.cmd("DEL").arg(cache_key);
+    }
+    pipe.query_async::<i64>(&mut *redis)
+        .await
+        .map(|_| ())
+        .map_err(|error| AppError::Internal(anyhow!(error)))
+}
+
+async fn validate_api_key_uncached(db: &PgPool, api_key: &str) -> AppResult<AuthContext> {
     let prefix = api_key_prefix(api_key).ok_or(AppError::Unauthorized)?;
     let candidates = find_candidate_keys(db, &prefix).await?;
 
@@ -84,6 +129,73 @@ pub async fn validate_api_key(db: &PgPool, api_key: &str) -> AppResult<AuthConte
     }
 
     Err(AppError::Unauthorized)
+}
+
+async fn read_auth_context_cache(
+    redis: &mut ConnectionManager,
+    cache_key: &str,
+) -> Option<AuthContext> {
+    let cached = match redis::cmd("GET")
+        .arg(cache_key)
+        .query_async::<Option<String>>(&mut *redis)
+        .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(error = ?error, "failed to read API key auth cache");
+            return None;
+        }
+    };
+
+    cached.and_then(|json| match serde_json::from_str::<AuthContext>(&json) {
+        Ok(context) => Some(context),
+        Err(error) => {
+            tracing::warn!(error = ?error, "failed to decode API key auth cache payload");
+            None
+        }
+    })
+}
+
+async fn write_auth_context_cache(
+    redis: &mut ConnectionManager,
+    cache_key: &str,
+    context: &AuthContext,
+) {
+    let payload = match serde_json::to_string(context) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(error = ?error, "failed to encode API key auth cache payload");
+            return;
+        }
+    };
+
+    let index_key = auth_cache_index_key(context.key_id);
+    let result = redis::pipe()
+        .cmd("SETEX")
+        .arg(cache_key)
+        .arg(AUTH_CACHE_TTL_SECS)
+        .arg(payload)
+        .cmd("SETEX")
+        .arg(index_key)
+        .arg(AUTH_CACHE_TTL_SECS)
+        .arg(cache_key)
+        .query_async::<()>(&mut *redis)
+        .await;
+
+    if let Err(error) = result {
+        tracing::warn!(error = ?error, "failed to write API key auth cache");
+    }
+}
+
+fn api_key_cache_key(api_key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(api_key.as_bytes());
+    let digest = hasher.finalize();
+    format!("auth:api_key:{}", hex::encode(digest))
+}
+
+fn auth_cache_index_key(key_id: Uuid) -> String {
+    format!("auth:api_key:key_id:{key_id}")
 }
 
 pub fn spawn_last_used_update(db: PgPool, key_id: Uuid) {

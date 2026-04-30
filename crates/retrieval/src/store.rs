@@ -1166,7 +1166,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn get_memory_unit_by_id_returns_none_for_wrong_workspace(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         let other_workspace_id = Uuid::now_v7();
@@ -1183,7 +1182,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn list_memory_units_respects_limit_and_offset(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
@@ -1217,7 +1215,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn list_memory_units_filters_by_agent_id(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
@@ -1264,7 +1261,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn list_memory_units_filters_by_repo(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
@@ -1301,7 +1297,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn list_memory_units_scope_filter_is_workspace_isolated(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         let other_workspace_id = Uuid::now_v7();
@@ -1340,7 +1335,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn list_memory_units_null_scope_filter_returns_all(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
@@ -1386,7 +1380,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn update_memory_unit_sets_importance_overridden(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
@@ -1408,7 +1401,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn promote_to_semantic_changes_memory_type(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
@@ -1428,7 +1420,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn feedback_round_trip_updates_relevance_score(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
@@ -1460,7 +1451,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn opposing_feedback_averages_to_neutral(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;

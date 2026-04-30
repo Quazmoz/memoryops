@@ -1,6 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use axum::{extract::State, http::StatusCode, middleware as axum_middleware, routing::get, Json, Router};
+use axum::{
+    extract::State, http::StatusCode, middleware as axum_middleware, routing::get, Json, Router,
+};
 use chrono::Utc;
 use common::{
     config::{AppConfig, EmbeddingProviderKind, LlmProviderKind},
@@ -22,8 +24,6 @@ mod handlers;
 mod middleware;
 mod security;
 
-const DEV_WEBHOOK_SECRET: &str = "dev-placeholder";
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_owned());
@@ -37,7 +37,11 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&address).await?;
 
     tracing::info!(%address, "starting MemoryOps API");
-    axum::serve(listener, router(state)).await?;
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -92,8 +96,7 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
     let redis_url = std::env::var("REDIS_URL").map_err(|_| anyhow::anyhow!("REDIS_URL not set"))?;
     let qdrant_url =
         std::env::var("QDRANT_URL").map_err(|_| anyhow::anyhow!("QDRANT_URL not set"))?;
-    let app_env = std::env::var("APP_ENV").unwrap_or_else(|_| "production".to_owned());
-    let github_webhook_secret = webhook_secret_from_env("GITHUB_WEBHOOK_SECRET", &app_env)?;
+    let github_webhook_secret = webhook_secret_from_env("GITHUB_WEBHOOK_SECRET")?;
 
     let db = PgPoolOptions::new()
         .max_connections(config.database.max_connections)
@@ -148,14 +151,10 @@ async fn ensure_skill_secret_configuration(db: &sqlx::PgPool) -> anyhow::Result<
     Ok(())
 }
 
-fn webhook_secret_from_env(name: &'static str, app_env: &str) -> anyhow::Result<String> {
+fn webhook_secret_from_env(name: &'static str) -> anyhow::Result<String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ if app_env == "development" => {
-            tracing::warn!("{name} not set — using dev placeholder. Do not use in production.");
-            Ok(DEV_WEBHOOK_SECRET.to_owned())
-        }
-        _ => Err(anyhow::anyhow!("{name} not set")),
+        _ => Err(anyhow::anyhow!("GITHUB_WEBHOOK_SECRET must be set")),
     }
 }
 
@@ -344,16 +343,28 @@ async fn system_health(State(state): axum::extract::State<AppState>) -> Json<Sys
 
 async fn probe_postgres(db: sqlx::PgPool) -> HealthCheck {
     let started = std::time::Instant::now();
-    let result = tokio::time::timeout(
-        Duration::from_secs(2),
-        sqlx::query("SELECT 1").execute(&db),
-    )
-    .await;
+    let result =
+        tokio::time::timeout(Duration::from_secs(2), sqlx::query("SELECT 1").execute(&db)).await;
     let latency_ms = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok(_)) => HealthCheck { name: "postgres".to_owned(), status: "ok".to_owned(), latency_ms: Some(latency_ms), message: None },
-        Ok(Err(error)) => HealthCheck { name: "postgres".to_owned(), status: "error".to_owned(), latency_ms: Some(latency_ms), message: Some(error.to_string()) },
-        Err(_) => HealthCheck { name: "postgres".to_owned(), status: "error".to_owned(), latency_ms: Some(2000), message: Some("timeout".to_owned()) },
+        Ok(Ok(_)) => HealthCheck {
+            name: "postgres".to_owned(),
+            status: "ok".to_owned(),
+            latency_ms: Some(latency_ms),
+            message: None,
+        },
+        Ok(Err(error)) => HealthCheck {
+            name: "postgres".to_owned(),
+            status: "error".to_owned(),
+            latency_ms: Some(latency_ms),
+            message: Some(error.to_string()),
+        },
+        Err(_) => HealthCheck {
+            name: "postgres".to_owned(),
+            status: "error".to_owned(),
+            latency_ms: Some(2000),
+            message: Some("timeout".to_owned()),
+        },
     }
 }
 
@@ -366,9 +377,24 @@ async fn probe_redis(mut redis: redis::aio::ConnectionManager) -> HealthCheck {
     .await;
     let latency_ms = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok(_)) => HealthCheck { name: "redis".to_owned(), status: "ok".to_owned(), latency_ms: Some(latency_ms), message: None },
-        Ok(Err(error)) => HealthCheck { name: "redis".to_owned(), status: "error".to_owned(), latency_ms: Some(latency_ms), message: Some(error.to_string()) },
-        Err(_) => HealthCheck { name: "redis".to_owned(), status: "error".to_owned(), latency_ms: Some(2000), message: Some("timeout".to_owned()) },
+        Ok(Ok(_)) => HealthCheck {
+            name: "redis".to_owned(),
+            status: "ok".to_owned(),
+            latency_ms: Some(latency_ms),
+            message: None,
+        },
+        Ok(Err(error)) => HealthCheck {
+            name: "redis".to_owned(),
+            status: "error".to_owned(),
+            latency_ms: Some(latency_ms),
+            message: Some(error.to_string()),
+        },
+        Err(_) => HealthCheck {
+            name: "redis".to_owned(),
+            status: "error".to_owned(),
+            latency_ms: Some(2000),
+            message: Some("timeout".to_owned()),
+        },
     }
 }
 
@@ -377,30 +403,66 @@ async fn probe_qdrant(qdrant: Qdrant) -> HealthCheck {
     let result = tokio::time::timeout(Duration::from_secs(2), qdrant.health_check()).await;
     let latency_ms = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok(_)) => HealthCheck { name: "qdrant".to_owned(), status: "ok".to_owned(), latency_ms: Some(latency_ms), message: None },
-        Ok(Err(error)) => HealthCheck { name: "qdrant".to_owned(), status: "error".to_owned(), latency_ms: Some(latency_ms), message: Some(error.to_string()) },
-        Err(_) => HealthCheck { name: "qdrant".to_owned(), status: "error".to_owned(), latency_ms: Some(2000), message: Some("timeout".to_owned()) },
+        Ok(Ok(_)) => HealthCheck {
+            name: "qdrant".to_owned(),
+            status: "ok".to_owned(),
+            latency_ms: Some(latency_ms),
+            message: None,
+        },
+        Ok(Err(error)) => HealthCheck {
+            name: "qdrant".to_owned(),
+            status: "error".to_owned(),
+            latency_ms: Some(latency_ms),
+            message: Some(error.to_string()),
+        },
+        Err(_) => HealthCheck {
+            name: "qdrant".to_owned(),
+            status: "error".to_owned(),
+            latency_ms: Some(2000),
+            message: Some("timeout".to_owned()),
+        },
     }
 }
 
 async fn probe_ollama(config: Arc<common::config::AppConfig>) -> HealthCheck {
     use common::config::LlmProviderKind;
     if config.llm.provider != LlmProviderKind::Ollama {
-        return HealthCheck { name: "ollama".to_owned(), status: "ok".to_owned(), latency_ms: None, message: Some("not configured".to_owned()) };
+        return HealthCheck {
+            name: "ollama".to_owned(),
+            status: "ok".to_owned(),
+            latency_ms: None,
+            message: Some("not configured".to_owned()),
+        };
     }
     let url = format!("{}/api/tags", config.llm.base_url.trim_end_matches('/'));
     let started = std::time::Instant::now();
-    let result = tokio::time::timeout(
-        Duration::from_secs(2),
-        reqwest::get(&url),
-    )
-    .await;
+    let result = tokio::time::timeout(Duration::from_secs(2), reqwest::get(&url)).await;
     let latency_ms = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok(resp)) if resp.status().is_success() => HealthCheck { name: "ollama".to_owned(), status: "ok".to_owned(), latency_ms: Some(latency_ms), message: None },
-        Ok(Ok(resp)) => HealthCheck { name: "ollama".to_owned(), status: "warn".to_owned(), latency_ms: Some(latency_ms), message: Some(format!("HTTP {}", resp.status())) },
-        Ok(Err(error)) => HealthCheck { name: "ollama".to_owned(), status: "error".to_owned(), latency_ms: Some(latency_ms), message: Some(error.to_string()) },
-        Err(_) => HealthCheck { name: "ollama".to_owned(), status: "error".to_owned(), latency_ms: Some(2000), message: Some("timeout".to_owned()) },
+        Ok(Ok(resp)) if resp.status().is_success() => HealthCheck {
+            name: "ollama".to_owned(),
+            status: "ok".to_owned(),
+            latency_ms: Some(latency_ms),
+            message: None,
+        },
+        Ok(Ok(resp)) => HealthCheck {
+            name: "ollama".to_owned(),
+            status: "warn".to_owned(),
+            latency_ms: Some(latency_ms),
+            message: Some(format!("HTTP {}", resp.status())),
+        },
+        Ok(Err(error)) => HealthCheck {
+            name: "ollama".to_owned(),
+            status: "error".to_owned(),
+            latency_ms: Some(latency_ms),
+            message: Some(error.to_string()),
+        },
+        Err(_) => HealthCheck {
+            name: "ollama".to_owned(),
+            status: "error".to_owned(),
+            latency_ms: Some(2000),
+            message: Some("timeout".to_owned()),
+        },
     }
 }
 
@@ -417,10 +479,20 @@ fn overall_health_status(checks: &[HealthCheck]) -> &'static str {
 fn probe_fastembed(config: &AppConfig) -> HealthCheck {
     use common::config::EmbeddingProviderKind;
     if config.embedding.provider != EmbeddingProviderKind::FastEmbed {
-        return HealthCheck { name: "fastembed".to_owned(), status: "ok".to_owned(), latency_ms: None, message: Some("not configured".to_owned()) };
+        return HealthCheck {
+            name: "fastembed".to_owned(),
+            status: "ok".to_owned(),
+            latency_ms: None,
+            message: Some("not configured".to_owned()),
+        };
     }
     // FastEmbed is always in-process; if the binary is running, the model is loaded.
-    HealthCheck { name: "fastembed".to_owned(), status: "ok".to_owned(), latency_ms: Some(0), message: None }
+    HealthCheck {
+        name: "fastembed".to_owned(),
+        status: "ok".to_owned(),
+        latency_ms: Some(0),
+        message: None,
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -748,7 +820,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn bootstrap_flow_creates_key_and_lists_memory(pool: PgPool) {
         let app = router(test_state(pool).await);
         let workspace_name = format!("workspace-{}", Uuid::now_v7());
@@ -812,7 +883,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn missing_key_returns_401(pool: PgPool) {
         let app = router(test_state(pool).await);
         let response = match app
@@ -832,7 +902,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn retrieve_packs_memory_within_budget_and_persists_trace(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -905,7 +974,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn retrieve_scope_filter_isolates_by_repo(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -963,7 +1031,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn memory_list_as_of_reconstructs_historical_state(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -1075,7 +1142,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn retrieve_as_of_filters_future_memories(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -1156,7 +1222,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn publish_endpoint_rejects_episodic_memory(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -1194,7 +1259,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn publish_sets_workspace_visibility_and_writes_audit(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -1240,7 +1304,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn published_memory_searches_across_agents_when_pool_included(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -1297,7 +1360,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn sub_agent_pool_config_inherits_published_retrieval_memories(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let result = sqlx::query("UPDATE workspaces SET config = $2 WHERE id = $1")
@@ -1377,7 +1439,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn revoked_key_returns_401(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, true).await;
@@ -1399,7 +1460,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn wrong_workspace_key_returns_403(pool: PgPool) {
         let key_workspace_id = insert_workspace(&pool).await;
         let target_workspace_id = insert_workspace(&pool).await;
@@ -1422,7 +1482,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn workspace_config_rejects_zero_decay_half_life(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -1444,7 +1503,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn workspace_config_rejects_high_pruning_threshold(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -1466,7 +1524,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn workspace_config_accepts_lifecycle_values(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -1491,7 +1548,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL and Redis from docker-compose.test.yml"]
     async fn rate_limit_exceeded_returns_429(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id, false).await;
@@ -1515,15 +1571,30 @@ mod tests {
     }
 
     fn ok_check(name: &str) -> HealthCheck {
-        HealthCheck { name: name.to_owned(), status: "ok".to_owned(), latency_ms: Some(1), message: None }
+        HealthCheck {
+            name: name.to_owned(),
+            status: "ok".to_owned(),
+            latency_ms: Some(1),
+            message: None,
+        }
     }
 
     fn warn_check(name: &str) -> HealthCheck {
-        HealthCheck { name: name.to_owned(), status: "warn".to_owned(), latency_ms: Some(1), message: None }
+        HealthCheck {
+            name: name.to_owned(),
+            status: "warn".to_owned(),
+            latency_ms: Some(1),
+            message: None,
+        }
     }
 
     fn error_check(name: &str) -> HealthCheck {
-        HealthCheck { name: name.to_owned(), status: "error".to_owned(), latency_ms: Some(1), message: Some("down".to_owned()) }
+        HealthCheck {
+            name: name.to_owned(),
+            status: "error".to_owned(),
+            latency_ms: Some(1),
+            message: Some("down".to_owned()),
+        }
     }
 
     #[test]
@@ -1534,19 +1605,31 @@ mod tests {
 
     #[test]
     fn health_status_one_warn_is_degraded() {
-        let checks = vec![ok_check("postgres"), warn_check("ollama"), ok_check("qdrant")];
+        let checks = vec![
+            ok_check("postgres"),
+            warn_check("ollama"),
+            ok_check("qdrant"),
+        ];
         assert_eq!(overall_health_status(&checks), "degraded");
     }
 
     #[test]
     fn health_status_one_error_is_unhealthy() {
-        let checks = vec![ok_check("postgres"), error_check("redis"), ok_check("qdrant")];
+        let checks = vec![
+            ok_check("postgres"),
+            error_check("redis"),
+            ok_check("qdrant"),
+        ];
         assert_eq!(overall_health_status(&checks), "unhealthy");
     }
 
     #[test]
     fn health_status_error_wins_over_warn() {
-        let checks = vec![warn_check("ollama"), error_check("redis"), ok_check("qdrant")];
+        let checks = vec![
+            warn_check("ollama"),
+            error_check("redis"),
+            ok_check("qdrant"),
+        ];
         assert_eq!(overall_health_status(&checks), "unhealthy");
     }
 

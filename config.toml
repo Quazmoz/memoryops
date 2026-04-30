@@ -58,6 +58,15 @@ max_retries = 3
 # DLQ entry TTL in days
 dlq_ttl_days = 7
 
+# Reprocess a stuck 'processing' event if no heartbeat/update occurs for this many seconds
+processing_stale_threshold_secs = 600
+
+# UTC hour for daily maintenance pass (decay/pruning/hard-delete)
+maintenance_window_hour_utc = 2
+
+# UTC hour for weekly Sunday promotion pass
+decay_window_hour_utc = 3
+
 # ── Promotion Pipeline ───────────────────────────────────────────────────────
 [promotion]
 # How often to run the promotion scheduler

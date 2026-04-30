@@ -16,9 +16,23 @@ pub fn build_scope(event: &RawEvent) -> Value {
 }
 
 fn build_observation_scope(event: &RawEvent) -> Value {
-    let agent_id = event.payload.get("agent_id").and_then(Value::as_str).unwrap_or(&event.actor);
-    let user_id = event.payload.get("user_id").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Null);
-    let repo = event.payload.get("repo").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Null);
+    let agent_id = event
+        .payload
+        .get("agent_id")
+        .and_then(Value::as_str)
+        .unwrap_or(&event.actor);
+    let user_id = event
+        .payload
+        .get("user_id")
+        .filter(|v| !v.is_null())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let repo = event
+        .payload
+        .get("repo")
+        .filter(|v| !v.is_null())
+        .cloned()
+        .unwrap_or(Value::Null);
     json!({
         "workspace_id": event.workspace_id,
         "source": "observation",

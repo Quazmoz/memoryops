@@ -27,6 +27,7 @@ pub struct NewMemoryUnit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessingStateAction {
     Proceed,
+    ProceedStale,
     AlreadyDone,
     AlreadyProcessing,
     AlreadyFailed,
@@ -157,6 +158,7 @@ pub async fn insert_processing_state(
     db: &PgPool,
     raw_event_id: Uuid,
     workspace_id: Uuid,
+    stale_threshold_secs: i64,
 ) -> AppResult<ProcessingStateAction> {
     let inserted_status = sqlx::query_scalar::<_, String>(
         r#"
@@ -177,7 +179,7 @@ pub async fn insert_processing_state(
         Some(status) => Err(AppError::Internal(anyhow!(
             "unexpected inserted processing_state status: {status}"
         ))),
-        None => existing_processing_state_action(db, raw_event_id).await,
+        None => existing_processing_state_action(db, raw_event_id, stale_threshold_secs).await,
     }
 }
 
@@ -241,7 +243,30 @@ pub async fn increment_processing_attempts(
 async fn existing_processing_state_action(
     db: &PgPool,
     raw_event_id: Uuid,
+    stale_threshold_secs: i64,
 ) -> AppResult<ProcessingStateAction> {
+    let stale_reclaimed = sqlx::query_scalar::<_, String>(
+        r#"
+        UPDATE processing_state
+        SET status = 'processing',
+            last_error = NULL,
+            updated_at = now()
+        WHERE raw_event_id = $1
+          AND status = 'processing'
+          AND updated_at < now() - ($2 * interval '1 second')
+        RETURNING status
+        "#,
+    )
+    .bind(raw_event_id)
+    .bind(stale_threshold_secs)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if stale_reclaimed.is_some() {
+        return Ok(ProcessingStateAction::ProceedStale);
+    }
+
     let status = sqlx::query_scalar::<_, String>(
         "SELECT status FROM processing_state WHERE raw_event_id = $1",
     )
@@ -341,7 +366,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn insert_and_retrieve_memory_unit(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         let raw_event_id = Uuid::now_v7();
@@ -397,21 +421,20 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn insert_processing_state_conflict_returns_already_done(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         let raw_event_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
         insert_raw_event(&pool, workspace_id, raw_event_id).await;
 
-        let first = match insert_processing_state(&pool, raw_event_id, workspace_id).await {
+        let first = match insert_processing_state(&pool, raw_event_id, workspace_id, 600).await {
             Ok(action) => action,
             Err(error) => panic!("processing_state insert should succeed: {error}"),
         };
         if let Err(error) = mark_processing_done(&pool, raw_event_id).await {
             panic!("mark done should succeed: {error}");
         }
-        let second = match insert_processing_state(&pool, raw_event_id, workspace_id).await {
+        let second = match insert_processing_state(&pool, raw_event_id, workspace_id, 600).await {
             Ok(action) => action,
             Err(error) => panic!("conflict lookup should succeed: {error}"),
         };

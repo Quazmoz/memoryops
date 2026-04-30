@@ -157,7 +157,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn insert_and_retrieve_raw_event(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
@@ -181,7 +180,6 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    #[ignore = "requires live PostgreSQL from docker-compose.test.yml"]
     async fn duplicate_idempotency_key_is_graceful(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;

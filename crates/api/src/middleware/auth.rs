@@ -6,10 +6,11 @@ use axum::{
     response::Response,
 };
 use common::{
-    auth::{spawn_last_used_update, validate_api_key},
+    auth::{spawn_last_used_update, validate_api_key_cached},
     error::AppResult,
     AppError, AppState,
 };
+use uuid::Uuid;
 
 pub const API_KEY_HEADER: HeaderName = HeaderName::from_static("x-api-key");
 
@@ -19,7 +20,7 @@ pub async fn require_api_key(
     next: Next,
 ) -> AppResult<Response> {
     let Some(api_key_header) = request.headers().get(&API_KEY_HEADER) else {
-        if is_first_key_bootstrap_request(&request) {
+        if is_first_key_bootstrap_request(&state, request.method(), request.uri().path()).await? {
             return Ok(next.run(request).await);
         }
         return Err(AppError::Unauthorized);
@@ -27,15 +28,65 @@ pub async fn require_api_key(
     let api_key = api_key_header
         .to_str()
         .map_err(|_| AppError::Unauthorized)?;
-    let context = validate_api_key(&state.db, api_key).await?;
+    let mut redis = state.redis.clone();
+    let context = validate_api_key_cached(&state.db, &mut redis, api_key).await?;
     spawn_last_used_update(state.db.clone(), context.key_id);
     request.extensions_mut().insert(context);
 
     Ok(next.run(request).await)
 }
 
-fn is_first_key_bootstrap_request(request: &Request<Body>) -> bool {
-    request.method() == Method::POST
-        && request.uri().path().starts_with("/v1/workspaces/")
-        && request.uri().path().ends_with("/keys")
+async fn is_first_key_bootstrap_request(
+    state: &AppState,
+    method: &Method,
+    path: &str,
+) -> AppResult<bool> {
+    if *method != Method::POST {
+        return Ok(false);
+    }
+
+    let Some(workspace_id) = bootstrap_workspace_id(path) else {
+        return Ok(false);
+    };
+
+    let workspace_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND deleted_at IS NULL)",
+    )
+    .bind(workspace_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+    if !workspace_exists {
+        return Err(AppError::Unauthorized);
+    }
+
+    let active_keys = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM api_keys WHERE workspace_id = $1 AND revoked = false",
+    )
+    .bind(workspace_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if active_keys == 0 {
+        Ok(true)
+    } else {
+        Err(AppError::Unauthorized)
+    }
+}
+
+fn bootstrap_workspace_id(path: &str) -> Option<Uuid> {
+    let mut parts = path.trim_start_matches('/').split('/');
+    match (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) {
+        (Some("v1"), Some("workspaces"), Some(workspace_id), Some("keys"), None) => {
+            Uuid::parse_str(workspace_id).ok()
+        }
+        _ => None,
+    }
 }

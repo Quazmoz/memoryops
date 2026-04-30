@@ -1,8 +1,11 @@
 use axum::{extract::Path, extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
 use common::{
-    audit::spawn_audit_log, auth::AuthContext, error::AppResult, models::AuditAction, AppError,
-    AppState,
+    audit::spawn_audit_log,
+    auth::{invalidate_api_key_cache, AuthContext},
+    error::AppResult,
+    models::AuditAction,
+    AppError, AppState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -170,6 +173,11 @@ pub async fn revoke_key(
     .ok_or_else(|| AppError::NotFound {
         resource: format!("api_key:{key_id}"),
     })?;
+
+    let mut redis = state.redis.clone();
+    if let Err(error) = invalidate_api_key_cache(&mut redis, key_id).await {
+        tracing::warn!(error = ?error, key_id = %key_id, "failed to invalidate API key auth cache after revocation");
+    }
 
     spawn_audit_log(
         state.db.clone(),

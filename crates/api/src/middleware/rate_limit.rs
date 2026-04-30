@@ -1,10 +1,13 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    net::{IpAddr, SocketAddr},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::anyhow;
+use axum::extract::connect_info::ConnectInfo;
 use axum::{body::Body, extract::State, http::Request, middleware::Next, response::Response};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use tokio::time::{timeout, Duration};
-use uuid::Uuid;
 
 const INGEST_RPM: i64 = 300;
 const MEMORY_RPM: i64 = 120;
@@ -45,23 +48,43 @@ pub async fn rate_limit(
     let Some(group) = endpoint_group(path) else {
         return Ok(next.run(request).await);
     };
-    let Some(workspace_id) = workspace_id_from_request(&request) else {
-        return Ok(next.run(request).await);
-    };
+    let subject = rate_limit_subject(&request);
 
-    enforce_limit(&state, workspace_id, group).await?;
+    enforce_limit(&state, &subject, group).await?;
     Ok(next.run(request).await)
+}
+
+#[derive(Debug, Clone)]
+enum RateLimitSubject {
+    Workspace(uuid::Uuid),
+    Ip(IpAddr),
+    UnknownIp,
+}
+
+impl RateLimitSubject {
+    fn key(&self) -> String {
+        match self {
+            Self::Workspace(workspace_id) => format!("workspace:{workspace_id}"),
+            Self::Ip(ip) => format!("ip:{ip}"),
+            Self::UnknownIp => "ip:unknown".to_owned(),
+        }
+    }
+
+    fn log_value(&self) -> String {
+        self.key()
+    }
 }
 
 async fn enforce_limit(
     state: &AppState,
-    workspace_id: Uuid,
+    subject: &RateLimitSubject,
     group: RateLimitGroup,
 ) -> AppResult<()> {
     let now = unix_timestamp_secs()?;
     let window_start = now - (now % 60);
     let expires_at = window_start + 60;
-    let key = format!("rate:{workspace_id}:{}:{window_start}", group.as_str());
+    let subject_key = subject.key();
+    let key = format!("rate:{subject_key}:{}:{window_start}", group.as_str());
     let mut redis = state.redis.clone();
     let redis_result = timeout(
         Duration::from_millis(RATE_LIMIT_REDIS_TIMEOUT_MS),
@@ -79,7 +102,7 @@ async fn enforce_limit(
         Ok(Err(error)) => {
             tracing::warn!(
                 error = ?error,
-                workspace_id = %workspace_id,
+                subject = %subject.log_value(),
                 group = group.as_str(),
                 "rate limit check failed; allowing request"
             );
@@ -88,7 +111,7 @@ async fn enforce_limit(
         Err(error) => {
             tracing::warn!(
                 error = %error,
-                workspace_id = %workspace_id,
+                subject = %subject.log_value(),
                 group = group.as_str(),
                 timeout_ms = RATE_LIMIT_REDIS_TIMEOUT_MS,
                 "rate limit check timed out; allowing request"
@@ -117,30 +140,31 @@ fn endpoint_group(path: &str) -> Option<RateLimitGroup> {
     }
 }
 
-fn workspace_id_from_request(request: &Request<Body>) -> Option<Uuid> {
+fn rate_limit_subject(request: &Request<Body>) -> RateLimitSubject {
+    if let Some(workspace_id) = workspace_id_from_auth_context(request) {
+        return RateLimitSubject::Workspace(workspace_id);
+    }
+
+    match client_ip_from_request(request) {
+        Some(ip) => RateLimitSubject::Ip(ip),
+        None => RateLimitSubject::UnknownIp,
+    }
+}
+
+fn workspace_id_from_auth_context(request: &Request<Body>) -> Option<uuid::Uuid> {
     if let Some(context) = request.extensions().get::<AuthContext>() {
         return Some(context.workspace_id);
     }
-    if let Some(header) = request.headers().get("x-workspace-id") {
-        if let Ok(raw) = header.to_str() {
-            if let Ok(workspace_id) = Uuid::parse_str(raw) {
-                return Some(workspace_id);
-            }
-        }
-    }
 
-    request.uri().query().and_then(workspace_id_from_query)
+    None
 }
 
-fn workspace_id_from_query(query: &str) -> Option<Uuid> {
-    query.split('&').find_map(|pair| {
-        let (name, value) = pair.split_once('=')?;
-        if name == "workspace_id" {
-            Uuid::parse_str(value).ok()
-        } else {
-            None
-        }
-    })
+fn client_ip_from_request(request: &Request<Body>) -> Option<IpAddr> {
+    request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip())
+        .or_else(|| request.extensions().get::<SocketAddr>().map(SocketAddr::ip))
 }
 
 fn unix_timestamp_secs() -> AppResult<i64> {

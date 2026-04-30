@@ -145,7 +145,7 @@ jobs:
         run: sqlx migrate run
 
       - name: Run ignored tests
-        run: cargo test --workspace --all-features -- --ignored
+        run: cargo test --workspace --all-features -- --include-ignored
 
       - name: Stop dependencies
         if: always()

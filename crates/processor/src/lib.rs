@@ -1,3 +1,4 @@
+pub mod config;
 pub mod contradiction;
 pub mod dlq;
 pub mod embedder;

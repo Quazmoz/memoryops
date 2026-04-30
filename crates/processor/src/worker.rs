@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -15,7 +18,7 @@ use redis::{
     aio::ConnectionManager, from_redis_value, streams::StreamId, streams::StreamReadReply, Value,
 };
 use sqlx::PgPool;
-use tokio::task::JoinSet;
+use tokio::{sync::Semaphore, task::JoinSet};
 use uuid::Uuid;
 
 use crate::{
@@ -132,6 +135,9 @@ impl SlowPathEmbedder for QdrantSlowPathEmbedder {
 pub async fn run_worker(worker_id: usize, state: AppState) {
     let consumer_name = format!("processor-{worker_id}");
     let mut redis = state.redis.clone();
+    let permit_count =
+        usize::try_from((state.config.database.max_connections / 2).max(1)).unwrap_or(1);
+    let semaphore = Arc::new(Semaphore::new(permit_count));
 
     if let Err(error) = ensure_consumer_group(&mut redis, STREAM_KEY, GROUP_NAME).await {
         tracing::error!(error = ?error, "failed to ensure Redis consumer group");
@@ -148,7 +154,13 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
                 for message in messages {
                     let task_state = state.clone();
                     let mut task_redis = state.redis.clone();
+                    let task_semaphore = Arc::clone(&semaphore);
                     tasks.spawn(async move {
+                        let permit = task_semaphore.acquire_owned().await;
+                        let Ok(_permit) = permit else {
+                            tracing::error!("processor semaphore closed unexpectedly");
+                            return;
+                        };
                         if let Err(error) =
                             process_stream_message(task_state, &mut task_redis, message).await
                         {
@@ -174,6 +186,9 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
 pub async fn run_slow_worker(worker_id: usize, state: AppState) {
     let consumer_name = format!("slow-processor-{worker_id}");
     let mut redis = state.redis.clone();
+    let permit_count =
+        usize::try_from((state.config.database.max_connections / 2).max(1)).unwrap_or(1);
+    let semaphore = Arc::new(Semaphore::new(permit_count));
 
     if let Err(error) =
         ensure_consumer_group(&mut redis, PROCESSOR_JOBS_STREAM, SLOW_GROUP_NAME).await
@@ -200,7 +215,13 @@ pub async fn run_slow_worker(worker_id: usize, state: AppState) {
                 for message in messages {
                     let task_state = state.clone();
                     let mut task_redis = state.redis.clone();
+                    let task_semaphore = Arc::clone(&semaphore);
                     tasks.spawn(async move {
+                        let permit = task_semaphore.acquire_owned().await;
+                        let Ok(_permit) = permit else {
+                            tracing::error!("slow processor semaphore closed unexpectedly");
+                            return;
+                        };
                         if let Err(error) =
                             process_slow_stream_message(task_state, &mut task_redis, message).await
                         {
@@ -326,8 +347,20 @@ async fn process_stream_message(
         }
     };
 
-    match store::insert_processing_state(&state.db, raw_event.id, raw_event.workspace_id).await? {
+    let stale_threshold_secs =
+        i64::try_from(state.config.processor.processing_stale_threshold_secs).unwrap_or(600);
+    match store::insert_processing_state(
+        &state.db,
+        raw_event.id,
+        raw_event.workspace_id,
+        stale_threshold_secs,
+    )
+    .await?
+    {
         store::ProcessingStateAction::Proceed => {}
+        store::ProcessingStateAction::ProceedStale => {
+            tracing::warn!(event_id = %raw_event.id, "reclaimed stale processing state; retrying event");
+        }
         store::ProcessingStateAction::AlreadyDone => {
             tracing::debug!(event_id = %raw_event.id, "raw event already processed");
             ack_message(redis, STREAM_KEY, GROUP_NAME, &parsed.stream_id).await?;
@@ -677,7 +710,7 @@ pub fn parse_processor_job(message: &StreamId) -> Option<ProcessorJob> {
 }
 
 fn is_busy_group_error(error: &redis::RedisError) -> bool {
-    error.to_string().contains("BUSYGROUP")
+    error.code() == Some("BUSYGROUP")
 }
 
 #[cfg(test)]

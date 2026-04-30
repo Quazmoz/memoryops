@@ -306,6 +306,8 @@ See [docs/SPEC.md](docs/SPEC.md) for the full technical specification.
 1. Fork the repo and create a `feature/your-feature` branch
 2. Follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages
 3. Run `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test` before pushing
+4. Run full integration coverage locally:
+  `docker compose -f docker-compose.test.yml up -d --wait && cargo test --workspace --all-features -- --include-ignored; docker compose -f docker-compose.test.yml down -v`
 4. Open a PR — describe what changed, why, and how to test it
 5. PRs require CI to pass and reference an issue or milestone
 

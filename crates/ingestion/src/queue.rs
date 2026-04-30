@@ -83,7 +83,10 @@ mod tests {
         assert_eq!(source_as_str(Source::GitHub), "github");
         assert_eq!(source_as_str(Source::Observation), "observation");
         assert_eq!(event_type_as_str(EventType::PullRequest), "pull_request");
-        assert_eq!(event_type_as_str(EventType::AgentObservation), "agent_observation");
+        assert_eq!(
+            event_type_as_str(EventType::AgentObservation),
+            "agent_observation"
+        );
     }
 
     #[tokio::test]

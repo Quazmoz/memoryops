@@ -13,8 +13,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{
-    embedder::Embedder,
-    promoter::{run_promotion_pass, PromoterConfig},
+    config::fetch_workspace_promotion_config, embedder::Embedder, promoter::run_promotion_pass,
 };
 
 const WORKSPACE_PAGE_SIZE: i64 = 500;
@@ -46,7 +45,9 @@ struct WorkspaceLifecycleSettings {
 
 pub async fn run_scheduler(state: Arc<AppState>) {
     loop {
-        let next = next_scheduler_tick_utc();
+        let maintenance_hour = state.config.processor.maintenance_window_hour_utc.min(23);
+        let decay_hour = state.config.processor.decay_window_hour_utc.min(23);
+        let next = next_scheduler_tick_after_with_windows(Utc::now(), maintenance_hour, decay_hour);
         let sleep_for = next
             .signed_duration_since(Utc::now())
             .to_std()
@@ -54,7 +55,7 @@ pub async fn run_scheduler(state: Arc<AppState>) {
         tokio::time::sleep_until(tokio::time::Instant::now() + sleep_for).await;
 
         let now = Utc::now();
-        if now.hour() == 2 {
+        if now.hour() == maintenance_hour {
             if let Err(error) = run_decay_pass(&state).await {
                 tracing::error!(error = ?error, "decay pass failed");
             }
@@ -66,7 +67,7 @@ pub async fn run_scheduler(state: Arc<AppState>) {
             }
         }
 
-        let is_sunday_promotion = now.weekday() == Weekday::Sun && now.hour() == 3;
+        let is_sunday_promotion = now.weekday() == Weekday::Sun && now.hour() == decay_hour;
         if is_sunday_promotion {
             if let Err(error) = run_scheduled_promotion_pass(&state).await {
                 tracing::error!(error = ?error, "promotion pass failed");
@@ -84,8 +85,16 @@ pub fn next_scheduler_tick_utc() -> DateTime<Utc> {
 }
 
 pub fn next_scheduler_tick_after(now: DateTime<Utc>) -> DateTime<Utc> {
-    let next_daily = next_scheduled_utc_after(now, 2);
-    let next_promotion = next_sunday_3am_utc_after(now);
+    next_scheduler_tick_after_with_windows(now, 2, 3)
+}
+
+pub fn next_scheduler_tick_after_with_windows(
+    now: DateTime<Utc>,
+    maintenance_hour_utc: u32,
+    decay_hour_utc: u32,
+) -> DateTime<Utc> {
+    let next_daily = next_scheduled_utc_after(now, maintenance_hour_utc as u8);
+    let next_promotion = next_sunday_hour_utc_after(now, decay_hour_utc);
     next_daily.min(next_promotion)
 }
 
@@ -109,10 +118,11 @@ pub fn next_scheduled_utc_after(now: DateTime<Utc>, hour_utc: u8) -> DateTime<Ut
     }
 }
 
-fn next_sunday_3am_utc_after(now: DateTime<Utc>) -> DateTime<Utc> {
+fn next_sunday_hour_utc_after(now: DateTime<Utc>, hour_utc: u32) -> DateTime<Utc> {
     let mut date = now.date_naive();
+    let hour = hour_utc.min(23);
     for _ in 0..8 {
-        if let Some(candidate_naive) = date.and_hms_opt(3, 0, 0) {
+        if let Some(candidate_naive) = date.and_hms_opt(hour, 0, 0) {
             let candidate = DateTime::<Utc>::from_naive_utc_and_offset(candidate_naive, Utc);
             if candidate > now && candidate.weekday() == Weekday::Sun {
                 return candidate;
@@ -344,39 +354,6 @@ async fn fetch_all_workspace_ids(pool: &sqlx::PgPool) -> AppResult<Vec<Uuid>> {
     .map_err(AppError::Database)
 }
 
-async fn fetch_workspace_promotion_config(
-    pool: &sqlx::PgPool,
-    workspace_id: Uuid,
-) -> AppResult<PromoterConfig> {
-    #[derive(Debug, FromRow)]
-    struct Row {
-        promotion_threshold: f64,
-        dedup_cosine_threshold: f64,
-    }
-
-    let row = sqlx::query_as::<_, Row>(
-        r#"
-        SELECT promotion_threshold, dedup_cosine_threshold
-        FROM workspaces
-        WHERE id = $1 AND deleted_at IS NULL
-        "#,
-    )
-    .bind(workspace_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace:{workspace_id}"),
-    })?;
-
-    Ok(PromoterConfig {
-        promotion_threshold: row.promotion_threshold as f32,
-        dedup_cosine_threshold: row.dedup_cosine_threshold as f32,
-        cluster_min_size: 3,
-        batch_size: 200,
-    })
-}
-
 async fn prune_batch(
     state: &AppState,
     workspace_id: Uuid,
@@ -416,11 +393,12 @@ async fn hard_delete_candidates(state: &AppState, limit: i64) -> AppResult<Vec<M
         SELECT id, workspace_id
         FROM memory_units
         WHERE deleted_at IS NOT NULL
-          AND deleted_at < now() - interval '30 days'
+                    AND deleted_at < now() - ($1 * interval '1 day')
         ORDER BY deleted_at ASC, id ASC
-        LIMIT $1
+                LIMIT $2
         "#,
     )
+    .bind(HARD_DELETE_RETENTION_DAYS as i32)
     .bind(limit)
     .fetch_all(&state.db)
     .await

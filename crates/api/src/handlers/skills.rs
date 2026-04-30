@@ -458,13 +458,16 @@ pub async fn test_skill(
         .build()
         .map_err(|error| AppError::Internal(anyhow::anyhow!(error)))?;
 
-    let method = reqwest::Method::from_bytes(skill.http_method.as_bytes())
-        .unwrap_or(reqwest::Method::POST);
+    let method =
+        reqwest::Method::from_bytes(skill.http_method.as_bytes()).unwrap_or(reqwest::Method::POST);
 
     let mut req_builder = client.request(method, &skill.endpoint_url);
 
     // Inject auth header server-side (never expose the secret to the client)
-    if let (Some(header_name), Some(enc)) = (skill.auth_header.as_deref(), skill.auth_secret_enc.as_deref()) {
+    if let (Some(header_name), Some(enc)) = (
+        skill.auth_header.as_deref(),
+        skill.auth_secret_enc.as_deref(),
+    ) {
         let secret = decrypt_secret(enc)?;
         req_builder = req_builder.header(header_name, secret);
     }
@@ -493,7 +496,11 @@ pub async fn test_skill(
                 .json()
                 .await
                 .unwrap_or_else(|_| json!({ "error": "response was not JSON" }));
-            Ok(Json(SkillTestResponse { status, latency_ms, body }))
+            Ok(Json(SkillTestResponse {
+                status,
+                latency_ms,
+                body,
+            }))
         }
         Err(error) => Ok(Json(SkillTestResponse {
             status: 502,
@@ -526,12 +533,18 @@ mod tests {
     #[test]
     fn skill_test_response_encodes_502_on_connection_error() {
         let body = serde_json::json!({ "error": "connection refused" });
-        let resp = SkillTestResponse { status: 502, latency_ms: 5, body };
+        let resp = SkillTestResponse {
+            status: 502,
+            latency_ms: 5,
+            body,
+        };
         let encoded = match serde_json::to_value(&resp) {
             Ok(encoded) => encoded,
             Err(error) => panic!("SkillTestResponse should serialize: {error}"),
         };
         assert_eq!(encoded["status"], 502);
-        assert!(encoded["body"]["error"].as_str().is_some_and(|s| s.contains("connection refused")));
+        assert!(encoded["body"]["error"]
+            .as_str()
+            .is_some_and(|s| s.contains("connection refused")));
     }
 }

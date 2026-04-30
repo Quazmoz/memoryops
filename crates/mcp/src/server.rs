@@ -58,7 +58,8 @@ impl RuntimeBackend {
 #[async_trait]
 impl McpBackend for RuntimeBackend {
     async fn authenticate(&self, token: &str) -> Result<AuthContext, JsonRpcError> {
-        let context = common::auth::validate_api_key(&self.state.db, token)
+        let mut redis = self.state.redis.clone();
+        let context = common::auth::validate_api_key_cached(&self.state.db, &mut redis, token)
             .await
             .map_err(auth_error_to_rpc)?;
         common::auth::spawn_last_used_update(self.state.db.clone(), context.key_id);
