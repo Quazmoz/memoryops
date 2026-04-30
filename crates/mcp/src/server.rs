@@ -317,8 +317,7 @@ impl<B: McpBackend> McpServer<B> {
                 Err(error) => return error_response(id, error),
             }
         } else {
-            // Fall back to session only for stdio (single-client) paths.
-            self.session_context().await
+            None
         };
 
         let should_respond = message.get("id").is_some();
@@ -367,7 +366,10 @@ impl<B: McpBackend> McpServer<B> {
         context: Option<AuthContext>,
     ) -> Result<Value, JsonRpcError> {
         match method {
-            "initialize" => self.initialize(params).await,
+            "initialize" => {
+                let ctx = context.ok_or_else(JsonRpcError::unauthorized)?;
+                self.initialize_with_context(ctx).await
+            }
             "tools/list" => {
                 // Require auth for tools/list to avoid unauthenticated capability disclosure
                 context.ok_or_else(JsonRpcError::unauthorized)?;
@@ -391,6 +393,10 @@ impl<B: McpBackend> McpServer<B> {
                 .ok_or_else(JsonRpcError::unauthorized)?,
         };
 
+        self.initialize_with_context(context).await
+    }
+
+    async fn initialize_with_context(&self, context: AuthContext) -> Result<Value, JsonRpcError> {
         Ok(json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "serverInfo": {
@@ -1180,6 +1186,33 @@ mod tests {
         };
 
         assert_eq!(response.get("result"), Some(&json!({})));
+    }
+
+    #[tokio::test]
+    async fn http_initialize_does_not_bleed_session_to_other_workspace() {
+        let server = Arc::new(McpServer::new(MockBackend::default()));
+
+        let response = server
+            .handle_http_message(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {}
+                }),
+                Some("Bearer valid-token".to_owned()),
+            )
+            .await;
+        assert!(
+            response.get("result").is_some(),
+            "workspace init should succeed"
+        );
+
+        let session_after = server.session.read().await.clone();
+        assert!(
+            session_after.is_none(),
+            "HTTP initialize must not write to shared session"
+        );
     }
 
     async fn call_tool(server: &McpServer<MockBackend>, name: &str, arguments: Value) -> Value {

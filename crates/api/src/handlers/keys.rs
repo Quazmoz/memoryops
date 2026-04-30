@@ -190,7 +190,11 @@ pub async fn revoke_key(
 
     let mut redis = state.redis.clone();
     if let Err(error) = invalidate_api_key_cache(&mut redis, key_id).await {
-        tracing::warn!(error = ?error, key_id = %key_id, "failed to invalidate API key auth cache after revocation");
+        tracing::error!(
+            error = ?error,
+            key_id = %key_id,
+            "failed to invalidate revoked API key cache; revoked key may remain authorized for up to 60 seconds"
+        );
     }
 
     spawn_audit_log(

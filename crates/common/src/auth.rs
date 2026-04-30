@@ -16,7 +16,7 @@ const API_KEY_PREFIX: &str = "mops";
 const WORKSPACE_PREFIX_LEN: usize = 8;
 const STORED_PREFIX_LEN: usize = 8;
 const RANDOM_BYTES_LEN: usize = 32;
-const AUTH_CACHE_TTL_SECS: u64 = 60;
+const AUTH_CACHE_TTL_SECS: u64 = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthContext {

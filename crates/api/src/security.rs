@@ -7,6 +7,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use common::AppError;
 use hkdf::Hkdf;
 use sha2::Sha256;
+use zeroize::Zeroizing;
 
 pub use common::auth::{generate_api_key, hash_secret};
 
@@ -52,11 +53,11 @@ pub fn validate_secret_key_at_startup() -> Result<(), AppError> {
 }
 
 fn cipher_from_env() -> Result<Aes256Gcm, AppError> {
-    let secret = std::env::var("APP_SECRET_KEY").map_err(|_| {
+    let secret = Zeroizing::new(std::env::var("APP_SECRET_KEY").map_err(|_| {
         AppError::Internal(anyhow!(
             "APP_SECRET_KEY must be set before storing or reading skill secrets"
         ))
-    })?;
+    })?);
     let trimmed = secret.trim();
     if trimmed.is_empty() {
         return Err(AppError::Internal(anyhow!(
@@ -65,10 +66,10 @@ fn cipher_from_env() -> Result<Aes256Gcm, AppError> {
     }
 
     let hk = Hkdf::<Sha256>::new(Some(HKDF_SALT), trimmed.as_bytes());
-    let mut key_bytes = [0u8; 32];
-    hk.expand(HKDF_INFO, &mut key_bytes)
+    let mut key_bytes = Zeroizing::new([0u8; 32]);
+    hk.expand(HKDF_INFO, key_bytes.as_mut())
         .map_err(|e| AppError::Internal(anyhow!("HKDF expand failed: {e}")))?;
 
-    let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes);
+    let key = aes_gcm::Key::<Aes256Gcm>::from_slice(key_bytes.as_ref());
     Ok(Aes256Gcm::new(key))
 }
