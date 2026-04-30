@@ -21,7 +21,7 @@ async fn check_one(
 ) -> common::error::AppResult<()> {
     let access_count = access::get_access_count(&state.redis, memory_id).await?;
 
-    if let Err(error) = store::increment_access_count(&state.db, memory_id).await {
+    if let Err(error) = store::increment_access_count(&state.db, memory_id, workspace_id).await {
         tracing::warn!(error = ?error, memory_id = %memory_id, "failed to increment database access count");
     }
 

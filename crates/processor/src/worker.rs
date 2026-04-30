@@ -512,7 +512,7 @@ async fn process_slow_with_dependencies(
     }
 
     let content = summarize_or_content(llm_provider, memory.id, &memory.content).await;
-    let token_count = Some(count_tokens(&content)?);
+    let token_count = count_tokens(&content).ok();
     let payload = QdrantPayload::from_memory_unit(&memory);
     let embedding_id = embedder
         .embed_and_store(memory.id, memory.workspace_id, &content, payload)

@@ -49,7 +49,7 @@ pub async fn run_scheduler(state: AppState) {
         let sleep_for = next
             .signed_duration_since(Utc::now())
             .to_std()
-            .unwrap_or_default();
+            .unwrap_or(std::time::Duration::from_secs(60));
         tokio::time::sleep_until(tokio::time::Instant::now() + sleep_for).await;
 
         let now = Utc::now();
@@ -457,7 +457,7 @@ async fn hard_delete_candidates(state: &AppState, limit: i64) -> AppResult<Vec<M
                 LIMIT $2
         "#,
     )
-    .bind(HARD_DELETE_RETENTION_DAYS as i32)
+    .bind(HARD_DELETE_RETENTION_DAYS)
     .bind(limit)
     .fetch_all(&state.db)
     .await

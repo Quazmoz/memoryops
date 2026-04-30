@@ -32,7 +32,7 @@ pub async fn handle_get(
 
     let db = state.db.clone();
     tokio::spawn(async move {
-        if let Err(error) = store::touch_last_accessed(&db, id).await {
+        if let Err(error) = store::touch_last_accessed(&db, id, workspace_id).await {
             tracing::warn!(error = ?error, memory_id = %id, "failed to touch last_accessed_at");
         }
     });

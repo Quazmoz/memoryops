@@ -515,13 +515,17 @@ async fn list_memory_units_at(
     Ok((items, total))
 }
 
-pub async fn touch_last_accessed(db: &PgPool, id: Uuid) -> AppResult<()> {
-    sqlx::query("UPDATE memory_units SET last_accessed_at = now() WHERE id = $1")
-        .bind(id)
-        .execute(db)
-        .await
-        .map(|_| ())
-        .map_err(AppError::Database)
+pub async fn touch_last_accessed(db: &PgPool, id: Uuid, workspace_id: Uuid) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE memory_units SET last_accessed_at = now() \
+         WHERE id = $1 AND workspace_id = $2",
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(AppError::Database)
 }
 
 pub async fn update_memory_unit(
@@ -561,7 +565,7 @@ pub async fn update_memory_unit(
         builder.push_bind(tags.clone());
     }
     push_assignment_separator(&mut builder, &mut wrote_assignment);
-    builder.push("version = version + 1");
+    builder.push("version = version + 1, updated_at = now()");
 
     builder.push(" WHERE id = ");
     builder.push_bind(id);
@@ -920,7 +924,9 @@ pub async fn bulk_update_memory_units(
         .await
         .map_err(AppError::Database)?;
 
-    if units.len() != ids.len() {
+    // Deduplicate before comparing - ANY($2) collapses duplicates
+    let unique_ids: std::collections::HashSet<_> = ids.iter().collect();
+    if units.len() != unique_ids.len() {
         transaction.rollback().await.map_err(AppError::Database)?;
         return Err(AppError::NotFound {
             resource: "one or more memory ids".to_owned(),
@@ -1000,7 +1006,11 @@ pub async fn merge_memory_units(
         target_before.content, source.content
     );
     let sql = format!(
-        "UPDATE memory_units SET content = $3, version = version + 1 WHERE id = $1 AND workspace_id = $2 RETURNING {MEMORY_COLUMNS}"
+        "UPDATE memory_units \
+         SET content = $3, embedding_id = NULL, token_count = NULL, \
+             updated_at = now(), version = version + 1 \
+         WHERE id = $1 AND workspace_id = $2 \
+         RETURNING {MEMORY_COLUMNS}"
     );
     let target_after = sqlx::query_as::<_, MemoryUnit>(&sql)
         .bind(target_id)
@@ -1047,13 +1057,17 @@ async fn select_memory_for_update(
         })
 }
 
-pub async fn increment_access_count(db: &PgPool, id: Uuid) -> AppResult<()> {
-    sqlx::query("UPDATE memory_units SET access_count = access_count + 1 WHERE id = $1")
-        .bind(id)
-        .execute(db)
-        .await
-        .map(|_| ())
-        .map_err(AppError::Database)
+pub async fn increment_access_count(db: &PgPool, id: Uuid, workspace_id: Uuid) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE memory_units SET access_count = access_count + 1 \
+         WHERE id = $1 AND workspace_id = $2",
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(AppError::Database)
 }
 
 pub async fn promote_to_semantic(db: &PgPool, id: Uuid, workspace_id: Uuid) -> AppResult<()> {

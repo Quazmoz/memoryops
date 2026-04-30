@@ -304,22 +304,76 @@ impl<B: McpBackend> McpServer<B> {
 
     pub async fn handle_http_message(&self, message: Value, bearer_token: Option<String>) -> Value {
         let id = message.get("id").cloned();
-        if let Some(token) = bearer_token {
-            if let Err(error) = self.authenticate_session(&token).await {
-                return error_response(id, error);
-            }
-        }
 
-        self.handle_message(message)
-            .await
-            .unwrap_or_else(|| success_response(id, json!({})))
+        // Resolve auth context inline per-request - never touch shared session
+        // state for HTTP transport, which serves concurrent multi-workspace requests.
+        let http_context = if let Some(token) = bearer_token {
+            match self
+                .backend
+                .authenticate(token.trim_start_matches("Bearer "))
+                .await
+            {
+                Ok(ctx) => Some(ctx),
+                Err(error) => return error_response(id, error),
+            }
+        } else {
+            // Fall back to session only for stdio (single-client) paths.
+            self.session_context().await
+        };
+
+        let should_respond = message.get("id").is_some();
+        let request = match serde_json::from_value::<JsonRpcRequest>(message) {
+            Ok(r) => r,
+            Err(error) => {
+                return error_response(
+                    id,
+                    JsonRpcError::new(INVALID_REQUEST, format!("Invalid request: {error}")),
+                )
+            }
+        };
+
+        let result = self
+            .dispatch_with_context(&request.method, request.params, http_context)
+            .await;
+        if !should_respond {
+            return success_response(id, json!({}));
+        }
+        match result {
+            Ok(v) => success_response(id, v),
+            Err(e) => error_response(id, e),
+        }
     }
 
     async fn dispatch(&self, method: &str, params: Option<Value>) -> Result<Value, JsonRpcError> {
         match method {
             "initialize" => self.initialize(params).await,
             "tools/list" => Ok(json!({ "tools": &self.tools })),
-            "tools/call" => self.call_tool(params).await,
+            "tools/call" => {
+                let ctx = self.session_context().await;
+                self.call_tool_with_context(params, ctx).await
+            }
+            "ping" => Ok(json!({})),
+            _ => Err(JsonRpcError::new(
+                METHOD_NOT_FOUND,
+                format!("Method not found: {method}"),
+            )),
+        }
+    }
+
+    async fn dispatch_with_context(
+        &self,
+        method: &str,
+        params: Option<Value>,
+        context: Option<AuthContext>,
+    ) -> Result<Value, JsonRpcError> {
+        match method {
+            "initialize" => self.initialize(params).await,
+            "tools/list" => {
+                // Require auth for tools/list to avoid unauthenticated capability disclosure
+                context.ok_or_else(JsonRpcError::unauthorized)?;
+                Ok(json!({ "tools": &self.tools }))
+            }
+            "tools/call" => self.call_tool_with_context(params, context).await,
             "ping" => Ok(json!({})),
             _ => Err(JsonRpcError::new(
                 METHOD_NOT_FOUND,
@@ -363,14 +417,15 @@ impl<B: McpBackend> McpServer<B> {
         self.session.read().await.clone()
     }
 
-    async fn call_tool(&self, params: Option<Value>) -> Result<Value, JsonRpcError> {
+    async fn call_tool_with_context(
+        &self,
+        params: Option<Value>,
+        context: Option<AuthContext>,
+    ) -> Result<Value, JsonRpcError> {
         let params = params.ok_or_else(|| JsonRpcError::new(INVALID_PARAMS, "params required"))?;
         let call = serde_json::from_value::<ToolCallParams>(params)
             .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
-        let context = self
-            .session_context()
-            .await
-            .ok_or_else(JsonRpcError::unauthorized)?;
+        let context = context.ok_or_else(JsonRpcError::unauthorized)?;
 
         let tool_value = match call.name.as_str() {
             "memory_retrieve" => {
