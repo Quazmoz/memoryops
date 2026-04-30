@@ -53,10 +53,16 @@ docker compose up -d
 These services use named Docker volumes (`postgres-data`, `redis-data`, `qdrant-data`) which persist your data across restarts.
 
 **Optional MCP Server:**
-If you want to run the optional MCP profile locally, use:
+If you want to run the MCP server for AI client connections (Open WebUI, Claude Code, etc.), 
+override the `docker-compose.yml` default transport (`sse` is deprecated — use `http`):
 ```bash
-docker compose --profile mcp up -d
+docker compose --profile mcp run --rm --service-ports \
+  -e MCP_TRANSPORT=http \
+  -e MCP_PORT=3003 \
+  mcp
 ```
+The MCP server will be available at `http://localhost:3003/mcp`.
+See [docs/mcp-transport.md](mcp-transport.md) for the full transport reference.
 
 ---
 
@@ -95,24 +101,29 @@ curl http://localhost:8080/health
 
 ## 5. Bootstrap a workspace
 
-Before you can use the frontend, you must bootstrap a workspace (this endpoint requires no authentication):
+Before you can use the frontend, bootstrap a workspace. This single endpoint requires 
+no authentication and returns both the `workspace_id` and the initial `api_key` together:
 
 ```bash
-curl -X POST http://localhost:8080/v1/workspaces \
-  -H "Content-Type: application/json" \
+curl -sS -X POST http://localhost:8080/v1/workspaces \
+  -H 'Content-Type: application/json' \
   -d '{"name": "Local Dev Workspace"}'
 ```
 
-Capture the returned `id` (e.g., `123e4567-e89b-12d3-a456-426614174000`), and use it to create an API key:
-
-```bash
-curl -X POST http://localhost:8080/v1/workspaces/123e4567-e89b-12d3-a456-426614174000/keys \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Dev Key"}'
+Example response:
+```json
+{
+  "workspace_id": "0196f6c1-7e42-7f4f-8a6b-2945ea7f1e9a",
+  "api_key": "mops_0196f6c1_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+}
 ```
 
-1. Update `frontend/.env.local` by setting `VITE_MEMORYOPS_WORKSPACE_ID` to your real workspace UUID.
-2. Save the API key generated from the second command; you will need it for the frontend.
+The `api_key` is returned in plaintext **exactly once**. Store it now — it cannot be 
+retrieved again. To create additional keys later, use 
+`POST /v1/workspaces/{workspace_id}/keys` (requires authentication).
+
+1. Update `frontend/.env.local` — set `VITE_MEMORYOPS_WORKSPACE_ID` to your workspace UUID.
+2. Paste the `api_key` into the Settings modal when you first open the frontend.
 
 ---
 

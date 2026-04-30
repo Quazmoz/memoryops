@@ -72,7 +72,7 @@ Result: inconsistent behavior, repeated instructions, hallucinations from stale 
 - [Rust](https://rustup.rs/) (stable, see `rust-toolchain.toml` — currently 1.88.0)
 - [Docker](https://www.docker.com/) + Docker Compose
 - [Node.js](https://nodejs.org/) 20+ (frontend only)
-- [sqlx-cli](https://github.com/launchbakery/sqlx-cli): `cargo install sqlx-cli --no-default-features --features rustls,postgres`
+- [sqlx-cli](https://github.com/launchbakery/sqlx/tree/master/sqlx-cli): `cargo install sqlx-cli --no-default-features --features rustls,postgres`
 - [Ollama](https://ollama.com/) (local LLM default — `ollama pull llama3`)
 
 ---
@@ -121,11 +121,15 @@ See [docs/local-development.md](docs/local-development.md) for a full step-by-st
 
 ## Connecting AI Clients
 
-MemoryOps exposes MCP tools for AI clients that can retrieve, store, update, delete, rate, and time-travel through workspace memory.
+MemoryOps exposes MCP tools for AI clients via HTTP Streamable or stdio transport.
 
-- Open WebUI: [docs/integrations/openwebui.md](docs/integrations/openwebui.md)
-- GitHub Copilot in VS Code: [docs/integrations/vscode.md](docs/integrations/vscode.md)
-- Continue.dev: [docs/integrations/vscode.md](docs/integrations/vscode.md)
+- **Open WebUI:** [docs/integrations/openwebui.md](docs/integrations/openwebui.md)
+- **Claude Code:** [docs/integrations/claude-code.md](docs/integrations/claude-code.md)
+- **GitHub Copilot in VS Code:** [docs/integrations/vscode.md](docs/integrations/vscode.md)
+- **Continue.dev:** [docs/integrations/vscode.md](docs/integrations/vscode.md)
+
+See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport reference and 
+HTTP Streamable session lifecycle.
 
 ---
 
@@ -145,6 +149,13 @@ Copy `.env.example` to `.env`. All required variables must be set before startin
 | `OPENAI_API_KEY` | ❌ | — | Required only if `embedding.provider = "openai"` |
 | `ANTHROPIC_API_KEY` | ❌ | — | Required only if `llm.provider = "anthropic"` |
 | `RUST_LOG` | ❌ | `info` | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | ❌ | — | OTLP collector endpoint (e.g. `http://localhost:4317`). Only used when `telemetry.otel_exporter = "otlp"` in `config.toml`. |
+| `GITHUB_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | HMAC-SHA256 secret for GitHub webhook validation. Required in production. |
+| `SLACK_SIGNING_SECRET` | ❌ | `dev-placeholder` | Signing secret for Slack webhook validation. Required in production. |
+| `LINEAR_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Signing secret for Linear webhook validation. Required in production. |
+| `JIRA_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Signing secret for Jira webhook validation. Required in production. |
+| `MCP_TRANSPORT` | ❌ | `stdio` | MCP server transport: `http` (recommended for all AI clients) or `stdio`. Always set to `http` when running via Docker Compose. |
+| `MCP_PORT` | ❌ | `3003` | Port the MCP server listens on. Only used when `MCP_TRANSPORT=http`. |
 
 Secrets are **never** stored in `config.toml` — always via environment variables.
 
@@ -255,7 +266,7 @@ curl -X POST http://localhost:8080/v1/retrieve \
 | Queue / Cache | Redis Streams |
 | Embeddings | `fastembed-rs` (local default) / pluggable |
 | LLM Summarization | Ollama (local default) / pluggable |
-| MCP Server | `rmcp` crate — stdio + HTTP SSE |
+| MCP Server | `rmcp` crate — stdio + HTTP Streamable (MCP spec 2025-03-26) |
 | Observability | `tracing` + OpenTelemetry |
 | Frontend | React 19 + TypeScript + Vite + Tailwind v4 |
 
@@ -303,34 +314,41 @@ memoryops/
 7. **Point-in-time memory** — reconstruct exact memory state + decay scores at any past timestamp; useful for incident post-mortems
 8. **Temporal memory queries** — `memory_timeline` MCP tool lets agents reconstruct what they knew at any past timestamp — useful for incident post-mortems and audit
 9. **Multi-agent scope inheritance** — publish semantic memories to a workspace pool; sub-agents inherit without duplicating context
-10. **MCP-native** — agents connect directly via Model Context Protocol (stdio or HTTP SSE); no HTTP client glue required
+10. **MCP-native** — agents connect directly via Model Context Protocol (stdio or HTTP Streamable); no HTTP client glue required
 11. **Memory Control Center** — inspect, edit, pin, merge, trace, and audit exactly what your agent remembers and why
 
 ---
 
-## Status
+```bash
+# 1. Clone the repo
+git clone https://github.com/Quazmoz/memoryops.git
+cd memoryops
 
-🚧 **Pre-alpha** — active development, not yet production-ready. Currently at **v0.21.0** (M1–M32 complete).
+# 2. Start infrastructure (Postgres, Redis, Qdrant)
+docker compose up -d
 
-See [docs/FEATURES.md](docs/FEATURES.md) for the full milestone tracker.  
-See [docs/SPEC.md](docs/SPEC.md) for the full technical specification.
+# 3. Copy and configure environment
+cp .env.example .env
+# Edit .env — set DATABASE_URL, REDIS_URL, QDRANT_URL at minimum
 
----
+# 4. Run database migrations
+sqlx migrate run
 
-## Contributing
+# 5. Build and run the API
+cargo run -p api
 
-1. Fork the repo and create a `feature/your-feature` branch
-2. Follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages
-3. Run `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test` before pushing
-4. Run full integration coverage locally:
-  `docker compose -f docker-compose.test.yml up -d --wait && cargo test --workspace --all-features -- --include-ignored; docker compose -f docker-compose.test.yml down -v`
-4. Open a PR — describe what changed, why, and how to test it
-5. PRs require CI to pass and reference an issue or milestone
+# 6. (Optional) Start the frontend
+cd frontend && npm install && npm run dev
 
-See [docs/SPEC.md §25](docs/SPEC.md#25-code-quality-standards) for full code quality standards.
+# 7. (Optional) Start the MCP server for AI client connections
+#    IMPORTANT: override the docker-compose.yml default (which uses deprecated sse)
+docker compose --profile mcp run --rm --service-ports \
+  -e MCP_TRANSPORT=http \
+  -e MCP_PORT=3003 \
+  mcp
 
----
-
-## License
+# 8. (Optional) Seed development data
+API_KEY=your-key bash scripts/seed.sh
+```
 
 MIT

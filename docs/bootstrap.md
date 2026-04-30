@@ -43,7 +43,9 @@ The `api_key` value is only returned in plaintext once at creation time. Store i
 
 ## What's Next
 
-- Connect Open WebUI with [docs/integrations/openwebui.md](integrations/openwebui.md).
-- Connect VS Code, GitHub Copilot, or Continue.dev with [docs/integrations/vscode.md](integrations/vscode.md).
+- Connect **Open WebUI** with [docs/integrations/openwebui.md](integrations/openwebui.md).
+- Connect **Claude Code** with [docs/integrations/claude-code.md](integrations/claude-code.md).
+- Connect **VS Code, GitHub Copilot, or Continue.dev** with [docs/integrations/vscode.md](integrations/vscode.md).
 - Create additional keys as needed with `POST /v1/workspaces/{id}/keys`.
 - Configure workspace promotion, lifecycle, and memory-sharing settings through the workspace endpoints.
+- See [docs/mcp-transport.md](mcp-transport.md) for the full MCP transport reference.

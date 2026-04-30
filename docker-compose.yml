@@ -74,7 +74,7 @@ services:
       REDIS_URL: redis://redis:6379
       QDRANT_URL: http://qdrant:6333
       MCP_PORT: "3003"
-      MCP_TRANSPORT: "sse"
+      MCP_TRANSPORT: "http"
     depends_on:
       - postgres
       - redis

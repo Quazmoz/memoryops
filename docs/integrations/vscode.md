@@ -72,7 +72,7 @@ For local development, `stdio` is also supported:
         "MCP_TRANSPORT": "stdio",
         "DATABASE_URL": "postgres://memoryops:memoryops@localhost:5432/memoryops",
         "REDIS_URL": "redis://localhost:6379",
-        "QDRANT_URL": "http://localhost:6333"
+        "QDRANT_URL": "http://localhost:6334"
       }
     }
   }
