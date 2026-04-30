@@ -205,6 +205,7 @@ fn source_as_str(source: Source) -> &'static str {
         Source::Slack => "slack",
         Source::Jira => "jira",
         Source::Linear => "linear",
+        Source::Observation => "observation",
     }
 }
 
@@ -217,5 +218,6 @@ fn event_type_as_str(event_type: EventType) -> &'static str {
         EventType::Issue => "issue",
         EventType::Message => "message",
         EventType::Reaction => "reaction",
+        EventType::AgentObservation => "agent_observation",
     }
 }
