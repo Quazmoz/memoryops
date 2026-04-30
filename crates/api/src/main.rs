@@ -866,25 +866,10 @@ mod tests {
             },
             None => panic!("workspace response should include workspace_id"),
         };
-
-        let response = match app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                format!("/v1/workspaces/{workspace_id}/keys"),
-                None,
-                json!({ "name": "bootstrap" }),
-            ))
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => panic!("key request should respond: {error}"),
-        };
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = response_json(response).await;
-        let api_key = match body.get("key").and_then(Value::as_str) {
-            Some(key) => key.to_owned(),
-            None => panic!("key response should expose plaintext key once"),
+        let api_key = match body.get("api_key").and_then(Value::as_str) {
+            Some(key) if !key.trim().is_empty() => key.to_owned(),
+            Some(_) => panic!("workspace response api_key should be non-empty"),
+            None => panic!("workspace response should include api_key"),
         };
 
         let response = match app

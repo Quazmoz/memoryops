@@ -24,7 +24,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::require_workspace;
+use super::{keys, require_workspace};
 
 pub const MAX_IMPORT_BODY_BYTES: usize = 50 * 1024 * 1024;
 
@@ -37,6 +37,7 @@ pub struct CreateWorkspaceRequest {
 #[derive(Debug, Serialize)]
 pub struct CreateWorkspaceResponse {
     pub workspace_id: Uuid,
+    pub api_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,7 +151,12 @@ pub async fn create_workspace(
         AppError::Database(error)
     })?;
 
-    Ok(Json(CreateWorkspaceResponse { workspace_id }))
+    let (api_key, _record) = keys::insert_key(&state.db, workspace_id, "bootstrap").await?;
+
+    Ok(Json(CreateWorkspaceResponse {
+        workspace_id,
+        api_key,
+    }))
 }
 
 #[axum::debug_handler]

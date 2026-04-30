@@ -36,15 +36,28 @@ async fn main() -> anyhow::Result<()> {
             );
             transport::stdio::run(server).await?;
         }
-        "sse" => {
-            let port = transport::sse::port_from_env();
+        "http" => {
+            let port = transport::http_streamable::port_from_env();
             tracing::info!(
-                transport = "sse",
+                transport = "http",
                 port,
                 protocol_version = MCP_PROTOCOL_VERSION,
                 "starting MemoryOps MCP server"
             );
-            transport::sse::run(server).await?;
+            transport::http_streamable::run(server).await?;
+        }
+        "sse" => {
+            #[allow(deprecated)]
+            {
+                let port = transport::sse::port_from_env();
+                tracing::info!(
+                    transport = "sse",
+                    port,
+                    protocol_version = MCP_PROTOCOL_VERSION,
+                    "starting MemoryOps MCP server"
+                );
+                transport::sse::run(server).await?;
+            }
         }
         other => anyhow::bail!("unsupported MCP_TRANSPORT: {other}"),
     }

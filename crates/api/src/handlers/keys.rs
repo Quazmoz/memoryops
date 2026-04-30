@@ -9,6 +9,7 @@ use common::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::security::{generate_api_key, hash_secret};
@@ -38,6 +39,36 @@ pub struct ApiKeySummary {
     pub revoked: bool,
 }
 
+pub type KeyRecord = ApiKeySummary;
+
+/// Inserts a new API key record for a workspace and returns the plaintext key once.
+pub async fn insert_key(
+    db: &PgPool,
+    workspace_id: Uuid,
+    name: &str,
+) -> AppResult<(String, KeyRecord)> {
+    let key_id = Uuid::now_v7();
+    let (plaintext, prefix) = generate_api_key(workspace_id);
+    let key_hash = hash_secret(&plaintext)?;
+    let created = sqlx::query_as::<_, ApiKeySummary>(
+        r#"
+        INSERT INTO api_keys (id, workspace_id, name, key_hash, prefix)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, name, prefix, created_at, last_used_at, revoked
+        "#,
+    )
+    .bind(key_id)
+    .bind(workspace_id)
+    .bind(name)
+    .bind(key_hash)
+    .bind(&prefix)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok((plaintext, created))
+}
+
 #[axum::debug_handler]
 pub async fn create_key(
     State(state): State<AppState>,
@@ -59,32 +90,15 @@ pub async fn create_key(
         return Err(AppError::Validation("key name is required".to_owned()));
     }
 
-    let key_id = Uuid::now_v7();
-    let (plaintext, prefix) = generate_api_key(id);
-    let key_hash = hash_secret(&plaintext)?;
     let name = request.name.trim().to_owned();
-    let created = sqlx::query_as::<_, ApiKeySummary>(
-        r#"
-        INSERT INTO api_keys (id, workspace_id, name, key_hash, prefix)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, name, prefix, created_at, last_used_at, revoked
-        "#,
-    )
-    .bind(key_id)
-    .bind(id)
-    .bind(&name)
-    .bind(key_hash)
-    .bind(&prefix)
-    .fetch_one(&state.db)
-    .await
-    .map_err(AppError::Database)?;
+    let (plaintext, created) = insert_key(&state.db, id, &name).await?;
 
     spawn_audit_log(
         state.db.clone(),
         id,
         actor,
         AuditAction::KeyCreated,
-        key_id,
+        created.id,
         "api_key",
         Some(json!({ "name": created.name, "prefix": created.prefix })),
     );
@@ -92,7 +106,7 @@ pub async fn create_key(
     Ok(Json(CreateKeyResponse {
         id: created.id,
         name,
-        prefix,
+        prefix: created.prefix,
         key: plaintext,
     }))
 }
