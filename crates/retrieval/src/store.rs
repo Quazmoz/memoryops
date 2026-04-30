@@ -37,10 +37,207 @@ pub struct MemoryUnitPatch<'a> {
     pub edited_by: &'a str,
 }
 
+#[derive(Debug, Clone)]
+pub struct ObservationListQuery {
+    pub limit: u32,
+    pub scope_id: Option<Uuid>,
+    pub since: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ObservationRecord {
+    pub id: Uuid,
+    pub content: String,
+    pub source: Option<String>,
+    pub tags: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub processed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ContradictionRecord {
+    pub id: Uuid,
+    pub memory_unit_a_id: Uuid,
+    pub memory_unit_b_id: Uuid,
+    pub description: String,
+    pub detected_at: DateTime<Utc>,
+    pub resolution_status: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ContradictionFlag {
+    pub id: Uuid,
+    pub memory_id_a: Uuid,
+    pub memory_id_b: Uuid,
+    pub resolution: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContradictionResolutionUpdate<'a> {
+    pub resolution: &'a str,
+    pub reason: Option<&'a str>,
+    pub resolved_by: &'a str,
+    pub kept_memory_id: Option<Uuid>,
+    pub discarded_memory_id: Option<Uuid>,
+}
+
 impl MemoryUnitPatch<'_> {
     pub fn is_empty(&self) -> bool {
         self.content.is_none() && self.tags.is_none() && self.importance_score.is_none()
     }
+}
+
+pub async fn list_observations(
+    db: &PgPool,
+    workspace_id: Uuid,
+    query: &ObservationListQuery,
+) -> AppResult<Vec<ObservationRecord>> {
+    let limit = i64::from(query.limit.min(MAX_LIMIT));
+
+    sqlx::query_as::<_, ObservationRecord>(
+        r#"
+        SELECT e.id,
+               COALESCE(e.payload->>'content', '') AS content,
+               NULLIF(e.payload->>'source_ref', '') AS source,
+               COALESCE(
+                   ARRAY(SELECT jsonb_array_elements_text(COALESCE(e.payload->'tags', '[]'::jsonb))),
+                   ARRAY[]::text[]
+               ) AS tags,
+               e.created_at,
+               p.processed_at
+        FROM raw_events e
+        LEFT JOIN processing_state p ON p.raw_event_id = e.id
+        WHERE e.workspace_id = $1
+          AND e.source = 'observation'::source
+          AND e.event_type = 'agent_observation'::event_type
+          AND ($2::UUID IS NULL OR e.payload->>'scope_id' = $2::TEXT)
+          AND ($3::TIMESTAMPTZ IS NULL OR e.created_at >= $3)
+        ORDER BY e.created_at DESC
+        LIMIT $4
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(query.scope_id)
+    .bind(query.since)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn list_open_contradictions(
+    db: &PgPool,
+    workspace_id: Uuid,
+    scope_id: Option<Uuid>,
+    limit: u32,
+) -> AppResult<Vec<ContradictionRecord>> {
+    sqlx::query_as::<_, ContradictionRecord>(
+        r#"
+        SELECT f.id,
+               f.memory_id_a AS memory_unit_a_id,
+               f.memory_id_b AS memory_unit_b_id,
+               COALESCE(
+                   NULLIF(f.notes, ''),
+                   format(
+                       'Potential contradiction between "%s" and "%s"',
+                       LEFT(a.content, 120),
+                       LEFT(b.content, 120)
+                   )
+               ) AS description,
+               f.created_at AS detected_at,
+               f.resolution::TEXT AS resolution_status
+        FROM contradiction_flags f
+        JOIN memory_units a ON a.id = f.memory_id_a AND a.workspace_id = f.workspace_id
+        JOIN memory_units b ON b.id = f.memory_id_b AND b.workspace_id = f.workspace_id
+        WHERE f.workspace_id = $1
+          AND f.resolution = 'open'::contradiction_resolution
+          AND (
+              $2::UUID IS NULL
+              OR a.scope->>'scope_id' = $2::TEXT
+              OR b.scope->>'scope_id' = $2::TEXT
+          )
+        ORDER BY f.created_at DESC, f.id DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(scope_id)
+    .bind(i64::from(limit.min(MAX_LIMIT)))
+    .fetch_all(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn get_contradiction_flag(
+    db: &PgPool,
+    workspace_id: Uuid,
+    contradiction_id: Uuid,
+) -> AppResult<Option<ContradictionFlag>> {
+    sqlx::query_as::<_, ContradictionFlag>(
+        r#"
+        SELECT id,
+               memory_id_a,
+               memory_id_b,
+               resolution::TEXT AS resolution
+        FROM contradiction_flags
+        WHERE workspace_id = $1 AND id = $2
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(contradiction_id)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)
+}
+
+pub async fn resolve_contradiction_flag(
+    db: &PgPool,
+    workspace_id: Uuid,
+    contradiction_id: Uuid,
+    update: &ContradictionResolutionUpdate<'_>,
+) -> AppResult<Option<ContradictionRecord>> {
+    sqlx::query_as::<_, ContradictionRecord>(
+        r#"
+        WITH updated AS (
+            UPDATE contradiction_flags
+            SET resolution = $3::contradiction_resolution,
+                notes = $4,
+                resolved_by = $5,
+                resolved_at = now(),
+                kept_memory_id = $6,
+                discarded_memory_id = $7
+            WHERE workspace_id = $1
+              AND id = $2
+            RETURNING *
+        )
+        SELECT f.id,
+               f.memory_id_a AS memory_unit_a_id,
+               f.memory_id_b AS memory_unit_b_id,
+               COALESCE(
+                   NULLIF(f.notes, ''),
+                   format(
+                       'Potential contradiction between "%s" and "%s"',
+                       LEFT(a.content, 120),
+                       LEFT(b.content, 120)
+                   )
+               ) AS description,
+               f.created_at AS detected_at,
+               f.resolution::TEXT AS resolution_status
+        FROM updated f
+        JOIN memory_units a ON a.id = f.memory_id_a AND a.workspace_id = f.workspace_id
+        JOIN memory_units b ON b.id = f.memory_id_b AND b.workspace_id = f.workspace_id
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(contradiction_id)
+    .bind(update.resolution)
+    .bind(update.reason)
+    .bind(update.resolved_by)
+    .bind(update.kept_memory_id)
+    .bind(update.discarded_memory_id)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)
 }
 
 #[derive(Debug, sqlx::FromRow)]

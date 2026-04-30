@@ -20,6 +20,15 @@ MemoryOps MCP supports multiple transports.
 | `sse` | Deprecated | Legacy transport. Prefer HTTP Streamable. |
 | `http` | Recommended | MCP 2025-03-26 style HTTP Streamable transport. |
 
+## Tools Reference
+
+| Tool | Purpose |
+|---|---|
+| `memory_observe` | Ingest a raw workspace observation for asynchronous consolidation into memory units. |
+| `memory_list_observations` | List recent raw observations before processor consolidation. |
+| `memory_list_contradictions` | List unresolved contradictions detected between memory units. |
+| `memory_resolve_contradiction` | Resolve a contradiction by selecting keep/discard behavior. |
+
 ## Configuration
 
 Set transport with:

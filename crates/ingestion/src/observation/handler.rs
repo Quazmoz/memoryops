@@ -13,6 +13,7 @@ pub struct ObservationRequest {
     pub tags: Option<Vec<String>>,
     pub importance: Option<f32>,
     pub source_ref: Option<String>,
+    pub scope_id: Option<uuid::Uuid>,
 }
 
 #[axum::debug_handler]
@@ -29,6 +30,7 @@ pub async fn handle_ingest_observation(
         tags: body.tags,
         importance: body.importance,
         source_ref: body.source_ref,
+        scope_id: body.scope_id,
     };
 
     let output = ingest_observation(&state, auth.workspace_id, input).await?;

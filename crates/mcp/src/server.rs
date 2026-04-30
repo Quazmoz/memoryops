@@ -43,6 +43,18 @@ pub trait McpBackend: Send + Sync + 'static {
         input: tools::store::StoreInput,
     ) -> Result<tools::store::StoreOutput, JsonRpcError>;
 
+    async fn memory_observe(
+        &self,
+        context: &AuthContext,
+        input: tools::observe::ObserveInput,
+    ) -> Result<tools::observe::ObserveOutput, JsonRpcError>;
+
+    async fn memory_list_observations(
+        &self,
+        context: &AuthContext,
+        input: tools::observe::ListObservationsInput,
+    ) -> Result<Vec<tools::observe::ObservationItem>, JsonRpcError>;
+
     async fn memory_delete(
         &self,
         context: &AuthContext,
@@ -66,6 +78,18 @@ pub trait McpBackend: Send + Sync + 'static {
         context: &AuthContext,
         input: tools::timeline::TimelineInput,
     ) -> Result<tools::timeline::TimelineOutput, JsonRpcError>;
+
+    async fn memory_list_contradictions(
+        &self,
+        context: &AuthContext,
+        input: tools::contradiction::ListContradictionsInput,
+    ) -> Result<Vec<tools::contradiction::ContradictionItem>, JsonRpcError>;
+
+    async fn memory_resolve_contradiction(
+        &self,
+        context: &AuthContext,
+        input: tools::contradiction::ResolveContradictionInput,
+    ) -> Result<tools::contradiction::ResolveContradictionOutput, JsonRpcError>;
 }
 
 #[derive(Clone)]
@@ -120,6 +144,26 @@ impl McpBackend for RuntimeBackend {
             .map_err(app_error_to_rpc)
     }
 
+    async fn memory_observe(
+        &self,
+        context: &AuthContext,
+        input: tools::observe::ObserveInput,
+    ) -> Result<tools::observe::ObserveOutput, JsonRpcError> {
+        tools::observe::run_observe(&self.state, context.workspace_id, input)
+            .await
+            .map_err(app_error_to_rpc)
+    }
+
+    async fn memory_list_observations(
+        &self,
+        context: &AuthContext,
+        input: tools::observe::ListObservationsInput,
+    ) -> Result<Vec<tools::observe::ObservationItem>, JsonRpcError> {
+        tools::observe::run_list_observations(&self.state, context.workspace_id, input)
+            .await
+            .map_err(app_error_to_rpc)
+    }
+
     async fn memory_delete(
         &self,
         context: &AuthContext,
@@ -156,6 +200,26 @@ impl McpBackend for RuntimeBackend {
         input: tools::timeline::TimelineInput,
     ) -> Result<tools::timeline::TimelineOutput, JsonRpcError> {
         tools::timeline::run(&self.state, context.workspace_id, input)
+            .await
+            .map_err(app_error_to_rpc)
+    }
+
+    async fn memory_list_contradictions(
+        &self,
+        context: &AuthContext,
+        input: tools::contradiction::ListContradictionsInput,
+    ) -> Result<Vec<tools::contradiction::ContradictionItem>, JsonRpcError> {
+        tools::contradiction::run_list(&self.state, context.workspace_id, input)
+            .await
+            .map_err(app_error_to_rpc)
+    }
+
+    async fn memory_resolve_contradiction(
+        &self,
+        context: &AuthContext,
+        input: tools::contradiction::ResolveContradictionInput,
+    ) -> Result<tools::contradiction::ResolveContradictionOutput, JsonRpcError> {
+        tools::contradiction::run_resolve(&self.state, context.workspace_id, input)
             .await
             .map_err(app_error_to_rpc)
     }
@@ -325,6 +389,19 @@ impl<B: McpBackend> McpServer<B> {
                     .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
                 serialize_tool_value(self.backend.memory_store(&context, input).await?)
             }
+            "memory_observe" => {
+                let input = serde_json::from_value::<tools::observe::ObserveInput>(call.arguments)
+                    .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(self.backend.memory_observe(&context, input).await?)
+            }
+            "memory_list_observations" => {
+                let input =
+                    serde_json::from_value::<tools::observe::ListObservationsInput>(
+                        call.arguments,
+                    )
+                    .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(self.backend.memory_list_observations(&context, input).await?)
+            }
             "memory_delete" => {
                 let input = serde_json::from_value::<tools::delete::DeleteInput>(call.arguments)
                     .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
@@ -346,6 +423,21 @@ impl<B: McpBackend> McpServer<B> {
                     serde_json::from_value::<tools::timeline::TimelineInput>(call.arguments)
                         .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
                 serialize_tool_value(self.backend.memory_timeline(&context, input).await?)
+            }
+            "memory_list_contradictions" => {
+                let input =
+                    serde_json::from_value::<tools::contradiction::ListContradictionsInput>(
+                        call.arguments,
+                    )
+                    .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(self.backend.memory_list_contradictions(&context, input).await?)
+            }
+            "memory_resolve_contradiction" => {
+                let input = serde_json::from_value::<
+                    tools::contradiction::ResolveContradictionInput,
+                >(call.arguments)
+                .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(self.backend.memory_resolve_contradiction(&context, input).await?)
             }
             _ => return Err(JsonRpcError::new(INVALID_PARAMS, "unknown tool name")),
         };
@@ -583,6 +675,51 @@ mod tests {
             })
         }
 
+        async fn memory_observe(
+            &self,
+            _context: &AuthContext,
+            input: tools::observe::ObserveInput,
+        ) -> Result<tools::observe::ObserveOutput, JsonRpcError> {
+            self.store_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let id = Uuid::from_u128(12);
+            self.memories
+                .lock()
+                .map_err(|error| JsonRpcError::new(INTERNAL_ERROR, error.to_string()))?
+                .insert(
+                    id,
+                    tools::MemoryToolResult {
+                        id,
+                        content: input.content,
+                        memory_type: "episodic".to_owned(),
+                        tags: input.tags,
+                        score: 1.0,
+                        importance_score: 0.5,
+                        created_at: Utc::now(),
+                        source: "observation".to_owned(),
+                    },
+                );
+            Ok(tools::observe::ObserveOutput {
+                id,
+                status: "queued",
+            })
+        }
+
+        async fn memory_list_observations(
+            &self,
+            _context: &AuthContext,
+            _input: tools::observe::ListObservationsInput,
+        ) -> Result<Vec<tools::observe::ObservationItem>, JsonRpcError> {
+            Ok(vec![tools::observe::ObservationItem {
+                id: Uuid::from_u128(13),
+                content: "raw observation".to_owned(),
+                source: Some("mcp".to_owned()),
+                tags: vec!["obs".to_owned()],
+                created_at: Utc::now(),
+                processed_at: None,
+            }])
+        }
+
         async fn memory_delete(
             &self,
             _context: &AuthContext,
@@ -651,6 +788,36 @@ mod tests {
                 memories: vec![memory_result(0.88)],
             })
         }
+
+        async fn memory_list_contradictions(
+            &self,
+            _context: &AuthContext,
+            _input: tools::contradiction::ListContradictionsInput,
+        ) -> Result<Vec<tools::contradiction::ContradictionItem>, JsonRpcError> {
+            Ok(vec![tools::contradiction::ContradictionItem {
+                id: Uuid::from_u128(14),
+                memory_unit_a_id: Uuid::from_u128(15),
+                memory_unit_b_id: Uuid::from_u128(16),
+                description: "Potential contradiction".to_owned(),
+                detected_at: Utc::now(),
+                resolution_status: "open".to_owned(),
+            }])
+        }
+
+        async fn memory_resolve_contradiction(
+            &self,
+            _context: &AuthContext,
+            _input: tools::contradiction::ResolveContradictionInput,
+        ) -> Result<tools::contradiction::ResolveContradictionOutput, JsonRpcError> {
+            Ok(tools::contradiction::ResolveContradictionOutput {
+                id: Uuid::from_u128(14),
+                memory_unit_a_id: Uuid::from_u128(15),
+                memory_unit_b_id: Uuid::from_u128(16),
+                description: "Potential contradiction".to_owned(),
+                detected_at: Utc::now(),
+                resolution_status: "keep_a".to_owned(),
+            })
+        }
     }
 
     fn memory_result(score: f32) -> tools::MemoryToolResult {
@@ -714,8 +881,12 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "memory_list_contradictions",
+                "memory_resolve_contradiction",
                 "memory_delete",
                 "memory_feedback",
+                "memory_list_observations",
+                "memory_observe",
                 "memory_retrieve",
                 "memory_search",
                 "memory_store",
@@ -723,6 +894,63 @@ mod tests {
                 "memory_update"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn memory_observe_returns_id_and_status() {
+        let server = initialized_server().await;
+        let response = call_tool(
+            &server,
+            "memory_observe",
+            json!({ "content": "observed", "tags": ["ops"] }),
+        )
+        .await;
+        let structured = structured_content(&response);
+
+        assert!(structured.get("id").is_some());
+        assert_eq!(structured.get("status"), Some(&json!("queued")));
+    }
+
+    #[tokio::test]
+    async fn memory_list_observations_returns_array_shape() {
+        let server = initialized_server().await;
+        let response =
+            call_tool(&server, "memory_list_observations", json!({ "limit": 5 })).await;
+        let first = first_structured_item(&response);
+
+        assert!(first.get("id").is_some());
+        assert!(first.get("content").is_some());
+        assert!(first.get("created_at").is_some());
+        assert!(first.get("processed_at").is_some());
+    }
+
+    #[tokio::test]
+    async fn memory_list_contradictions_returns_array_shape() {
+        let server = initialized_server().await;
+        let response =
+            call_tool(&server, "memory_list_contradictions", json!({ "limit": 5 })).await;
+        let first = first_structured_item(&response);
+
+        assert!(first.get("id").is_some());
+        assert!(first.get("memory_unit_a_id").is_some());
+        assert!(first.get("memory_unit_b_id").is_some());
+        assert!(first.get("resolution_status").is_some());
+    }
+
+    #[tokio::test]
+    async fn memory_resolve_contradiction_returns_shape() {
+        let server = initialized_server().await;
+        let response = call_tool(
+            &server,
+            "memory_resolve_contradiction",
+            json!({ "contradiction_id": Uuid::from_u128(14), "action": "keep_a" }),
+        )
+        .await;
+        let structured = structured_content(&response);
+
+        assert!(structured.get("id").is_some());
+        assert!(structured.get("memory_unit_a_id").is_some());
+        assert!(structured.get("resolution_status").is_some());
     }
 
     #[tokio::test]

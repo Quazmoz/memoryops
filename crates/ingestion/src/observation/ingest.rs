@@ -27,6 +27,7 @@ pub struct ObservationInput {
     pub tags: Option<Vec<String>>,
     pub importance: Option<f32>,
     pub source_ref: Option<String>,
+    pub scope_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -145,6 +146,7 @@ fn build_payload(input: &ObservationInput) -> serde_json::Value {
         "tags": input.tags.clone().unwrap_or_default(),
         "importance": input.importance,
         "source_ref": input.source_ref,
+        "scope_id": input.scope_id,
     })
 }
 
@@ -205,6 +207,7 @@ mod tests {
             tags: None,
             importance: None,
             source_ref: None,
+            scope_id: None,
         };
         assert!(validate_input(&input).is_err());
     }
@@ -219,6 +222,7 @@ mod tests {
             tags: None,
             importance: None,
             source_ref: None,
+            scope_id: None,
         };
         assert!(validate_input(&input).is_err());
     }
@@ -233,6 +237,7 @@ mod tests {
             tags: None,
             importance: Some(1.5),
             source_ref: None,
+            scope_id: None,
         };
         assert!(validate_input(&input).is_err());
     }
@@ -247,6 +252,7 @@ mod tests {
             tags: Some(vec!["tag".to_owned(); MAX_TAGS + 1]),
             importance: None,
             source_ref: None,
+            scope_id: None,
         };
         assert!(validate_input(&input).is_err());
     }
@@ -261,6 +267,7 @@ mod tests {
             tags: Some(vec!["deploy".to_owned(), "prod".to_owned()]),
             importance: Some(0.75),
             source_ref: Some("run-42".to_owned()),
+            scope_id: Some(Uuid::nil()),
         };
         assert!(validate_input(&input).is_ok());
     }

@@ -1,5 +1,7 @@
+pub mod contradiction;
 pub mod delete;
 pub mod feedback;
+pub mod observe;
 pub mod retrieve;
 pub mod search;
 pub mod store;
@@ -78,8 +80,12 @@ impl MemoryToolResult {
 
 pub fn definitions() -> Vec<ToolDefinition> {
     vec![
+        contradiction::list_definition(),
+        contradiction::resolve_definition(),
         delete::definition(),
         feedback::definition(),
+        observe::list_observations_definition(),
+        observe::observe_definition(),
         retrieve::definition(),
         search::definition(),
         store::definition(),

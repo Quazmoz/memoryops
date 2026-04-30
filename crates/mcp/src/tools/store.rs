@@ -68,6 +68,7 @@ pub async fn run(
         tags: Some(input.tags),
         importance: Some(input.importance),
         source_ref: input.source_ref,
+        scope_id: None,
     };
 
     let output = ingest_observation(state, workspace_id, observation_input).await?;
