@@ -294,7 +294,7 @@ memoryops/
 
 ## Status
 
-🚧 **Pre-alpha** — active development, not yet production-ready. Currently at **v0.18.0** (M1–M30 complete).
+🚧 **Pre-alpha** — active development, not yet production-ready. Currently at **v0.21.0** (M1–M32 complete).
 
 See [docs/FEATURES.md](docs/FEATURES.md) for the full milestone tracker.  
 See [docs/SPEC.md](docs/SPEC.md) for the full technical specification.

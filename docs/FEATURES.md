@@ -1,7 +1,7 @@
 # MemoryOps — Feature List
 
-**Version:** 0.20.0
-**Last Updated:** 2026-04-29
+**Version:** 0.21.0
+**Last Updated:** 2026-04-30
 
 This document tracks all planned features across the platform with current status and target milestone.
 
@@ -52,7 +52,7 @@ This document tracks all planned features across the platform with current statu
 | M29 | Multi-agent scope inheritance + publish | 🟢 Complete |
 | M30 | Retrieval feedback loop | 🟢 Complete |
 | M31 | Compliance mode (retention + right-to-erasure) | 🔴 Not started |
-| M32 | Agent-authored observation ingest | 🔴 Not started |
+| M32 | Agent-authored observation ingest | 🟢 Complete |
 | M33 | LOCOMO benchmark integration | 🔴 Not started |
 | M34 | UX Gap Completeness Pass | 🟢 Complete |
 | M35 | In-App Walkthrough Guide + Connection Wizard | 🟢 Complete |
@@ -327,6 +327,9 @@ This document tracks all planned features across the platform with current statu
 | CodeBlock component | 🟢 | M35 | Dark pre/code block with copy button and live {{WORKSPACE_ID}}/{{API_KEY}}/{{API_URL}} substitution |
 | GuideView (/guide) | 🟢 | M35 | Two-panel layout, 14 content sections, sticky TOC sidebar, connection status strip |
 | Guide nav item (BookOpen) | 🟢 | M35 | Sidebar nav link above Settings |
+| Webhook Tester — Observation source | 🟢 | M32 | POST /v1/ingest/observation; two fixtures (observation_agent, observation_deploy) |
+| Integrations view — Observations tab | 🟢 | M32 | Live feed of recent agent observations filtered by scope source |
+| GuideView — Agent Observations section | 🟢 | M32 | Curl example, MCP fields, idempotency callout, when-to-use guidance |
 
 ---
 
@@ -409,8 +412,8 @@ This document tracks all planned features across the platform with current statu
 | Per-workspace retention policy (max age + auto hard-purge) | 🔴 | M31 | Configured via WorkspaceConfig |
 | DELETE /v1/workspaces/:id/forget/user/:user_id | 🔴 | M31 | Hard-purges all memories with matching scope.user_id |
 | Compliance deletion audit trail | 🔴 | M31 | Separate compliance_audit_log table; GDPR/CCPA ready |
-| POST /v1/ingest/observation (agent-authored memories) | 🔴 | M32 | Authenticated by workspace API key; same slow-path pipeline |
-| MCP memory_store routes through /v1/ingest/observation | 🔴 | M32 | Closes agent read/write loop |
+| POST /v1/ingest/observation (agent-authored memories) | 🟢 | M32 | Authenticated by workspace API key; same slow-path pipeline |
+| MCP memory_store routes through /v1/ingest/observation | 🟢 | M32 | Closes agent read/write loop |
 | cargo bench LOCOMO evaluation suite | 🔴 | M33 | Retrieval quality benchmarks against LOCOMO dataset |
 | Per-workspace LOCOMO score on dashboard | 🔴 | M33 | Compare across workspace configs |
 
@@ -442,3 +445,4 @@ This document tracks all planned features across the platform with current statu
 | 0020_scope_visibility.sql | scope_visibility column, publish audit action, and workspace-pool visibility index | 🟢 M29 |
 | 0021_retrieval_feedback.sql | retrieval_feedback table and memory_units.relevance_score index | 🟢 M30 |
 | 0022_contradiction_keep.sql | keep_a/keep_b ENUM values; kept/discarded columns; contradiction_resolved/workspace_reindexed audit actions | 🟢 M34 |
+| 0024_observation_ingest.sql | observation source + agent_observation event_type + observation_ingested audit action; two observation indexes | 🟢 M32 |

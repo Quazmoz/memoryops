@@ -2,6 +2,9 @@ use common::models::{RawEvent, Source};
 use serde_json::{json, Value};
 
 pub fn build_scope(event: &RawEvent) -> Value {
+    if event.source == Source::Observation {
+        return build_observation_scope(event);
+    }
     json!({
         "workspace_id": event.workspace_id,
         "source": source_as_str(event.source),
@@ -9,6 +12,20 @@ pub fn build_scope(event: &RawEvent) -> Value {
         "actor": event.actor,
         "agent_id": Value::Null,
         "user_id": Value::Null,
+    })
+}
+
+fn build_observation_scope(event: &RawEvent) -> Value {
+    let agent_id = event.payload.get("agent_id").and_then(Value::as_str).unwrap_or(&event.actor);
+    let user_id = event.payload.get("user_id").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Null);
+    let repo = event.payload.get("repo").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Null);
+    json!({
+        "workspace_id": event.workspace_id,
+        "source": "observation",
+        "agent_id": agent_id,
+        "user_id": user_id,
+        "repo": repo,
+        "actor": event.actor,
     })
 }
 
@@ -27,6 +44,7 @@ fn source_as_str(source: Source) -> &'static str {
         Source::Slack => "slack",
         Source::Jira => "jira",
         Source::Linear => "linear",
+        Source::Observation => "observation",
     }
 }
 

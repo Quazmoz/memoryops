@@ -10,6 +10,9 @@ const NO_CONTENT: &str = "(no content)";
 
 pub fn extract_text(event: &RawEvent) -> AppResult<String> {
     let content = match event.event_type {
+        EventType::AgentObservation => {
+            string_or_no_content(event.payload.get("content"))
+        }
         EventType::PullRequest => format!(
             "{}\n\n{}",
             string_or_no_content(event.payload.pointer("/pull_request/title")),
@@ -20,14 +23,14 @@ pub fn extract_text(event: &RawEvent) -> AppResult<String> {
         EventType::IssueComment => match event.source {
             Source::Jira => extract_jira_comment_text(&event.payload),
             Source::Linear => extract_linear_comment_text(&event.payload),
-            Source::GitHub | Source::Slack => {
+            Source::GitHub | Source::Slack | Source::Observation => {
                 string_or_no_content(event.payload.pointer("/comment/body"))
             }
         },
         EventType::Issue => match event.source {
             Source::Jira => extract_jira_issue_text(&event.payload),
             Source::Linear => extract_linear_issue_text(&event.payload),
-            Source::GitHub | Source::Slack => format!(
+            Source::GitHub | Source::Slack | Source::Observation => format!(
                 "{}\n\n{}",
                 string_or_no_content(event.payload.pointer("/issue/title")),
                 string_or_no_content(event.payload.pointer("/issue/body"))
@@ -49,7 +52,7 @@ pub fn extract_entities(event: &RawEvent, content: &str) -> Vec<Entity> {
         Source::Slack => extract_slack_entities(content),
         Source::Jira => extract_jira_entities(&event.payload, content),
         Source::Linear => extract_linear_entities(&event.payload, content),
-        Source::GitHub => Vec::new(),
+        Source::GitHub | Source::Observation => Vec::new(),
     }
 }
 

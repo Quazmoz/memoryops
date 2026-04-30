@@ -11,6 +11,7 @@ const SECTIONS = [
   { id: "authentication", label: "Authentication" },
   { id: "vscode", label: "VSCode Extension" },
   { id: "claude-desktop", label: "Claude Desktop" },
+  { id: "agent-observations", label: "Agent Observations" },
   { id: "openwebui", label: "OpenWebUI" },
   { id: "direct-api", label: "Direct API" },
   { id: "ingest", label: "Ingest Memories" },
@@ -138,6 +139,58 @@ export function GuideView() {
               The <code className="inline-code">memoryops-mcp</code> binary is included in the MemoryOps release
               archive. Place it on your <code className="inline-code">PATH</code> before starting Claude Desktop.
             </Callout>
+          </Section>
+
+          <Section id="agent-observations" title="Agent Observations">
+            <p>
+              Agent Observations let any process — a CI pipeline, a background agent, a CLI script — push structured
+              observations directly into MemoryOps without going through a webhook integration. Use observations when
+              you control the sender and want scoped, importance-tagged memories tied to a specific agent.
+            </p>
+            <p className="mt-2">
+              Use <strong>webhooks</strong> for third-party platforms (GitHub, Slack, Jira) that send events to a fixed
+              URL. Use <strong>observations</strong> for first-party agents and automation that can authenticate with an
+              API key and target a specific <code className="inline-code">agent_id</code>.
+            </p>
+            <CodeBlock code={`curl -X POST {{API_URL}}/v1/ingest/observation \\
+  -H "x-api-key: {{API_KEY}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "workspace_id": "{{WORKSPACE_ID}}",
+    "content": "Deployment pipeline completed in 142 s. All health checks passed.",
+    "agent_id": "deploy-bot",
+    "user_id": "quinn",
+    "repo": "org/backend",
+    "tags": ["deploy", "ci"],
+    "importance": 0.75,
+    "source_ref": "run/8821"
+  }'`} />
+            <p className="mt-2">
+              The endpoint returns <code className="inline-code">202 Accepted</code> with the raw event id. The memory
+              is embedded and indexed asynchronously by the processor.
+            </p>
+            <CodeBlock code={`{ "id": "<uuid>", "status": "queued" }`} />
+            <p className="mt-2">
+              The MCP <code className="inline-code">memory_store</code> tool routes through the same pipeline. Provide
+              the optional fields to attach scope metadata:
+            </p>
+            <CodeBlock code={`// MCP tool call — memory_store
+{
+  "content": "User prefers concise answers with no trailing summaries.",
+  "agent_id": "claude-code",
+  "user_id": "quinn",
+  "tags": ["preference", "output"],
+  "importance": 0.8
+}`} />
+            <Callout>
+              Idempotency is enforced per <code className="inline-code">(workspace_id, agent_id, content)</code>. Sending
+              the same observation twice returns the existing event id without creating a duplicate.
+            </Callout>
+            <p className="mt-2">
+              View recent observations in the{" "}
+              <a href="/integrations" className="text-accent-strong underline underline-offset-2">Integrations</a>{" "}
+              dashboard under the <strong>Observations</strong> tab.
+            </p>
           </Section>
 
           <Section id="openwebui" title="OpenWebUI">

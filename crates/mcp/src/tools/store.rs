@@ -1,39 +1,33 @@
 use chrono::{DateTime, Utc};
-use common::{
-    error::AppResult,
-    models::{MemoryScope, MemoryType},
-    AppError, AppState,
-};
+use common::{error::AppResult, AppError, AppState};
+use ingestion::{ingest_observation, ObservationInput};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
 use super::ToolDefinition;
 
-const DEFAULT_SOURCE: &str = "mcp";
+const DEFAULT_AGENT_ID: &str = "mcp-agent";
 const DEFAULT_IMPORTANCE: f32 = 0.5;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StoreInput {
     pub content: String,
-    #[serde(default = "default_source")]
-    pub source: String,
+    #[serde(default = "default_agent_id")]
+    pub agent_id: String,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default = "default_importance")]
     pub importance: f32,
+    pub user_id: Option<String>,
+    pub repo: Option<String>,
+    pub source_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct StoreOutput {
     pub id: Uuid,
     pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct StoreOutputRow {
-    id: Uuid,
-    created_at: DateTime<Utc>,
 }
 
 pub fn definition() -> ToolDefinition {
@@ -44,10 +38,13 @@ pub fn definition() -> ToolDefinition {
             "type": "object",
             "required": ["content"],
             "properties": {
-                "content": { "type": "string" },
-                "source": { "type": "string", "default": DEFAULT_SOURCE },
-                "tags": { "type": "array", "items": { "type": "string" } },
-                "importance": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": DEFAULT_IMPORTANCE }
+                "content": { "type": "string", "minLength": 1, "maxLength": 8000 },
+                "agent_id": { "type": "string", "default": DEFAULT_AGENT_ID },
+                "tags": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+                "importance": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": DEFAULT_IMPORTANCE },
+                "user_id": { "type": "string" },
+                "repo": { "type": "string" },
+                "source_ref": { "type": "string" }
             }
         }),
     }
@@ -61,86 +58,36 @@ pub async fn run(
     if input.content.trim().is_empty() {
         return Err(AppError::Validation("content is required".to_owned()));
     }
-    if !(0.0..=1.0).contains(&input.importance) {
-        return Err(AppError::Validation(
-            "importance must be between 0.0 and 1.0".to_owned(),
-        ));
-    }
 
-    let id = Uuid::now_v7();
-    let source = normalized_source(&input.source);
-    let scope = json!({
-        "workspace_id": workspace_id,
-        "agent_id": null,
-        "user_id": null,
-        "repo": null,
-        "source": source
-    });
-    let _scope_shape: MemoryScope = serde_json::from_value(scope.clone())
-        .map_err(|error| AppError::Validation(error.to_string()))?;
-    let row = insert_memory_unit(state, id, workspace_id, scope, input, source).await?;
+    let agent_id = normalize_agent_id(&input.agent_id);
+    let observation_input = ObservationInput {
+        content: input.content,
+        agent_id,
+        user_id: input.user_id,
+        repo: input.repo,
+        tags: Some(input.tags),
+        importance: Some(input.importance),
+        source_ref: input.source_ref,
+    };
 
-    let mut redis = state.redis.clone();
-    processor::worker::enqueue_slow_job(&mut redis, row.id, workspace_id, 0).await?;
-
+    let output = ingest_observation(state, workspace_id, observation_input).await?;
     Ok(StoreOutput {
-        id: row.id,
-        created_at: row.created_at,
+        id: output.id,
+        created_at: Utc::now(),
     })
 }
 
-async fn insert_memory_unit(
-    state: &AppState,
-    id: Uuid,
-    workspace_id: Uuid,
-    scope: serde_json::Value,
-    input: StoreInput,
-    source: String,
-) -> AppResult<StoreOutputRow> {
-    sqlx::query_as::<_, StoreOutputRow>(
-        r#"
-        INSERT INTO memory_units (
-            id,
-            workspace_id,
-            scope,
-            memory_type,
-            content,
-            entities,
-            importance_score,
-            source_events,
-            embedding_id,
-            token_count,
-            tags
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL, $9)
-        RETURNING id, created_at
-        "#,
-    )
-    .bind(id)
-    .bind(workspace_id)
-    .bind(scope)
-    .bind(MemoryType::Episodic)
-    .bind(input.content)
-    .bind(json!([{ "entity_type": "topic", "value": source, "confidence": 1.0 }]))
-    .bind(input.importance)
-    .bind(Vec::<Uuid>::new())
-    .bind(input.tags)
-    .fetch_one(&state.db)
-    .await
-    .map_err(AppError::Database)
-}
-
-fn normalized_source(source: &str) -> String {
-    let trimmed = source.trim();
+fn normalize_agent_id(agent_id: &str) -> String {
+    let trimmed = agent_id.trim();
     if trimmed.is_empty() {
-        DEFAULT_SOURCE.to_owned()
+        DEFAULT_AGENT_ID.to_owned()
     } else {
         trimmed.to_owned()
     }
 }
 
-fn default_source() -> String {
-    DEFAULT_SOURCE.to_owned()
+fn default_agent_id() -> String {
+    DEFAULT_AGENT_ID.to_owned()
 }
 
 fn default_importance() -> f32 {

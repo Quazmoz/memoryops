@@ -34,6 +34,7 @@ fn source_as_str(source: Source) -> &'static str {
         Source::Slack => "slack",
         Source::Jira => "jira",
         Source::Linear => "linear",
+        Source::Observation => "observation",
     }
 }
 
@@ -46,6 +47,7 @@ fn event_type_as_str(event_type: EventType) -> &'static str {
         EventType::Issue => "issue",
         EventType::Message => "message",
         EventType::Reaction => "reaction",
+        EventType::AgentObservation => "agent_observation",
     }
 }
 
@@ -79,7 +81,9 @@ mod tests {
     #[test]
     fn queue_field_values_match_database_enum_names() {
         assert_eq!(source_as_str(Source::GitHub), "github");
+        assert_eq!(source_as_str(Source::Observation), "observation");
         assert_eq!(event_type_as_str(EventType::PullRequest), "pull_request");
+        assert_eq!(event_type_as_str(EventType::AgentObservation), "agent_observation");
     }
 
     #[tokio::test]

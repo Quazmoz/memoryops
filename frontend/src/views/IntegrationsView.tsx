@@ -1,8 +1,9 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Loader2, PlugZap, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Loader2, PlugZap, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 
 import { discardDlqJob, listDlqJobs, listIntegrations, retryDlqJob, type DlqJob } from "../api/integrations";
+import { listMemory } from "../api/memory";
 import { EmptyState } from "../components/EmptyState";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
@@ -15,11 +16,13 @@ import { useAppStore } from "../store/app-store";
 
 type DlqMutationContext = { previous: DlqJob[] | undefined };
 type PendingDlqJob = { job: DlqJob; action: "retry" | "discard" };
+type ActiveTab = "integrations" | "observations" | "dlq";
 
 export function IntegrationsView() {
   const workspaceId = useAppStore((state) => state.workspaceId);
   const apiKey = useAppStore((state) => state.apiKey);
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<ActiveTab>("integrations");
   const [expandedJobIds, setExpandedJobIds] = useState<Set<string>>(() => new Set());
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [pendingJobs, setPendingJobs] = useState<Record<string, PendingDlqJob>>({});
@@ -27,6 +30,7 @@ export function IntegrationsView() {
   const authReady = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
   const integrationsQueryKey = ["workspace", workspaceId, "integrations"] as const;
   const dlqQueryKey = ["workspace", workspaceId, "dlq"] as const;
+  const observationsQueryKey = ["workspace", workspaceId, "observations"] as const;
   const integrations = useQuery({
     queryKey: integrationsQueryKey,
     queryFn: () => listIntegrations(workspaceId),
@@ -36,6 +40,11 @@ export function IntegrationsView() {
     queryKey: dlqQueryKey,
     queryFn: () => listDlqJobs(workspaceId),
     enabled: authReady,
+  });
+  const observations = useQuery({
+    queryKey: observationsQueryKey,
+    queryFn: () => listMemory(workspaceId, { source: "observation", sort: "created_at", direction: "desc", limit: 50 }),
+    enabled: authReady && activeTab === "observations",
   });
   const retryMutation = useMutation<void, Error, string, DlqMutationContext>({
     mutationFn: (jobId: string) => retryDlqJob(workspaceId, jobId),
@@ -122,6 +131,12 @@ export function IntegrationsView() {
     });
   }
 
+  const tabs: Array<{ id: ActiveTab; label: string }> = [
+    { id: "integrations", label: "Integration Health" },
+    { id: "observations", label: "Observations" },
+    { id: "dlq", label: `Dead Letter Queue${dlqCount > 0 ? ` (${dlqCount})` : ""}` },
+  ];
+
   return (
     <div className="mx-auto grid max-w-7xl gap-5">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -129,186 +144,324 @@ export function IntegrationsView() {
           <p className="text-sm font-medium text-accent-strong">Operations</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Integrations</h1>
         </div>
-        <Button type="button" variant="secondary" size="sm" onClick={() => void Promise.all([integrations.refetch(), dlq.refetch()])} disabled={!authReady}>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => void Promise.all([integrations.refetch(), dlq.refetch(), observations.refetch()])}
+          disabled={!authReady}
+        >
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
           Refresh
         </Button>
       </header>
 
-      {integrations.isError ? <InlineError title="Integrations unavailable" message={integrations.error.message} /> : null}
-      {dlq.isError ? <InlineError title="DLQ unavailable" message={dlq.error.message} /> : null}
+      <div className="flex border-b border-line" role="tablist" aria-label="Integrations sections">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "border-b-2 px-4 pb-2.5 pt-1.5 text-sm font-medium transition-colors",
+              activeTab === tab.id
+                ? "border-accent text-accent-strong"
+                : "border-transparent text-ink/55 hover:border-line hover:text-ink",
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Integration Health</CardTitle>
-          <PlugZap className="h-4 w-4 text-accent-strong" aria-hidden="true" />
-        </CardHeader>
-        <CardContent>
-          {integrations.isLoading ? <Skeleton className="h-56 w-full" /> : null}
-          {!integrations.isLoading && !integrations.isError && (integrations.data?.length ?? 0) === 0 ? (
-            <EmptyState title="No integrations configured" message="No integrations configured — add a GitHub webhook to get started." />
-          ) : null}
-          {!integrations.isLoading && integrations.data && integrations.data.length > 0 ? (
-            <div className="thin-scrollbar overflow-auto rounded-md border border-line">
-              <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-                <thead className="bg-soft text-xs uppercase text-ink/55">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">Source</th>
-                    <th className="px-3 py-2 font-medium">Status</th>
-                    <th className="px-3 py-2 font-medium">Last Event</th>
-                    <th className="px-3 py-2 font-medium">Events 24h</th>
-                    <th className="px-3 py-2 font-medium">Errors 24h</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {integrations.data.map((integration) => (
-                    <tr key={integration.source} className="border-t border-line">
-                      <td className="px-3 py-3">
-                        <Badge variant="muted" className="capitalize">{integration.source}</Badge>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className={cn("h-2.5 w-2.5 rounded-full", statusDotClass(integration.status))} aria-hidden="true" />
-                          <span className="capitalize text-ink/75">{integration.status}</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 text-ink/70">{formatDateTime(integration.last_event_at)}</td>
-                      <td className="px-3 py-3">{formatCount(integration.events_24h)}</td>
-                      <td className="px-3 py-3">{formatCount(integration.errors_24h)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card data-testid="dlq-panel">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <div className="flex items-center gap-2">
-            <CardTitle>Dead Letter Queue</CardTitle>
-            {dlqCount > 0 ? <Badge variant="rust">{formatCount(dlqCount)}</Badge> : null}
-          </div>
-          <AlertTriangle className="h-4 w-4 text-rust" aria-hidden="true" />
-        </CardHeader>
-        <CardContent className="grid gap-3">
-          {notice ? (
-            <div className="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700" role="status">
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-              <span>{notice}</span>
-            </div>
-          ) : null}
-          {dlq.isLoading ? <Skeleton className="h-48 w-full" /> : null}
-          {!dlq.isLoading && !dlq.isError && dlqCount === 0 ? (
-            <div className="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-              <span>All clear — no failed jobs</span>
-            </div>
-          ) : null}
-          {!dlq.isLoading && dlqJobs.length > 0 ? (
-            <div className="thin-scrollbar overflow-auto rounded-md border border-line">
-              <table className="w-full min-w-[820px] border-collapse text-left text-sm">
-                <thead className="bg-soft text-xs uppercase text-ink/55">
-                  <tr>
-                    <th className="w-10 px-3 py-2 font-medium" aria-label="Expand" />
-                    <th className="px-3 py-2 font-medium">Source</th>
-                    <th className="px-3 py-2 font-medium">Failed</th>
-                    <th className="px-3 py-2 font-medium">Retries</th>
-                    <th className="px-3 py-2 font-medium">Error Message</th>
-                    <th className="px-3 py-2 text-right font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dlqJobs.map((job) => {
-                    const expanded = expandedJobIds.has(job.id);
-                    const pendingAction = pendingJobs[job.id]?.action;
-                    const retrying = pendingAction === "retry";
-                    const discarding = pendingAction === "discard";
-                    const rowBusy = pendingAction !== undefined;
-                    const rowError = rowErrors[job.id];
-
-                    return (
-                      <Fragment key={job.id}>
-                        <tr className="border-t border-line align-top">
+      {activeTab === "integrations" ? (
+        <>
+          {integrations.isError ? <InlineError title="Integrations unavailable" message={integrations.error.message} /> : null}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <CardTitle>Integration Health</CardTitle>
+              <PlugZap className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+            </CardHeader>
+            <CardContent>
+              {integrations.isLoading ? <Skeleton className="h-56 w-full" /> : null}
+              {!integrations.isLoading && !integrations.isError && (integrations.data?.length ?? 0) === 0 ? (
+                <EmptyState title="No integrations configured" message="No integrations configured — add a GitHub webhook to get started." />
+              ) : null}
+              {!integrations.isLoading && integrations.data && integrations.data.length > 0 ? (
+                <div className="thin-scrollbar overflow-auto rounded-md border border-line">
+                  <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+                    <thead className="bg-soft text-xs uppercase text-ink/55">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Source</th>
+                        <th className="px-3 py-2 font-medium">Status</th>
+                        <th className="px-3 py-2 font-medium">Last Event</th>
+                        <th className="px-3 py-2 font-medium">Events 24h</th>
+                        <th className="px-3 py-2 font-medium">Errors 24h</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {integrations.data.map((integration) => (
+                        <tr key={integration.source} className="border-t border-line">
                           <td className="px-3 py-3">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => toggleExpandedJob(job.id)}
-                              aria-expanded={expanded}
-                              aria-label={expanded ? "Collapse raw payload" : "Expand raw payload"}
-                              title={expanded ? "Collapse payload" : "Expand payload"}
-                            >
-                              {expanded ? <ChevronDown className="h-4 w-4" aria-hidden="true" /> : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
-                            </Button>
+                            <Badge variant="muted" className="capitalize">{integration.source}</Badge>
                           </td>
                           <td className="px-3 py-3">
-                            <Badge variant={sourceBadgeVariant(job.source)} className="capitalize">{job.source}</Badge>
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-3 text-ink/70" title={formatDateTime(job.failed_at)}>{formatRelativeTime(job.failed_at)}</td>
-                          <td className="px-3 py-3">{formatCount(job.retry_count)}</td>
-                          <td className="max-w-md px-3 py-3">
-                            <span className="block truncate text-rust" title={job.error_message}>{previewText(job.error_message || "No error message recorded.", 120)}</span>
-                          </td>
-                          <td className="px-3 py-3">
-                            <div className="flex items-center justify-end gap-2">
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                size="icon"
-                                data-testid="dlq-retry-button"
-                                onClick={() => retryMutation.mutate(job.id)}
-                                disabled={rowBusy}
-                                aria-label="Retry failed job"
-                                title="Retry job"
-                              >
-                                {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RotateCcw className="h-4 w-4" aria-hidden="true" />}
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="text-ink/65 hover:bg-orange-50 hover:text-rust"
-                                onClick={() => discardMutation.mutate(job.id)}
-                                disabled={rowBusy}
-                                aria-label="Discard failed job"
-                                title="Discard job"
-                              >
-                                {discarding ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
-                              </Button>
+                            <div className="flex items-center gap-2">
+                              <span className={cn("h-2.5 w-2.5 rounded-full", statusDotClass(integration.status))} aria-hidden="true" />
+                              <span className="capitalize text-ink/75">{integration.status}</span>
                             </div>
                           </td>
+                          <td className="px-3 py-3 text-ink/70">{formatDateTime(integration.last_event_at)}</td>
+                          <td className="px-3 py-3">{formatCount(integration.events_24h)}</td>
+                          <td className="px-3 py-3">{formatCount(integration.errors_24h)}</td>
                         </tr>
-                        {expanded ? (
-                          <tr className="border-t border-line bg-soft/60">
-                            <td aria-hidden="true" />
-                            <td colSpan={5} className="px-3 py-3">
-                              <pre className="thin-scrollbar max-h-72 overflow-auto rounded-md border border-line bg-white p-3 text-xs text-ink">{formatPayload(job.payload)}</pre>
-                            </td>
-                          </tr>
-                        ) : null}
-                        {rowError ? (
-                          <tr className="border-t border-line">
-                            <td aria-hidden="true" />
-                            <td colSpan={5} className="px-3 py-3">
-                              <InlineError title="DLQ action failed" message={rowError} />
-                            </td>
-                          </tr>
-                        ) : null}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
+
+      {activeTab === "observations" ? (
+        <ObservationFeed
+          isLoading={observations.isLoading}
+          isError={observations.isError}
+          error={observations.error}
+          items={observations.data?.items ?? []}
+        />
+      ) : null}
+
+      {activeTab === "dlq" ? (
+        <>
+          {dlq.isError ? <InlineError title="DLQ unavailable" message={dlq.error.message} /> : null}
+          <Card data-testid="dlq-panel">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <div className="flex items-center gap-2">
+                <CardTitle>Dead Letter Queue</CardTitle>
+                {dlqCount > 0 ? <Badge variant="rust">{formatCount(dlqCount)}</Badge> : null}
+              </div>
+              <AlertTriangle className="h-4 w-4 text-rust" aria-hidden="true" />
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              {notice ? (
+                <div className="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700" role="status">
+                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                  <span>{notice}</span>
+                </div>
+              ) : null}
+              {dlq.isLoading ? <Skeleton className="h-48 w-full" /> : null}
+              {!dlq.isLoading && !dlq.isError && dlqCount === 0 ? (
+                <div className="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                  <span>All clear — no failed jobs</span>
+                </div>
+              ) : null}
+              {!dlq.isLoading && dlqJobs.length > 0 ? (
+                <div className="thin-scrollbar overflow-auto rounded-md border border-line">
+                  <table className="w-full min-w-[820px] border-collapse text-left text-sm">
+                    <thead className="bg-soft text-xs uppercase text-ink/55">
+                      <tr>
+                        <th className="w-10 px-3 py-2 font-medium" aria-label="Expand" />
+                        <th className="px-3 py-2 font-medium">Source</th>
+                        <th className="px-3 py-2 font-medium">Failed</th>
+                        <th className="px-3 py-2 font-medium">Retries</th>
+                        <th className="px-3 py-2 font-medium">Error Message</th>
+                        <th className="px-3 py-2 text-right font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dlqJobs.map((job) => {
+                        const expanded = expandedJobIds.has(job.id);
+                        const pendingAction = pendingJobs[job.id]?.action;
+                        const retrying = pendingAction === "retry";
+                        const discarding = pendingAction === "discard";
+                        const rowBusy = pendingAction !== undefined;
+                        const rowError = rowErrors[job.id];
+
+                        return (
+                          <Fragment key={job.id}>
+                            <tr className="border-t border-line align-top">
+                              <td className="px-3 py-3">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => toggleExpandedJob(job.id)}
+                                  aria-expanded={expanded}
+                                  aria-label={expanded ? "Collapse raw payload" : "Expand raw payload"}
+                                  title={expanded ? "Collapse payload" : "Expand payload"}
+                                >
+                                  {expanded ? <ChevronDown className="h-4 w-4" aria-hidden="true" /> : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
+                                </Button>
+                              </td>
+                              <td className="px-3 py-3">
+                                <Badge variant={sourceBadgeVariant(job.source)} className="capitalize">{job.source}</Badge>
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-3 text-ink/70" title={formatDateTime(job.failed_at)}>{formatRelativeTime(job.failed_at)}</td>
+                              <td className="px-3 py-3">{formatCount(job.retry_count)}</td>
+                              <td className="max-w-md px-3 py-3">
+                                <span className="block truncate text-rust" title={job.error_message}>{previewText(job.error_message || "No error message recorded.", 120)}</span>
+                              </td>
+                              <td className="px-3 py-3">
+                                <div className="flex items-center justify-end gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="icon"
+                                    data-testid="dlq-retry-button"
+                                    onClick={() => retryMutation.mutate(job.id)}
+                                    disabled={rowBusy}
+                                    aria-label="Retry failed job"
+                                    title="Retry job"
+                                  >
+                                    {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RotateCcw className="h-4 w-4" aria-hidden="true" />}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-ink/65 hover:bg-orange-50 hover:text-rust"
+                                    onClick={() => discardMutation.mutate(job.id)}
+                                    disabled={rowBusy}
+                                    aria-label="Discard failed job"
+                                    title="Discard job"
+                                  >
+                                    {discarding ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                            {expanded ? (
+                              <tr className="border-t border-line bg-soft/60">
+                                <td aria-hidden="true" />
+                                <td colSpan={5} className="px-3 py-3">
+                                  <pre className="thin-scrollbar max-h-72 overflow-auto rounded-md border border-line bg-white p-3 text-xs text-ink">{formatPayload(job.payload)}</pre>
+                                </td>
+                              </tr>
+                            ) : null}
+                            {rowError ? (
+                              <tr className="border-t border-line">
+                                <td aria-hidden="true" />
+                                <td colSpan={5} className="px-3 py-3">
+                                  <InlineError title="DLQ action failed" message={rowError} />
+                                </td>
+                              </tr>
+                            ) : null}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
     </div>
   );
+}
+
+type ObservationItem = {
+  id: string;
+  scope: Record<string, unknown> | null;
+  importance_score: number;
+  created_at: string;
+  content: string;
+};
+
+function ObservationFeed({
+  isLoading,
+  isError,
+  error,
+  items,
+}: {
+  isLoading: boolean;
+  isError: boolean;
+  error: Error | null;
+  items: ObservationItem[];
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardTitle>Agent Observations</CardTitle>
+        <Bot className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+      </CardHeader>
+      <CardContent>
+        {isError && error ? <InlineError title="Observations unavailable" message={error.message} /> : null}
+        {isLoading ? <Skeleton className="h-56 w-full" /> : null}
+        {!isLoading && !isError && items.length === 0 ? (
+          <EmptyState
+            title="No agent observations yet"
+            message="Use POST /v1/ingest/observation or the MCP memory_store tool to submit agent observations."
+          />
+        ) : null}
+        {!isLoading && items.length > 0 ? (
+          <div className="thin-scrollbar overflow-auto rounded-md border border-line">
+            <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+              <thead className="bg-soft text-xs uppercase text-ink/55">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Agent</th>
+                  <th className="px-3 py-2 font-medium">Content</th>
+                  <th className="px-3 py-2 font-medium">Importance</th>
+                  <th className="px-3 py-2 font-medium">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => {
+                  const agentId = scopeField(item.scope, "agent_id");
+                  return (
+                    <tr key={item.id} className="border-t border-line">
+                      <td className="whitespace-nowrap px-3 py-3">
+                        <Badge variant="blue" className="max-w-[10rem] truncate font-mono text-xs" title={agentId ?? "unknown"}>
+                          {agentId ?? "—"}
+                        </Badge>
+                      </td>
+                      <td className="max-w-sm px-3 py-3 text-ink/80" title={item.content}>
+                        {previewText(item.content, 120)}
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className={cn("text-xs font-medium tabular-nums", importanceColor(item.importance_score))}>
+                          {item.importance_score.toFixed(2)}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 text-ink/65" title={formatDateTime(item.created_at)}>
+                        {formatRelativeTime(item.created_at)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function scopeField(scope: Record<string, unknown> | null, field: string): string | null {
+  if (!scope || typeof scope !== "object") {
+    return null;
+  }
+  const value = scope[field];
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function importanceColor(score: number): string {
+  if (score >= 0.75) {
+    return "text-green-700";
+  }
+  if (score >= 0.5) {
+    return "text-amber-600";
+  }
+  return "text-ink/55";
 }
 
 function statusDotClass(status: string): string {

@@ -209,6 +209,7 @@ pub struct ListQuery {
     pub agent_id: Option<String>,
     pub user_id: Option<String>,
     pub repo: Option<String>,
+    pub source: Option<String>,
     pub as_of: Option<DateTime<Utc>>,
     pub sort: Option<SortField>,
     pub direction: Option<SortDirection>,

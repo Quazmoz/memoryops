@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: MemoryOps API
-  version: 0.17.0
+  version: 0.21.0
   description: Control plane API for AI-agent memory ingestion, lifecycle management, retrieval, and audit.
   contact:
     name: MemoryOps
@@ -13,6 +13,7 @@ security:
   - ApiKeyAuth: []
 tags:
   - name: Webhooks
+  - name: Observations
   - name: Memory
   - name: Retrieval
   - name: Workspaces
@@ -160,6 +161,42 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/ingest/observation:
+    post:
+      tags: [Observations]
+      operationId: ingestObservation
+      summary: Ingest an agent-authored observation
+      description: >
+        Accepts a structured observation from any first-party agent or automation.
+        Authenticated by workspace API key (X-API-Key). Idempotent per
+        (workspace_id, agent_id, content) using SHA-256. Enqueues to the processor
+        pipeline and writes an audit record. Returns 202 Accepted immediately.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObservationRequest'
+            example:
+              workspace_id: "018f1234-0000-7000-8000-000000000000"
+              content: "Deployment completed in 142 s. All health checks passed."
+              agent_id: "deploy-bot"
+              user_id: "quinn"
+              repo: "org/backend"
+              tags: ["deploy", "ci"]
+              importance: 0.75
+              source_ref: "run/8821"
+      responses:
+        '202':
+          description: Observation accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '429':
           $ref: '#/components/responses/RateLimited'
   /v1/memory:
@@ -937,6 +974,54 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    ObservationRequest:
+      type: object
+      required: [workspace_id, content, agent_id]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+          description: Workspace to ingest into
+        content:
+          type: string
+          minLength: 1
+          maxLength: 8000
+          description: Observation text
+        agent_id:
+          type: string
+          description: Identifier of the agent authoring this observation
+        user_id:
+          type: string
+          description: Optional user context
+        repo:
+          type: string
+          description: Optional repository context (e.g. "org/repo")
+        tags:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+          description: Optional tags to attach to the resulting memory
+        importance:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: Override importance score (0.0–1.0). Omit to use rule-table scoring.
+        source_ref:
+          type: string
+          description: Optional external reference (e.g. run id, URL)
+    ObservationAccepted:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Raw event id
+        status:
+          type: string
+          enum: [queued]
     WebhookAccepted:
       type: object
       required: [event_id]

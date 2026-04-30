@@ -46,6 +46,15 @@ fn router(state: AppState) -> Router {
     let ingestion_router = ingestion::ingestion_router().layer(
         axum_middleware::from_fn_with_state(state.clone(), middleware::rate_limit::rate_limit),
     );
+    let observation_router = ingestion::observation_router()
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::rate_limit::rate_limit,
+        ))
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::auth::require_api_key,
+        ));
     let retrieval_router = retrieval_router()
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
@@ -71,6 +80,7 @@ fn router(state: AppState) -> Router {
         .route("/health/system", get(system_health))
         .merge(handlers::bootstrap_router())
         .merge(ingestion_router)
+        .merge(observation_router)
         .merge(retrieval_router)
         .merge(protected_api_router)
         .with_state(state)

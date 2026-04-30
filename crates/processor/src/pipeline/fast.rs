@@ -7,6 +7,10 @@ use common::{
 use serde_json::Value;
 use uuid::Uuid;
 
+const OBSERVATION_DEFAULT_IMPORTANCE: f32 = 0.5;
+const OBSERVATION_HIGH_IMPORTANCE_THRESHOLD: usize = 500;
+const OBSERVATION_HIGH_IMPORTANCE_BONUS: f32 = 0.1;
+
 use crate::{
     extractor, scope,
     store::{self, NewMemoryUnit},
@@ -18,6 +22,7 @@ pub async fn run_fast_path(state: &AppState, event: &RawEvent) -> AppResult<Memo
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
     let memory_id = Uuid::now_v7();
     let token_count = count_tokens(&content)?;
+    let tags = observation_tags(event);
 
     let unit = NewMemoryUnit {
         id: memory_id,
@@ -30,14 +35,32 @@ pub async fn run_fast_path(state: &AppState, event: &RawEvent) -> AppResult<Memo
         source_events: vec![event.id],
         embedding_id: None,
         token_count: Some(token_count),
-        tags: Vec::new(),
+        tags,
     };
 
     store::insert_memory_unit(&state.db, &unit).await
 }
 
+fn observation_tags(event: &RawEvent) -> Vec<String> {
+    if event.source != Source::Observation {
+        return Vec::new();
+    }
+    event
+        .payload
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|tags| {
+            tags.iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) fn importance_score(state: &AppState, event: &RawEvent) -> f32 {
     match event.source {
+        Source::Observation => observation_importance_score(event),
         Source::Slack => slack_importance_score(event),
         Source::Jira => jira_importance_score(event),
         Source::Linear => linear_importance_score(event),
@@ -64,7 +87,41 @@ fn source_authority_weight(state: &AppState, source: Source) -> f32 {
         Source::Slack => authority.slack,
         Source::Jira => authority.jira,
         Source::Linear => authority.linear,
+        Source::Observation => 1.0,
     }
+}
+
+fn observation_importance_score(event: &RawEvent) -> f32 {
+    if let Some(importance) = event
+        .payload
+        .get("importance")
+        .and_then(Value::as_f64)
+        .map(|v| v as f32)
+        .filter(|v| (0.0..=1.0).contains(v))
+    {
+        return importance;
+    }
+
+    let content_len = event
+        .payload
+        .get("content")
+        .and_then(Value::as_str)
+        .map_or(0, str::len);
+    let tag_count = event
+        .payload
+        .get("tags")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+
+    let base = OBSERVATION_DEFAULT_IMPORTANCE;
+    let length_bonus = if content_len >= OBSERVATION_HIGH_IMPORTANCE_THRESHOLD {
+        OBSERVATION_HIGH_IMPORTANCE_BONUS
+    } else {
+        0.0
+    };
+    let tag_bonus = (tag_count as f32 * 0.02).min(0.1);
+
+    (base + length_bonus + tag_bonus).min(1.0)
 }
 
 fn event_type_base_importance(event_type: EventType) -> f32 {
@@ -74,6 +131,7 @@ fn event_type_base_importance(event_type: EventType) -> f32 {
         EventType::Push => 0.4,
         EventType::IssueComment => 0.5,
         EventType::Issue => 0.7,
+        EventType::AgentObservation => OBSERVATION_DEFAULT_IMPORTANCE,
         EventType::Message | EventType::Reaction => 0.3,
     }
 }
@@ -299,5 +357,50 @@ mod tests {
             occurred_at: Utc::now(),
             ingested_at: Utc::now(),
         }
+    }
+
+    #[test]
+    fn observation_importance_uses_provided_value_when_valid() {
+        let event = source_event(
+            Source::Observation,
+            EventType::AgentObservation,
+            json!({ "content": "hello", "agent_id": "agent-1", "importance": 0.9, "tags": [] }),
+        );
+        assert_eq!(observation_importance_score(&event), 0.9_f32);
+    }
+
+    #[test]
+    fn observation_importance_falls_back_to_rule_table_when_absent() {
+        let short_content = "hi";
+        let event = source_event(
+            Source::Observation,
+            EventType::AgentObservation,
+            json!({ "content": short_content, "agent_id": "agent-1", "tags": [] }),
+        );
+        let score = observation_importance_score(&event);
+        assert!((score - OBSERVATION_DEFAULT_IMPORTANCE).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn observation_importance_boosts_long_content() {
+        let long_content = "x".repeat(OBSERVATION_HIGH_IMPORTANCE_THRESHOLD);
+        let event = source_event(
+            Source::Observation,
+            EventType::AgentObservation,
+            json!({ "content": long_content, "agent_id": "agent-1", "tags": [] }),
+        );
+        let score = observation_importance_score(&event);
+        assert!(score > OBSERVATION_DEFAULT_IMPORTANCE);
+    }
+
+    #[test]
+    fn observation_importance_ignores_out_of_range_provided_value() {
+        let event = source_event(
+            Source::Observation,
+            EventType::AgentObservation,
+            json!({ "content": "hello", "agent_id": "agent-1", "importance": 1.5, "tags": [] }),
+        );
+        let score = observation_importance_score(&event);
+        assert!((score - OBSERVATION_DEFAULT_IMPORTANCE).abs() < f32::EPSILON);
     }
 }

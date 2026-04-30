@@ -23,6 +23,7 @@ pub enum Source {
     Slack,
     Jira,
     Linear,
+    Observation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
@@ -36,4 +37,5 @@ pub enum EventType {
     Issue,
     Message,
     Reaction,
+    AgentObservation,
 }

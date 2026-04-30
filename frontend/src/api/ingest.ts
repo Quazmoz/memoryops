@@ -1,7 +1,7 @@
 import { apiUrl, extractDetail, parseResponse, requestHeaders } from "./client";
 import type { IngestResult, JsonValue } from "./types";
 
-export type WebhookSource = "github" | "slack" | "linear" | "jira";
+export type WebhookSource = "github" | "slack" | "linear" | "jira" | "observation";
 
 export type GitHubWebhookKind =
   | "pull_request_opened"
@@ -21,7 +21,9 @@ export type WebhookFixtureKind =
   | "linear_comment_created"
   | "jira_issue_created"
   | "jira_issue_updated"
-  | "jira_comment_created";
+  | "jira_comment_created"
+  | "observation_agent"
+  | "observation_deploy";
 
 type GitHubEventHeader = "pull_request" | "push" | "pull_request_review" | "issues" | "issue_comment";
 
@@ -39,6 +41,7 @@ export const webhookSources: Array<{ source: WebhookSource; label: string }> = [
   { source: "slack", label: "Slack" },
   { source: "linear", label: "Linear" },
   { source: "jira", label: "Jira" },
+  { source: "observation", label: "Observation" },
 ];
 
 const now = "2026-04-27T15:20:30Z";
@@ -497,6 +500,31 @@ export const webhookFixtures: WebhookFixture[] = [
       },
     },
   },
+  {
+    kind: "observation_agent",
+    source: "observation",
+    label: "Agent observation",
+    actor: "deploy-agent",
+    payload: {
+      content: "The staging deployment for v0.21.0 completed in 38 seconds. All health checks passed and latency is within the P95 threshold.",
+      agent_id: "deploy-agent",
+      user_id: "alice",
+      repo: "Quazmoz/memoryops",
+      tags: ["deploy", "staging", "v0.21.0"],
+      importance: 0.8,
+      source_ref: "pipeline-run-4182",
+    },
+  },
+  {
+    kind: "observation_deploy",
+    source: "observation",
+    label: "Minimal observation",
+    actor: "ci-agent",
+    payload: {
+      content: "Test suite passed — 312 tests, 0 failures, 4 skipped.",
+      agent_id: "ci-agent",
+    },
+  },
 ];
 
 export function fixturesForSource(source: WebhookSource): WebhookFixture[] {
@@ -581,6 +609,9 @@ async function applySourceHeaders(headers: Headers, fixture: WebhookFixture, pay
       headers.set("x-hub-signature", `sha256=${dummyHexSignature()}`);
       headers.set("x-atlassian-webhook-identifier", crypto.randomUUID());
       return "/v1/ingest/jira";
+    }
+    case "observation": {
+      return "/v1/ingest/observation";
     }
   }
 }

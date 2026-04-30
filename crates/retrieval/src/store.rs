@@ -209,6 +209,10 @@ pub async fn list_memory_units(
         builder.push(" AND importance_score >= ");
         builder.push_bind(min_importance);
     }
+    if let Some(source) = &params.source {
+        builder.push(" AND scope->>'source' = ");
+        builder.push_bind(source.as_str());
+    }
     push_scope_filter(
         &mut builder,
         &scope_from_list_query(params),
@@ -267,6 +271,10 @@ async fn list_memory_units_at(
     if let Some(min_importance) = params.min_importance {
         builder.push(" AND COALESCE(mv.importance_score, m.importance_score) >= ");
         builder.push_bind(min_importance);
+    }
+    if let Some(source) = &params.source {
+        builder.push(" AND m.scope->>'source' = ");
+        builder.push_bind(source.as_str());
     }
     push_scope_filter(
         &mut builder,

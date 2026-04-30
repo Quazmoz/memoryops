@@ -29,6 +29,7 @@ export type MemoryListParams = {
   agentId?: string;
   userId?: string;
   repo?: string;
+  source?: string;
   sort?: SortField;
   direction?: SortDirection;
   asOf?: string;
@@ -90,6 +91,7 @@ export function listMemory(workspaceId: string, params: MemoryListParams): Promi
     agent_id: optionalText(params.agentId),
     user_id: optionalText(params.userId),
     repo: optionalText(params.repo),
+    source: optionalText(params.source),
     sort: params.sort,
     direction: params.direction,
     as_of: params.asOf,
