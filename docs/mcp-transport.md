@@ -7,6 +7,7 @@ MemoryOps MCP supports multiple transports.
 | Client | Config format | Transport | Guide |
 |---|---|---|---|
 | Open WebUI | Tool Server URL + Bearer token | `http` | [docs/integrations/openwebui.md](integrations/openwebui.md) |
+| Claude Code | `.mcp.json` in project root | `http` or `stdio` | [docs/integrations/claude-code.md](integrations/claude-code.md) |
 | GitHub Copilot (VS Code) | `.vscode/mcp.json` | `http` or `stdio` | [docs/integrations/vscode.md](integrations/vscode.md) |
 | Continue.dev | `~/.continue/config.json` | `http` | [docs/integrations/vscode.md](integrations/vscode.md) |
 | Claude Desktop | `claude_desktop_config.json` | `stdio` | (see below) |
@@ -22,14 +23,35 @@ MemoryOps MCP supports multiple transports.
 
 ## Tools Reference
 
+All 11 tools are available over any transport. `workspace_id` is always injected from 
+the authenticated MCP session and is never a tool parameter.
+
 | Tool | Purpose |
 |---|---|
-| `memory_observe` | Ingest a raw workspace observation for asynchronous consolidation into memory units. |
-| `memory_list_observations` | List recent raw observations before processor consolidation. |
+| `memory_retrieve` | Token-budget-aware hybrid retrieval. Returns scored, token-packed memories (default budget: 4096 tokens). |
+| `memory_search` | Filtered search by tags or `memory_type` without token-budget packing. |
+| `memory_store` | Directly persist an episodic memory. Immediate — bypasses the observation queue. |
+| `memory_observe` | Ingest a raw observation for async classification by the processor. |
+| `memory_update` | Update `content`, `tags`, or `importance_score` on an existing memory unit. |
+| `memory_delete` | Soft-delete a memory and remove its Qdrant vector point. |
+| `memory_feedback` | Submit a relevance rating (`-1`/`0`/`1`) on a retrieved memory to bias future scoring. |
+| `memory_timeline` | Retrieve memories as they existed at a specific past timestamp (`as_of`). |
+| `memory_list_observations` | List raw observations queued but not yet consolidated by the processor. |
 | `memory_list_contradictions` | List unresolved contradictions detected between memory units. |
-| `memory_resolve_contradiction` | Resolve a contradiction by selecting keep/discard behavior. |
+| `memory_resolve_contradiction` | Resolve a contradiction: `keep_a`, `keep_b`, `keep_both`, or `discard_both`. |
 
 ## Configuration
+
+> **Warning:** The `mcp` service in `docker-compose.yml` defaults to
+> `MCP_TRANSPORT: "sse"`, which is the deprecated transport. Always override
+> it when starting the MCP container:
+>
+> ```bash
+> docker compose --profile mcp run --rm --service-ports \
+>   -e MCP_TRANSPORT=http \
+>   -e MCP_PORT=3003 \
+>   mcp
+> ```
 
 Set transport with:
 
