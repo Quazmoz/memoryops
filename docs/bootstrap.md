@@ -1,25 +1,14 @@
 # Getting Started: First Workspace Bootstrap
 
-Use this flow to create your first workspace and obtain an API key.
+Use this flow to create your first workspace and obtain the initial API key in one call.
 
-## Create Workspace (No Auth)
+## Create Workspace and API Key
 
-Endpoint:
-
-- `POST /v1/workspaces`
-
-This bootstrap endpoint does not require authentication. It creates a workspace and provisions one initial API key in the same response.
-
-Response shape:
-
-- `workspace_id`: UUID for the newly created workspace
-- `api_key`: plaintext API key (shown exactly once)
-
-Example:
+`POST /v1/workspaces` does not require authentication. It creates the workspace and provisions one initial API key in the same response.
 
 ```bash
-curl -sS -X POST http://localhost:3000/v1/workspaces \
-  -H "Content-Type: application/json" \
+curl -sS -X POST http://localhost:8080/v1/workspaces \
+  -H 'Content-Type: application/json' \
   -d '{"name":"my-first-workspace"}'
 ```
 
@@ -32,12 +21,29 @@ Example response:
 }
 ```
 
+The response fields are:
+
+| Field | Description |
+|---|---|
+| `workspace_id` | UUID for the newly created workspace. |
+| `api_key` | Plaintext API key shown exactly once. |
+
+## Use the Key
+
+Send the returned key as either `Authorization: Bearer <api_key>` or `X-API-Key: <api_key>`:
+
+```bash
+curl -sS http://localhost:8080/v1/memory?workspace_id=0196f6c1-7e42-7f4f-8a6b-2945ea7f1e9a \
+  -H 'Authorization: Bearer mops_0196f6c1_xxxxxxxxxxxxxxxxxxxxxxxxx'
+```
+
 ## Important
 
-The `api_key` value is only returned in plaintext once at creation time. Store it securely.
+The `api_key` value is only returned in plaintext once at creation time. Store it securely before closing the terminal.
 
-## What To Do Next
+## What's Next
 
-1. Use the returned key as `Authorization: Bearer <api_key>` or `X-API-Key` for API calls.
-2. Create additional keys as needed via `POST /v1/workspaces/{id}/keys`.
-3. Configure workspace settings (for example promotion and lifecycle options) via workspace config endpoints.
+- Connect Open WebUI with [docs/integrations/openwebui.md](integrations/openwebui.md).
+- Connect VS Code, GitHub Copilot, or Continue.dev with [docs/integrations/vscode.md](integrations/vscode.md).
+- Create additional keys as needed with `POST /v1/workspaces/{id}/keys`.
+- Configure workspace promotion, lifecycle, and memory-sharing settings through the workspace endpoints.

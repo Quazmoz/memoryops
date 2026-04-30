@@ -147,7 +147,10 @@ async fn submit_feedback_batch(
     Ok(())
 }
 
-async fn load_workspace_config(state: &AppState, workspace_id: Uuid) -> AppResult<WorkspaceConfig> {
+pub(super) async fn load_workspace_config(
+    state: &AppState,
+    workspace_id: Uuid,
+) -> AppResult<WorkspaceConfig> {
     let value = sqlx::query_scalar::<_, serde_json::Value>(
         "SELECT config FROM workspaces WHERE id = $1 AND deleted_at IS NULL",
     )

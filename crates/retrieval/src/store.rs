@@ -30,6 +30,19 @@ pub struct FeedbackWrite<'a> {
     pub comment: Option<&'a str>,
 }
 
+pub struct MemoryUnitPatch<'a> {
+    pub content: Option<&'a str>,
+    pub tags: Option<&'a [String]>,
+    pub importance_score: Option<f32>,
+    pub edited_by: &'a str,
+}
+
+impl MemoryUnitPatch<'_> {
+    pub fn is_empty(&self) -> bool {
+        self.content.is_none() && self.tags.is_none() && self.importance_score.is_none()
+    }
+}
+
 #[derive(Debug, sqlx::FromRow)]
 struct FeedbackStats {
     total: i64,
@@ -365,6 +378,98 @@ pub async fn update_memory_unit(
         .fetch_optional(db)
         .await
         .map_err(AppError::Database)
+}
+
+pub async fn update_memory_unit_patch(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+    patch: &MemoryUnitPatch<'_>,
+) -> AppResult<MemoryUnit> {
+    if let Some(score) = patch.importance_score {
+        if !(0.0..=1.0).contains(&score) {
+            return Err(AppError::Validation(
+                "importance_score must be between 0.0 and 1.0".to_owned(),
+            ));
+        }
+    }
+    if patch
+        .content
+        .is_some_and(|content| content.trim().is_empty())
+    {
+        return Err(AppError::Validation("content is required".to_owned()));
+    }
+    if patch.is_empty() {
+        return get_memory_unit_by_id(db, id, workspace_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound {
+                resource: format!("memory:{id}"),
+            });
+    }
+
+    let mut transaction = db.begin().await.map_err(AppError::Database)?;
+    let before = select_memory_for_update(&mut transaction, id, workspace_id).await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO memory_versions (
+            id, memory_id, workspace_id, version, content, importance_score, tags, edited_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(before.id)
+    .bind(workspace_id)
+    .bind(before.version)
+    .bind(&before.content)
+    .bind(before.importance_score)
+    .bind(&before.tags)
+    .bind(patch.edited_by)
+    .execute(&mut *transaction)
+    .await
+    .map_err(AppError::Database)?;
+
+    let mut builder = QueryBuilder::<Postgres>::new("UPDATE memory_units SET ");
+    let mut wrote_assignment = false;
+    if let Some(content) = patch.content {
+        push_assignment_separator(&mut builder, &mut wrote_assignment);
+        builder.push("content = ");
+        builder.push_bind(content);
+        builder.push(", embedding_id = NULL, token_count = NULL");
+    }
+    if let Some(tags) = patch.tags {
+        push_assignment_separator(&mut builder, &mut wrote_assignment);
+        builder.push("tags = ");
+        builder.push_bind(tags.to_vec());
+    }
+    if let Some(importance_score) = patch.importance_score {
+        push_assignment_separator(&mut builder, &mut wrote_assignment);
+        builder.push("importance_score = ");
+        builder.push_bind(importance_score);
+        builder.push(", importance_overridden = true");
+    }
+    push_assignment_separator(&mut builder, &mut wrote_assignment);
+    builder.push("version = version + 1, updated_at = now()");
+
+    builder.push(" WHERE id = ");
+    builder.push_bind(id);
+    builder.push(" AND workspace_id = ");
+    builder.push_bind(workspace_id);
+    builder.push(" AND deleted_at IS NULL RETURNING ");
+    builder.push(MEMORY_COLUMNS);
+
+    let updated = builder
+        .build_query_as::<MemoryUnit>()
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(AppError::Database)?
+        .ok_or_else(|| AppError::NotFound {
+            resource: format!("memory:{id}"),
+        })?;
+
+    transaction.commit().await.map_err(AppError::Database)?;
+    Ok(updated)
 }
 
 pub async fn soft_delete_memory_unit(

@@ -169,7 +169,9 @@ fn build_embedding_provider(config: &AppConfig) -> Arc<dyn EmbeddingProvider> {
         }
         EmbeddingProviderKind::Openai => {
             if config.embedding.openai.is_none() {
-                tracing::warn!("provider-specific config block is None; falling back to config.llm.model");
+                tracing::warn!(
+                    "provider-specific config block is None; falling back to config.llm.model"
+                );
             }
             let model = config
                 .embedding
@@ -194,7 +196,9 @@ fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
         )),
         LlmProviderKind::Openai => {
             if config.llm.openai.is_none() {
-                tracing::warn!("provider-specific config block is None; falling back to config.llm.model");
+                tracing::warn!(
+                    "provider-specific config block is None; falling back to config.llm.model"
+                );
             }
             let model = config
                 .llm
@@ -209,7 +213,9 @@ fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
         }
         LlmProviderKind::Anthropic => {
             if config.llm.anthropic.is_none() {
-                tracing::warn!("provider-specific config block is None; falling back to config.llm.model");
+                tracing::warn!(
+                    "provider-specific config block is None; falling back to config.llm.model"
+                );
             }
             let model = config
                 .llm
@@ -859,7 +865,7 @@ mod tests {
         };
         assert_eq!(response.status(), StatusCode::OK);
         let body = response_json(response).await;
-        let workspace_id = match body.get("workspace_id").and_then(Value::as_str) {
+        let _workspace_id = match body.get("workspace_id").and_then(Value::as_str) {
             Some(raw) => match Uuid::parse_str(raw) {
                 Ok(workspace_id) => workspace_id,
                 Err(error) => panic!("workspace_id should be a UUID: {error}"),
@@ -1652,7 +1658,7 @@ mod tests {
         let window_start = now - (now % 60);
         let mut connection = redis.clone();
         for window in [window_start] {
-            let key = format!("rate:{workspace_id}:memory:{window}");
+            let key = format!("rate:workspace:{workspace_id}:memory:{window}");
             let result = redis::cmd("SET")
                 .arg(key)
                 .arg(crate::middleware::rate_limit::MEMORY_RPM)

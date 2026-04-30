@@ -42,6 +42,30 @@ pub trait McpBackend: Send + Sync + 'static {
         context: &AuthContext,
         input: tools::store::StoreInput,
     ) -> Result<tools::store::StoreOutput, JsonRpcError>;
+
+    async fn memory_delete(
+        &self,
+        context: &AuthContext,
+        input: tools::delete::DeleteInput,
+    ) -> Result<tools::delete::DeleteOutput, JsonRpcError>;
+
+    async fn memory_update(
+        &self,
+        context: &AuthContext,
+        input: tools::update::UpdateInput,
+    ) -> Result<tools::MemoryToolResult, JsonRpcError>;
+
+    async fn memory_feedback(
+        &self,
+        context: &AuthContext,
+        input: tools::feedback::FeedbackInput,
+    ) -> Result<tools::feedback::FeedbackOutput, JsonRpcError>;
+
+    async fn memory_timeline(
+        &self,
+        context: &AuthContext,
+        input: tools::timeline::TimelineInput,
+    ) -> Result<tools::timeline::TimelineOutput, JsonRpcError>;
 }
 
 #[derive(Clone)]
@@ -92,6 +116,46 @@ impl McpBackend for RuntimeBackend {
         input: tools::store::StoreInput,
     ) -> Result<tools::store::StoreOutput, JsonRpcError> {
         tools::store::run(&self.state, context.workspace_id, input)
+            .await
+            .map_err(app_error_to_rpc)
+    }
+
+    async fn memory_delete(
+        &self,
+        context: &AuthContext,
+        input: tools::delete::DeleteInput,
+    ) -> Result<tools::delete::DeleteOutput, JsonRpcError> {
+        tools::delete::run(&self.state, context.workspace_id, input)
+            .await
+            .map_err(app_error_to_rpc)
+    }
+
+    async fn memory_update(
+        &self,
+        context: &AuthContext,
+        input: tools::update::UpdateInput,
+    ) -> Result<tools::MemoryToolResult, JsonRpcError> {
+        tools::update::run(&self.state, context.workspace_id, input)
+            .await
+            .map_err(app_error_to_rpc)
+    }
+
+    async fn memory_feedback(
+        &self,
+        context: &AuthContext,
+        input: tools::feedback::FeedbackInput,
+    ) -> Result<tools::feedback::FeedbackOutput, JsonRpcError> {
+        tools::feedback::run(&self.state, context.workspace_id, input)
+            .await
+            .map_err(app_error_to_rpc)
+    }
+
+    async fn memory_timeline(
+        &self,
+        context: &AuthContext,
+        input: tools::timeline::TimelineInput,
+    ) -> Result<tools::timeline::TimelineOutput, JsonRpcError> {
+        tools::timeline::run(&self.state, context.workspace_id, input)
             .await
             .map_err(app_error_to_rpc)
     }
@@ -244,28 +308,52 @@ impl<B: McpBackend> McpServer<B> {
             .await
             .ok_or_else(JsonRpcError::unauthorized)?;
 
-        let value = match call.name.as_str() {
+        let tool_value = match call.name.as_str() {
             "memory_retrieve" => {
                 let input =
                     serde_json::from_value::<tools::retrieve::RetrieveInput>(call.arguments)
                         .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
-                serde_json::to_value(self.backend.memory_retrieve(&context, input).await?)
+                serialize_tool_value(self.backend.memory_retrieve(&context, input).await?)
             }
             "memory_search" => {
                 let input = serde_json::from_value::<tools::search::SearchInput>(call.arguments)
                     .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
-                serde_json::to_value(self.backend.memory_search(&context, input).await?)
+                serialize_tool_value(self.backend.memory_search(&context, input).await?)
             }
             "memory_store" => {
                 let input = serde_json::from_value::<tools::store::StoreInput>(call.arguments)
                     .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
-                serde_json::to_value(self.backend.memory_store(&context, input).await?)
+                serialize_tool_value(self.backend.memory_store(&context, input).await?)
+            }
+            "memory_delete" => {
+                let input = serde_json::from_value::<tools::delete::DeleteInput>(call.arguments)
+                    .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(self.backend.memory_delete(&context, input).await?)
+            }
+            "memory_update" => {
+                let input = serde_json::from_value::<tools::update::UpdateInput>(call.arguments)
+                    .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(self.backend.memory_update(&context, input).await?)
+            }
+            "memory_feedback" => {
+                let input =
+                    serde_json::from_value::<tools::feedback::FeedbackInput>(call.arguments)
+                        .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(self.backend.memory_feedback(&context, input).await?)
+            }
+            "memory_timeline" => {
+                let input =
+                    serde_json::from_value::<tools::timeline::TimelineInput>(call.arguments)
+                        .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(self.backend.memory_timeline(&context, input).await?)
             }
             _ => return Err(JsonRpcError::new(INVALID_PARAMS, "unknown tool name")),
-        }
-        .map_err(|error| JsonRpcError::new(INTERNAL_ERROR, error.to_string()))?;
+        };
 
-        Ok(tool_result(value))
+        match tool_value {
+            Ok(value) => Ok(tool_result(value)),
+            Err(error) => Ok(tool_error_result(error)),
+        }
     }
 }
 
@@ -334,6 +422,32 @@ fn tool_result(value: Value) -> Value {
     })
 }
 
+fn tool_error_result(error: JsonRpcError) -> Value {
+    let value = json!({
+        "error": {
+            "code": error.code,
+            "message": error.message,
+            "data": error.data
+        }
+    });
+
+    json!({
+        "content": [
+            {
+                "type": "text",
+                "text": value.to_string()
+            }
+        ],
+        "structuredContent": value,
+        "isError": true
+    })
+}
+
+fn serialize_tool_value<T: Serialize>(value: T) -> Result<Value, JsonRpcError> {
+    serde_json::to_value(value)
+        .map_err(|error| JsonRpcError::new(INTERNAL_ERROR, error.to_string()))
+}
+
 fn auth_error_to_rpc(error: AppError) -> JsonRpcError {
     match error {
         AppError::Unauthorized => JsonRpcError::unauthorized(),
@@ -347,7 +461,20 @@ fn auth_error_to_rpc(error: AppError) -> JsonRpcError {
 fn app_error_to_rpc(error: AppError) -> JsonRpcError {
     match error {
         AppError::Unauthorized => JsonRpcError::unauthorized(),
+        AppError::NotFound { resource } => {
+            JsonRpcError::new(INVALID_PARAMS, format!("not found: {resource}"))
+        }
         AppError::Validation(message) => JsonRpcError::new(INVALID_PARAMS, message),
+        AppError::Unprocessable(message) => JsonRpcError::new(INVALID_PARAMS, message),
+        AppError::Conflict(message) => {
+            JsonRpcError::new(INVALID_PARAMS, format!("conflict: {message}"))
+        }
+        AppError::Forbidden => JsonRpcError::new(UNAUTHORIZED, "Forbidden"),
+        AppError::RateLimited { retry_after_secs } => JsonRpcError {
+            code: INTERNAL_ERROR,
+            message: "rate limited".to_owned(),
+            data: Some(json!({ "retry_after_secs": retry_after_secs })),
+        },
         other => {
             tracing::error!(error = ?other, "MCP tool failed");
             JsonRpcError::new(INTERNAL_ERROR, "Internal error")
@@ -357,6 +484,8 @@ fn app_error_to_rpc(error: AppError) -> JsonRpcError {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashMap, sync::Mutex};
+
     use chrono::Utc;
     use serde_json::json;
     use uuid::Uuid;
@@ -366,6 +495,7 @@ mod tests {
     #[derive(Default)]
     struct MockBackend {
         store_calls: std::sync::atomic::AtomicUsize,
+        memories: Mutex<HashMap<Uuid, tools::MemoryToolResult>>,
     }
 
     #[async_trait]
@@ -387,8 +517,23 @@ mod tests {
             _context: &AuthContext,
             _input: tools::retrieve::RetrieveInput,
         ) -> Result<tools::retrieve::RetrieveOutput, JsonRpcError> {
+            let stored = self
+                .memories
+                .lock()
+                .map_err(|error| JsonRpcError::new(INTERNAL_ERROR, error.to_string()))?
+                .values()
+                .cloned()
+                .collect::<Vec<_>>();
+            let memories = if stored.is_empty()
+                && self.store_calls.load(std::sync::atomic::Ordering::SeqCst) == 0
+            {
+                vec![memory_result(0.91)]
+            } else {
+                stored
+            };
+
             Ok(tools::retrieve::RetrieveOutput {
-                memories: vec![memory_result(0.91)],
+                memories,
                 skills: vec![tools::SkillToolResult {
                     name: "summarize_pr".to_owned(),
                     description: "Summarize pull requests".to_owned(),
@@ -411,13 +556,99 @@ mod tests {
         async fn memory_store(
             &self,
             _context: &AuthContext,
-            _input: tools::store::StoreInput,
+            input: tools::store::StoreInput,
         ) -> Result<tools::store::StoreOutput, JsonRpcError> {
             self.store_calls
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let id = Uuid::from_u128(11);
+            self.memories
+                .lock()
+                .map_err(|error| JsonRpcError::new(INTERNAL_ERROR, error.to_string()))?
+                .insert(
+                    id,
+                    tools::MemoryToolResult {
+                        id,
+                        content: input.content,
+                        memory_type: "episodic".to_owned(),
+                        tags: input.tags,
+                        score: 1.0,
+                        importance_score: input.importance,
+                        created_at: Utc::now(),
+                        source: "mcp".to_owned(),
+                    },
+                );
             Ok(tools::store::StoreOutput {
-                id: Uuid::from_u128(11),
+                id,
                 created_at: Utc::now(),
+            })
+        }
+
+        async fn memory_delete(
+            &self,
+            _context: &AuthContext,
+            input: tools::delete::DeleteInput,
+        ) -> Result<tools::delete::DeleteOutput, JsonRpcError> {
+            let removed = self
+                .memories
+                .lock()
+                .map_err(|error| JsonRpcError::new(INTERNAL_ERROR, error.to_string()))?
+                .remove(&input.memory_id);
+            if removed.is_none() {
+                return Err(JsonRpcError::new(
+                    INVALID_PARAMS,
+                    format!("not found: memory:{}", input.memory_id),
+                ));
+            }
+
+            Ok(tools::delete::DeleteOutput {
+                deleted: true,
+                memory_id: input.memory_id,
+            })
+        }
+
+        async fn memory_update(
+            &self,
+            _context: &AuthContext,
+            input: tools::update::UpdateInput,
+        ) -> Result<tools::MemoryToolResult, JsonRpcError> {
+            let mut memories = self
+                .memories
+                .lock()
+                .map_err(|error| JsonRpcError::new(INTERNAL_ERROR, error.to_string()))?;
+            let memory = memories
+                .get_mut(&input.memory_id)
+                .ok_or_else(|| JsonRpcError::new(INVALID_PARAMS, "memory not found"))?;
+            if let Some(content) = input.content {
+                memory.content = content;
+            }
+            if let Some(tags) = input.tags {
+                memory.tags = tags;
+            }
+            if let Some(score) = input.importance_score {
+                memory.importance_score = score;
+            }
+            Ok(memory.clone())
+        }
+
+        async fn memory_feedback(
+            &self,
+            _context: &AuthContext,
+            input: tools::feedback::FeedbackInput,
+        ) -> Result<tools::feedback::FeedbackOutput, JsonRpcError> {
+            Ok(tools::feedback::FeedbackOutput {
+                memory_id: input.memory_id,
+                new_relevance_score: 0.6,
+            })
+        }
+
+        async fn memory_timeline(
+            &self,
+            _context: &AuthContext,
+            input: tools::timeline::TimelineInput,
+        ) -> Result<tools::timeline::TimelineOutput, JsonRpcError> {
+            Ok(tools::timeline::TimelineOutput {
+                as_of: input.as_of,
+                memories: vec![memory_result(0.88)],
             })
         }
     }
@@ -454,7 +685,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tools_list_contains_exactly_three_tools() {
+    async fn tools_list_contains_all_memory_tools() {
         let server = McpServer::new(MockBackend::default());
         let response = match server
             .handle_message(json!({
@@ -482,7 +713,15 @@ mod tests {
 
         assert_eq!(
             names,
-            vec!["memory_retrieve", "memory_search", "memory_store"]
+            vec![
+                "memory_delete",
+                "memory_feedback",
+                "memory_retrieve",
+                "memory_search",
+                "memory_store",
+                "memory_timeline",
+                "memory_update"
+            ]
         );
     }
 
@@ -557,6 +796,41 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn memory_delete_removes_stored_memory_from_retrieve() {
+        let server = initialized_server().await;
+        let store_response = call_tool(
+            &server,
+            "memory_store",
+            json!({ "content": "delete me after this test", "tags": ["delete-test"] }),
+        )
+        .await;
+        let memory_id = structured_content(&store_response)
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok())
+            .unwrap_or_else(|| panic!("memory_store should return a memory id"));
+
+        let delete_response =
+            call_tool(&server, "memory_delete", json!({ "memory_id": memory_id })).await;
+        let deleted = structured_content(&delete_response);
+        assert_eq!(deleted.get("deleted"), Some(&json!(true)));
+        assert_eq!(deleted.get("memory_id"), Some(&json!(memory_id)));
+
+        let retrieve_response = call_tool(
+            &server,
+            "memory_retrieve",
+            json!({ "query": "delete me after this test" }),
+        )
+        .await;
+        let memories = structured_content(&retrieve_response)
+            .get("memories")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("memory_retrieve should return memories array"));
+
+        assert!(memories.is_empty());
     }
 
     #[tokio::test]

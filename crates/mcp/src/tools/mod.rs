@@ -1,8 +1,13 @@
+pub mod delete;
+pub mod feedback;
 pub mod retrieve;
 pub mod search;
 pub mod store;
+pub mod timeline;
+pub mod update;
 
 use chrono::{DateTime, Utc};
+use common::models::MemoryUnit;
 use retrieval::MemoryResult;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -51,13 +56,35 @@ impl MemoryToolResult {
             source: source_from_scope(&result.memory.scope),
         }
     }
+
+    pub fn from_memory_unit(unit: MemoryUnit, score: f32) -> Self {
+        let source = match serde_json::to_value(&unit.scope) {
+            Ok(scope) => source_from_scope(&scope),
+            Err(_) => "memoryops".to_owned(),
+        };
+
+        Self {
+            id: unit.id,
+            content: unit.content,
+            memory_type: retrieval::dto::memory_type_as_str(unit.memory_type).to_owned(),
+            tags: unit.tags,
+            score,
+            importance_score: unit.importance_score,
+            created_at: unit.created_at,
+            source,
+        }
+    }
 }
 
 pub fn definitions() -> Vec<ToolDefinition> {
     vec![
+        delete::definition(),
+        feedback::definition(),
         retrieve::definition(),
         search::definition(),
         store::definition(),
+        timeline::definition(),
+        update::definition(),
     ]
 }
 

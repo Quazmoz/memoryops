@@ -91,7 +91,7 @@ docker compose up -d
 cp .env.example .env
 # Edit .env — set DATABASE_URL, REDIS_URL, QDRANT_URL at minimum
 
-# 4. Run database migrations (21 migrations, 0001–0021)
+# 4. Run database migrations
 sqlx migrate run
 
 # 5. Build and run the API
@@ -116,6 +116,16 @@ curl http://localhost:8080/health/ready
 ```
 
 See [docs/local-development.md](docs/local-development.md) for a full step-by-step local setup guide including Ollama, test stack, and port reference.
+
+---
+
+## Connecting AI Clients
+
+MemoryOps exposes MCP tools for AI clients that can retrieve, store, update, delete, rate, and time-travel through workspace memory.
+
+- Open WebUI: [docs/integrations/openwebui.md](docs/integrations/openwebui.md)
+- GitHub Copilot in VS Code: [docs/integrations/vscode.md](docs/integrations/vscode.md)
+- Continue.dev: [docs/integrations/vscode.md](docs/integrations/vscode.md)
 
 ---
 
@@ -148,13 +158,16 @@ Secrets are **never** stored in `config.toml` — always via environment variabl
 curl -X POST http://localhost:8080/v1/workspaces \
   -H 'Content-Type: application/json' \
   -d '{"name": "acme-engineering"}'
-# {"id": "018f...", "name": "acme-engineering"}
+# {"workspace_id": "018f...", "api_key": "mops_018f..._..."}
 ```
 
-### 2. Create an API key
+The bootstrap API key is returned once. Store it securely.
+
+### 2. Create an additional API key
 
 ```bash
 curl -X POST http://localhost:8080/v1/workspaces/018f.../keys \
+  -H 'X-API-Key: mops_018f...' \
   -H 'Content-Type: application/json' \
   -d '{"name": "coding-agent"}'
 # {"key": "mops_acme_3xK9m..."} ← returned once, store it
@@ -226,7 +239,7 @@ curl -X POST http://localhost:8080/v1/retrieve \
 | Memory scope | Configurable: workspace / agent / user / repo | Operators define scope hierarchy in workspace config |
 | Multi-agent sharing | Opt-in publish (`POST /memory/:id/publish`) + workspace pool inheritance | Explicit promotion prevents accidental cross-agent leakage |
 | Webhook validation | HMAC-SHA256 (GitHub-style) for all sources | Consistent, battle-tested |
-| MCP transport | stdio + HTTP SSE (MCP 2025-06-18 spec) | Works with Claude Desktop, Cursor, and custom agent frameworks |
+| MCP transport | stdio + HTTP Streamable | Works with Claude Desktop, VS Code, Open WebUI, Continue.dev, and custom agent frameworks |
 
 ---
 
@@ -260,10 +273,11 @@ memoryops/
 │   ├── processor/       # Fast path + async slow path workers
 │   └── retrieval/       # Hybrid search, RRF scoring, token packing, feedback scoring
 ├── frontend/            # React 19 Memory Control Center
-├── migrations/          # sqlx DB migrations (0001–0021)
+├── migrations/          # sqlx DB migrations
 ├── scripts/
 │   └── seed.sh          # Idempotent dev data seeding script
 ├── docs/
+│   ├── integrations/    # MCP client setup guides for Open WebUI, VS Code, Continue.dev
 │   ├── FEATURES.md      # Milestone tracker and full feature list
 │   ├── SPEC.md          # Full technical specification
 │   ├── openapi.yaml     # API contract (source of truth)
@@ -285,10 +299,12 @@ memoryops/
 3. **Token-aware retrieval** — not "top 5 chunks" but greedy context packing under real token budgets with cosine deduplication
 4. **Pluggable AI providers** — run fully local (Ollama + fastembed), swap to cloud with one config change, no code edits
 5. **Retrieval feedback loop** — explicit thumbs-up/down ratings roll into a `relevance_score` that nudges hybrid scoring, closing the agent learning loop
-6. **Point-in-time memory** — reconstruct exact memory state + decay scores at any past timestamp; useful for incident post-mortems
-7. **Multi-agent scope inheritance** — publish semantic memories to a workspace pool; sub-agents inherit without duplicating context
-8. **MCP-native** — agents connect directly via Model Context Protocol (stdio or HTTP SSE); no HTTP client glue required
-9. **Memory Control Center** — inspect, edit, pin, merge, trace, and audit exactly what your agent remembers and why
+6. **Agent-managed memory** — agents can delete, update, and rate memories directly via MCP tools (`memory_delete`, `memory_update`, `memory_feedback`), not just read and store
+7. **Point-in-time memory** — reconstruct exact memory state + decay scores at any past timestamp; useful for incident post-mortems
+8. **Temporal memory queries** — `memory_timeline` MCP tool lets agents reconstruct what they knew at any past timestamp — useful for incident post-mortems and audit
+9. **Multi-agent scope inheritance** — publish semantic memories to a workspace pool; sub-agents inherit without duplicating context
+10. **MCP-native** — agents connect directly via Model Context Protocol (stdio or HTTP SSE); no HTTP client glue required
+11. **Memory Control Center** — inspect, edit, pin, merge, trace, and audit exactly what your agent remembers and why
 
 ---
 

@@ -392,6 +392,7 @@ mod tests {
                 embedding_id,
                 token_count,
                 decay_score,
+                relevance_score,
                 pinned,
                 tags,
                 version,

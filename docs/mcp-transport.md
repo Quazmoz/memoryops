@@ -2,6 +2,18 @@
 
 MemoryOps MCP supports multiple transports.
 
+## Client Quick-Reference
+
+| Client | Config format | Transport | Guide |
+|---|---|---|---|
+| Open WebUI | Tool Server URL + Bearer token | `http` | [docs/integrations/openwebui.md](integrations/openwebui.md) |
+| GitHub Copilot (VS Code) | `.vscode/mcp.json` | `http` or `stdio` | [docs/integrations/vscode.md](integrations/vscode.md) |
+| Continue.dev | `~/.continue/config.json` | `http` | [docs/integrations/vscode.md](integrations/vscode.md) |
+| Claude Desktop | `claude_desktop_config.json` | `stdio` | (see below) |
+| Custom agent | `POST /mcp` + `Authorization: Bearer` | `http` | This file |
+
+## Transport Matrix
+
 | Transport | Status | Notes |
 |---|---|---|
 | `stdio` | Supported | Good for local process-hosted MCP usage. |
@@ -66,6 +78,28 @@ Delete session:
 ```bash
 curl -sS -X DELETE http://localhost:3003/mcp \
   -H 'Mcp-Session-Id: <session_id>'
+```
+
+## Claude Desktop
+
+Use `stdio` transport when Claude Desktop launches MemoryOps as a local process:
+
+```jsonc
+// ~/Library/Application Support/Claude/claude_desktop_config.json
+{
+  "mcpServers": {
+    "memoryops": {
+      "command": "cargo",
+      "args": ["run", "--manifest-path", "/path/to/memoryops/Cargo.toml", "-p", "mcp"],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "DATABASE_URL": "postgres://...",
+        "REDIS_URL": "redis://localhost:6379",
+        "QDRANT_URL": "http://localhost:6334"
+      }
+    }
+  }
+}
 ```
 
 ## Spec Reference
