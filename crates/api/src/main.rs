@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
+use anyhow::anyhow;
 use axum::{
     extract::State, http::StatusCode, middleware as axum_middleware, routing::get, Json, Router,
 };
@@ -30,6 +31,8 @@ async fn main() -> anyhow::Result<()> {
     let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_owned());
     let config = AppConfig::from_path(config_path)?;
     let _telemetry_guard = init_telemetry(&config.telemetry)?;
+    crate::security::validate_secret_key_at_startup()
+        .map_err(|_| anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
     let state = build_state(config.clone()).await?;
     processor::start_workers(state.clone()).await?;
     tokio::spawn(processor::scheduler::run_scheduler(state.clone()));

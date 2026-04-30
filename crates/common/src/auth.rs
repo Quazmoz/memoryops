@@ -116,10 +116,6 @@ async fn validate_api_key_uncached(db: &PgPool, api_key: &str) -> AppResult<Auth
 
     for candidate in candidates {
         if verify_secret(api_key, &candidate.key_hash) {
-            if candidate.revoked {
-                return Err(AppError::Unauthorized);
-            }
-
             return Ok(AuthContext {
                 workspace_id: candidate.workspace_id,
                 key_id: candidate.id,
@@ -216,6 +212,7 @@ async fn find_candidate_keys(db: &PgPool, prefix: &str) -> AppResult<Vec<ApiKey>
         SELECT id, workspace_id, name, key_hash, prefix, created_at, last_used_at, revoked, revoked_at
         FROM api_keys
         WHERE prefix = $1
+                    AND revoked = false
         "#,
     )
     .bind(prefix)

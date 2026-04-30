@@ -89,6 +89,7 @@ dependencies = [
  "chrono",
  "common",
  "futures-util",
+ "hkdf",
  "ingestion",
  "processor",
  "qdrant-client",

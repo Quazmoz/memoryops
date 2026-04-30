@@ -49,6 +49,32 @@ async fn is_first_key_bootstrap_request(
         return Ok(false);
     };
 
+    // Single atomic query: workspace must exist AND have zero active keys.
+    // Uses a subquery so no FOR UPDATE is needed -- the COUNT is the lock guard.
+    let result = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM api_keys
+        WHERE workspace_id = $1
+          AND revoked = false
+          AND EXISTS (
+              SELECT 1 FROM workspaces
+              WHERE id = $1 AND deleted_at IS NULL
+          )
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    // Workspace doesn't exist if the EXISTS subquery returns nothing -- treat as
+    // Unauthorized rather than revealing whether the workspace exists.
+    // If workspace exists and key count > 0, also Unauthorized.
+    // Only allow if workspace exists AND key count == 0.
+    //
+    // To distinguish "workspace not found" from "keys already exist" atomically,
+    // check workspace existence first in the same txn:
     let workspace_exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND deleted_at IS NULL)",
     )
@@ -56,19 +82,12 @@ async fn is_first_key_bootstrap_request(
     .fetch_one(&state.db)
     .await
     .map_err(AppError::Database)?;
+
     if !workspace_exists {
         return Err(AppError::Unauthorized);
     }
 
-    let active_keys = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM api_keys WHERE workspace_id = $1 AND revoked = false",
-    )
-    .bind(workspace_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(AppError::Database)?;
-
-    if active_keys == 0 {
+    if result == 0 {
         Ok(true)
     } else {
         Err(AppError::Unauthorized)

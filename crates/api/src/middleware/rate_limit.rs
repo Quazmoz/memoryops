@@ -104,23 +104,26 @@ async fn enforce_limit(
     let count = match redis_result {
         Ok(Ok(result)) => result,
         Ok(Err(error)) => {
-            tracing::warn!(
+            tracing::error!(
                 error = ?error,
                 subject = %subject.log_value(),
                 group = group.as_str(),
-                "rate limit check failed; allowing request"
+                "rate limit check failed; denying request (fail-closed)"
             );
-            return Ok(());
+            return Err(AppError::RateLimited {
+                retry_after_secs: 5,
+            });
         }
-        Err(error) => {
-            tracing::warn!(
-                error = %error,
+        Err(_timeout) => {
+            tracing::error!(
                 subject = %subject.log_value(),
                 group = group.as_str(),
                 timeout_ms = RATE_LIMIT_REDIS_TIMEOUT_MS,
-                "rate limit check timed out; allowing request"
+                "rate limit check timed out; denying request (fail-closed)"
             );
-            return Ok(());
+            return Err(AppError::RateLimited {
+                retry_after_secs: 5,
+            });
         }
     };
 

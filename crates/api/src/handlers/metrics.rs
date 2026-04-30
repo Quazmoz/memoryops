@@ -18,6 +18,8 @@ use super::require_workspace;
 pub struct MetricsResponse {
     pub workspace_id: Uuid,
     pub collected_at: DateTime<Utc>,
+    // SECURITY: values are process-global and not partitioned by workspace.
+    // TODO(security): track per-workspace metrics partitioning as a follow-up.
     pub metrics: MetricsValues,
 }
 

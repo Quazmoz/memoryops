@@ -5,11 +5,14 @@ use aes_gcm::{
 use anyhow::anyhow;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use common::AppError;
-use sha2::{Digest, Sha256};
+use hkdf::Hkdf;
+use sha2::Sha256;
 
 pub use common::auth::{generate_api_key, hash_secret};
 
 const NONCE_LEN: usize = 12;
+const HKDF_INFO: &[u8] = b"memoryops-skill-secret-v1";
+const HKDF_SALT: &[u8] = b"memoryops-static-salt-v1";
 
 pub fn encrypt_secret(plaintext: &str) -> Result<String, AppError> {
     let cipher = cipher_from_env()?;
@@ -44,18 +47,28 @@ pub fn decrypt_secret(ciphertext_b64: &str) -> Result<String, AppError> {
     String::from_utf8(plaintext).map_err(|error| AppError::Internal(anyhow!(error)))
 }
 
+pub fn validate_secret_key_at_startup() -> Result<(), AppError> {
+    cipher_from_env().map(|_| ())
+}
+
 fn cipher_from_env() -> Result<Aes256Gcm, AppError> {
     let secret = std::env::var("APP_SECRET_KEY").map_err(|_| {
         AppError::Internal(anyhow!(
             "APP_SECRET_KEY must be set before storing or reading skill secrets"
         ))
     })?;
-    if secret.trim().is_empty() {
+    let trimmed = secret.trim();
+    if trimmed.is_empty() {
         return Err(AppError::Internal(anyhow!(
-            "APP_SECRET_KEY must not be empty before storing or reading skill secrets"
+            "APP_SECRET_KEY must not be empty"
         )));
     }
 
-    let key = Sha256::digest(secret.as_bytes());
-    Aes256Gcm::new_from_slice(&key).map_err(|error| AppError::Internal(anyhow!(error)))
+    let hk = Hkdf::<Sha256>::new(Some(HKDF_SALT), trimmed.as_bytes());
+    let mut key_bytes = [0u8; 32];
+    hk.expand(HKDF_INFO, &mut key_bytes)
+        .map_err(|e| AppError::Internal(anyhow!("HKDF expand failed: {e}")))?;
+
+    let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes);
+    Ok(Aes256Gcm::new(key))
 }

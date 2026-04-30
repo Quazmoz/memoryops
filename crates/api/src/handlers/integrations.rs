@@ -82,18 +82,16 @@ pub async fn create_integration(
     };
     sqlx::query(
         r#"
-        INSERT INTO integrations (workspace_id, source, webhook_secret_hash, webhook_secret, deleted_at)
-        VALUES ($1, $2, $3, $4, NULL)
+        INSERT INTO integrations (workspace_id, source, webhook_secret_hash, deleted_at)
+        VALUES ($1, $2, $3, NULL)
         ON CONFLICT (workspace_id, source) DO UPDATE
         SET webhook_secret_hash = EXCLUDED.webhook_secret_hash,
-            webhook_secret = EXCLUDED.webhook_secret,
             deleted_at = NULL
         "#,
     )
     .bind(id)
     .bind(request.source)
     .bind(secret_hash.as_deref())
-    .bind(webhook_secret.as_deref())
     .execute(&state.db)
     .await
     .map_err(AppError::Database)?;
