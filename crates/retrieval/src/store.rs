@@ -713,7 +713,7 @@ pub async fn force_promote_to_semantic(
     workspace_id: Uuid,
 ) -> AppResult<Option<MemoryUnit>> {
     let sql = format!(
-        "UPDATE memory_units SET memory_type = 'semantic', version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+        "UPDATE memory_units SET memory_type = 'semantic', version = version + 1, updated_at = now() WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
     );
 
     sqlx::query_as::<_, MemoryUnit>(&sql)
@@ -730,7 +730,7 @@ pub async fn publish_memory_unit(
     workspace_id: Uuid,
 ) -> AppResult<Option<MemoryUnit>> {
     let sql = format!(
-        "UPDATE memory_units SET scope_visibility = 'workspace', version = version + 1 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+        "UPDATE memory_units SET scope_visibility = 'workspace', version = version + 1, updated_at = now() WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
     );
 
     sqlx::query_as::<_, MemoryUnit>(&sql)
@@ -1074,7 +1074,7 @@ pub async fn promote_to_semantic(db: &PgPool, id: Uuid, workspace_id: Uuid) -> A
     sqlx::query(
         r#"
         UPDATE memory_units
-        SET memory_type = 'semantic', version = version + 1
+                SET memory_type = 'semantic', version = version + 1, updated_at = now()
         WHERE id = $1
           AND workspace_id = $2
           AND memory_type = 'episodic'

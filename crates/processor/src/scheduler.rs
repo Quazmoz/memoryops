@@ -63,7 +63,7 @@ pub async fn run_scheduler(state: AppState) {
             if let Err(error) = run_hard_delete_pass(&state).await {
                 tracing::error!(error = ?error, "hard delete pass failed");
             }
-            if let Err(error) = run_compliance_retention_purge(&state.db).await {
+            if let Err(error) = run_compliance_retention_purge(&state).await {
                 tracing::error!(error = ?error, "compliance retention purge failed");
             }
         }
@@ -314,7 +314,7 @@ pub async fn run_hard_delete_pass(state: &AppState) -> AppResult<u64> {
     Ok(total)
 }
 
-pub async fn run_compliance_retention_purge(pool: &PgPool) -> Result<(), AppError> {
+pub async fn run_compliance_retention_purge(state: &AppState) -> Result<(), AppError> {
     let workspaces = sqlx::query_as::<_, WorkspaceConfigRow>(
         r#"
         SELECT id, config
@@ -324,7 +324,7 @@ pub async fn run_compliance_retention_purge(pool: &PgPool) -> Result<(), AppErro
         ORDER BY id ASC
         "#,
     )
-    .fetch_all(pool)
+    .fetch_all(&state.db)
     .await
     .map_err(AppError::Database)?;
 
@@ -343,18 +343,52 @@ pub async fn run_compliance_retention_purge(pool: &PgPool) -> Result<(), AppErro
         }
 
         let retention_days = retention_days_to_i32(retention_max_age_days)?;
+        let candidates =
+            collect_retention_memory_candidates(&state.db, workspace.id, retention_days).await?;
+
+        let embedder = Embedder::from_state(state);
+        for (memory_id, embedding_id) in &candidates {
+            if embedding_id.is_some() {
+                if let Err(error) = embedder.delete_point(*memory_id).await {
+                    tracing::warn!(
+                        error = ?error,
+                        memory_id = %memory_id,
+                        "failed to delete Qdrant point during compliance retention purge"
+                    );
+                }
+            }
+        }
+
+        let ids: Vec<Uuid> = candidates.iter().map(|(id, _)| *id).collect();
+        let memories_purged = if ids.is_empty() {
+            0u64
+        } else {
+            sqlx::query(
+                r#"
+                DELETE FROM memory_units
+                WHERE workspace_id = $1
+                  AND id = ANY($2)
+                "#,
+            )
+            .bind(workspace.id)
+            .bind(&ids)
+            .execute(&state.db)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(AppError::Database)?
+        };
+
         let raw_events_purged = if config.compliance_hard_purge {
             let source_event_ids =
-                retention_source_event_ids(pool, workspace.id, retention_days).await?;
-            delete_retention_raw_events(pool, workspace.id, &source_event_ids).await?
+                retention_source_event_ids(&state.db, workspace.id, retention_days).await?;
+            delete_retention_raw_events(&state.db, workspace.id, &source_event_ids).await?
         } else {
             0
         };
-        let memories_purged = delete_retention_memories(pool, workspace.id, retention_days).await?;
 
         if memories_purged > 0 {
             insert_retention_compliance_audit_log(
-                pool,
+                &state.db,
                 workspace.id,
                 memories_purged,
                 raw_events_purged,
@@ -492,6 +526,29 @@ async fn retention_source_event_ids(
     Ok(source_event_ids.unwrap_or_default())
 }
 
+async fn collect_retention_memory_candidates(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    retention_days: i32,
+) -> AppResult<Vec<(Uuid, Option<String>)>> {
+    sqlx::query_as::<_, (Uuid, Option<String>)>(
+        r#"
+        SELECT id, embedding_id
+        FROM memory_units
+        WHERE workspace_id = $1
+          AND created_at < NOW() - ($2::INTEGER * INTERVAL '1 day')
+          AND pinned = false
+          AND importance_overridden = false
+          AND hard_deleted_at IS NULL
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(retention_days)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::Database)
+}
+
 async fn delete_retention_raw_events(
     pool: &PgPool,
     workspace_id: Uuid,
@@ -515,35 +572,16 @@ async fn delete_retention_raw_events(
     .map_err(AppError::Database)
 }
 
-async fn delete_retention_memories(
-    pool: &PgPool,
-    workspace_id: Uuid,
-    retention_days: i32,
-) -> AppResult<u64> {
-    sqlx::query(
-        r#"
-        DELETE FROM memory_units
-        WHERE workspace_id = $1
-          AND created_at < NOW() - ($2::INTEGER * INTERVAL '1 day')
-          AND pinned = false
-          AND importance_overridden = false
-          AND hard_deleted_at IS NULL
-        "#,
-    )
-    .bind(workspace_id)
-    .bind(retention_days)
-    .execute(pool)
-    .await
-    .map(|result| result.rows_affected())
-    .map_err(AppError::Database)
-}
-
 async fn insert_retention_compliance_audit_log(
     pool: &PgPool,
     workspace_id: Uuid,
     memories_purged: u64,
     raw_events_purged: u64,
 ) -> AppResult<()> {
+    // Cast to i64 for BIGINT binding; saturate rather than error on overflow.
+    let memories_purged_i64 = i64::try_from(memories_purged).unwrap_or(i64::MAX);
+    let raw_events_purged_i64 = i64::try_from(raw_events_purged).unwrap_or(i64::MAX);
+
     sqlx::query(
         r#"
         INSERT INTO compliance_audit_log (
@@ -558,8 +596,8 @@ async fn insert_retention_compliance_audit_log(
         "#,
     )
     .bind(workspace_id)
-    .bind(rows_to_i32(memories_purged)?)
-    .bind(rows_to_i32(raw_events_purged)?)
+    .bind(memories_purged_i64)
+    .bind(raw_events_purged_i64)
     .execute(pool)
     .await
     .map(|_| ())
@@ -567,10 +605,6 @@ async fn insert_retention_compliance_audit_log(
 }
 
 fn retention_days_to_i32(value: u32) -> AppResult<i32> {
-    i32::try_from(value).map_err(|error| AppError::Internal(anyhow::anyhow!(error)))
-}
-
-fn rows_to_i32(value: u64) -> AppResult<i32> {
     i32::try_from(value).map_err(|error| AppError::Internal(anyhow::anyhow!(error)))
 }
 
