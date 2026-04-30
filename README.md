@@ -72,7 +72,7 @@ Result: inconsistent behavior, repeated instructions, hallucinations from stale 
 - [Rust](https://rustup.rs/) (stable, see `rust-toolchain.toml` — currently 1.88.0)
 - [Docker](https://www.docker.com/) + Docker Compose
 - [Node.js](https://nodejs.org/) 20+ (frontend only)
-- [sqlx-cli](https://github.com/launchbakery/sqlx-cli): `cargo install sqlx-cli --no-default-features --features rustls,postgres`
+- [sqlx-cli](https://github.com/launchbakery/sqlx/tree/master/sqlx-cli): `cargo install sqlx-cli --no-default-features --features rustls,postgres`
 - [Ollama](https://ollama.com/) (local LLM default — `ollama pull llama3`)
 
 ---
@@ -149,6 +149,13 @@ Copy `.env.example` to `.env`. All required variables must be set before startin
 | `OPENAI_API_KEY` | ❌ | — | Required only if `embedding.provider = "openai"` |
 | `ANTHROPIC_API_KEY` | ❌ | — | Required only if `llm.provider = "anthropic"` |
 | `RUST_LOG` | ❌ | `info` | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | ❌ | — | OTLP collector endpoint (e.g. `http://localhost:4317`). Only used when `telemetry.otel_exporter = "otlp"` in `config.toml`. |
+| `GITHUB_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | HMAC-SHA256 secret for GitHub webhook validation. Required in production. |
+| `SLACK_SIGNING_SECRET` | ❌ | `dev-placeholder` | Signing secret for Slack webhook validation. Required in production. |
+| `LINEAR_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Signing secret for Linear webhook validation. Required in production. |
+| `JIRA_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Signing secret for Jira webhook validation. Required in production. |
+| `MCP_TRANSPORT` | ❌ | `stdio` | MCP server transport: `http` (recommended for all AI clients) or `stdio`. Always set to `http` when running via Docker Compose. |
+| `MCP_PORT` | ❌ | `3003` | Port the MCP server listens on. Only used when `MCP_TRANSPORT=http`. |
 
 Secrets are **never** stored in `config.toml` — always via environment variables.
 
