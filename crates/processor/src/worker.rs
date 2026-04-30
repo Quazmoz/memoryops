@@ -18,7 +18,8 @@ use redis::{
     aio::ConnectionManager, from_redis_value, streams::StreamId, streams::StreamReadReply, Value,
 };
 use sqlx::PgPool;
-use tokio::{sync::Semaphore, task::JoinSet};
+use tokio::task::JoinSet;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::{
@@ -135,9 +136,6 @@ impl SlowPathEmbedder for QdrantSlowPathEmbedder {
 pub async fn run_worker(worker_id: usize, state: AppState) {
     let consumer_name = format!("processor-{worker_id}");
     let mut redis = state.redis.clone();
-    let permit_count =
-        usize::try_from((state.config.database.max_connections / 2).max(1)).unwrap_or(1);
-    let semaphore = Arc::new(Semaphore::new(permit_count));
 
     if let Err(error) = ensure_consumer_group(&mut redis, STREAM_KEY, GROUP_NAME).await {
         tracing::error!(error = ?error, "failed to ensure Redis consumer group");
@@ -154,8 +152,10 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
                 for message in messages {
                     let task_state = state.clone();
                     let mut task_redis = state.redis.clone();
-                    let task_semaphore = Arc::clone(&semaphore);
-                    tasks.spawn(async move {
+                    let task_semaphore = Arc::clone(&state.processor_semaphore);
+                    let span = tracing::info_span!("processor_task", stream_id = %message.id);
+                    tasks.spawn(
+                        async move {
                         let permit = task_semaphore.acquire_owned().await;
                         let Ok(_permit) = permit else {
                             tracing::error!("processor semaphore closed unexpectedly");
@@ -166,7 +166,9 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
                         {
                             tracing::error!(error = ?error, "failed to process Redis stream message");
                         }
-                    });
+                        }
+                        .instrument(span),
+                    );
                 }
 
                 while let Some(result) = tasks.join_next().await {
@@ -186,9 +188,6 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
 pub async fn run_slow_worker(worker_id: usize, state: AppState) {
     let consumer_name = format!("slow-processor-{worker_id}");
     let mut redis = state.redis.clone();
-    let permit_count =
-        usize::try_from((state.config.database.max_connections / 2).max(1)).unwrap_or(1);
-    let semaphore = Arc::new(Semaphore::new(permit_count));
 
     if let Err(error) =
         ensure_consumer_group(&mut redis, PROCESSOR_JOBS_STREAM, SLOW_GROUP_NAME).await
@@ -215,8 +214,10 @@ pub async fn run_slow_worker(worker_id: usize, state: AppState) {
                 for message in messages {
                     let task_state = state.clone();
                     let mut task_redis = state.redis.clone();
-                    let task_semaphore = Arc::clone(&semaphore);
-                    tasks.spawn(async move {
+                    let task_semaphore = Arc::clone(&state.processor_semaphore);
+                    let span = tracing::info_span!("processor_task", stream_id = %message.id);
+                    tasks.spawn(
+                        async move {
                         let permit = task_semaphore.acquire_owned().await;
                         let Ok(_permit) = permit else {
                             tracing::error!("slow processor semaphore closed unexpectedly");
@@ -227,7 +228,9 @@ pub async fn run_slow_worker(worker_id: usize, state: AppState) {
                         {
                             tracing::error!(error = ?error, "failed to process slow processor job");
                         }
-                    });
+                        }
+                        .instrument(span),
+                    );
                 }
 
                 while let Some(result) = tasks.join_next().await {

@@ -19,6 +19,7 @@ use retrieval::retrieval_router;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
+use tokio::sync::Semaphore;
 
 mod handlers;
 mod middleware;
@@ -31,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     let _telemetry_guard = init_telemetry(&config.telemetry)?;
     let state = build_state(config.clone()).await?;
     processor::start_workers(state.clone()).await?;
-    tokio::spawn(processor::scheduler::run_scheduler(Arc::new(state.clone())));
+    tokio::spawn(processor::scheduler::run_scheduler(state.clone()));
 
     let address = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&address).await?;
@@ -116,6 +117,9 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         db,
         redis,
         qdrant,
+        processor_semaphore: Arc::new(Semaphore::new(
+            usize::try_from(config.database.max_connections).unwrap_or(10),
+        )),
         embedding_provider,
         llm_provider,
         config: Arc::new(config),
@@ -154,7 +158,7 @@ async fn ensure_skill_secret_configuration(db: &sqlx::PgPool) -> anyhow::Result<
 fn webhook_secret_from_env(name: &'static str) -> anyhow::Result<String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(anyhow::anyhow!("GITHUB_WEBHOOK_SECRET must be set")),
+        _ => Err(anyhow::anyhow!(format!("{name} must be set"))),
     }
 }
 
@@ -164,6 +168,9 @@ fn build_embedding_provider(config: &AppConfig) -> Arc<dyn EmbeddingProvider> {
             Arc::new(FastEmbedProvider::new(&config.embedding.model))
         }
         EmbeddingProviderKind::Openai => {
+            if config.embedding.openai.is_none() {
+                tracing::warn!("provider-specific config block is None; falling back to config.llm.model");
+            }
             let model = config
                 .embedding
                 .openai
@@ -186,6 +193,9 @@ fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
             config.llm.timeout_secs,
         )),
         LlmProviderKind::Openai => {
+            if config.llm.openai.is_none() {
+                tracing::warn!("provider-specific config block is None; falling back to config.llm.model");
+            }
             let model = config
                 .llm
                 .openai
@@ -198,6 +208,9 @@ fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
             ))
         }
         LlmProviderKind::Anthropic => {
+            if config.llm.anthropic.is_none() {
+                tracing::warn!("provider-specific config block is None; falling back to config.llm.model");
+            }
             let model = config
                 .llm
                 .anthropic
@@ -216,8 +229,9 @@ async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }
 
-async fn readiness() -> (StatusCode, Json<Value>) {
-    let (database, redis, qdrant) = tokio::join!(check_database(), check_redis(), check_qdrant());
+async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
+    let (database, redis, qdrant) =
+        tokio::join!(check_database(&state.db), check_redis(), check_qdrant());
     let ready = database.is_ready() && redis.is_ready() && qdrant.is_ready();
     let status = if ready {
         StatusCode::OK
@@ -259,22 +273,15 @@ impl DependencyStatus {
     }
 }
 
-async fn check_database() -> DependencyStatus {
-    let Ok(database_url) = std::env::var("DATABASE_URL") else {
-        return DependencyStatus::MissingConfig;
-    };
-
-    match PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(Duration::from_secs(2))
-        .connect(&database_url)
-        .await
+async fn check_database(pool: &sqlx::PgPool) -> DependencyStatus {
+    match tokio::time::timeout(
+        Duration::from_secs(2),
+        sqlx::query("SELECT 1").execute(pool),
+    )
+    .await
     {
-        Ok(pool) => {
-            pool.close().await;
-            DependencyStatus::Ok
-        }
-        Err(_) => DependencyStatus::Unavailable,
+        Ok(Ok(_)) => DependencyStatus::Ok,
+        Ok(Err(_)) | Err(_) => DependencyStatus::Unavailable,
     }
 }
 
@@ -467,6 +474,7 @@ async fn probe_ollama(config: Arc<common::config::AppConfig>) -> HealthCheck {
 }
 
 fn overall_health_status(checks: &[HealthCheck]) -> &'static str {
+    // An empty check list is considered healthy (no dependencies configured).
     if checks.iter().any(|c| c.status == "error") {
         "unhealthy"
     } else if checks.iter().any(|c| c.status == "warn") {
@@ -490,7 +498,7 @@ fn probe_fastembed(config: &AppConfig) -> HealthCheck {
     HealthCheck {
         name: "fastembed".to_owned(),
         status: "ok".to_owned(),
-        latency_ms: Some(0),
+        latency_ms: None,
         message: None,
     }
 }
@@ -559,6 +567,9 @@ mod tests {
             db: pool,
             redis,
             qdrant,
+            processor_semaphore: Arc::new(Semaphore::new(
+                usize::try_from(config.database.max_connections).unwrap_or(10),
+            )),
             embedding_provider: Arc::new(FastEmbedProvider::new("test-embedding")),
             llm_provider: Arc::new(OllamaProvider::new("http://127.0.0.1:9", "test-llm", 1)),
             config: Arc::new(config),
@@ -696,7 +707,7 @@ mod tests {
                 updated_at,
                 deleted_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12)
             "#,
         )
         .bind(memory_id)
@@ -711,6 +722,7 @@ mod tests {
         .bind(fixture.scope_visibility)
         .bind(fixture.content)
         .bind(json!([]))
+        .bind(fixture.importance_score)
         .bind(fixture.importance_score)
         .bind(Vec::<String>::new())
         .bind(fixture.created_at)
@@ -764,7 +776,10 @@ mod tests {
     }
 
     async fn wait_for_publish_audit(pool: &PgPool, workspace_id: Uuid, memory_id: Uuid) -> i64 {
-        for _ in 0..20 {
+        let started = std::time::Instant::now();
+        let budget = std::time::Duration::from_secs(3);
+        let mut delay = std::time::Duration::from_millis(10);
+        loop {
             let count = match sqlx::query_scalar::<_, i64>(
                 r#"
                 SELECT COUNT(*)
@@ -786,10 +801,16 @@ mod tests {
             if count > 0 {
                 return count;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
 
-        0
+            let elapsed = started.elapsed();
+            if elapsed >= budget {
+                return 0;
+            }
+
+            let remaining = budget.saturating_sub(elapsed);
+            tokio::time::sleep(delay.min(remaining)).await;
+            delay = (delay * 2).min(std::time::Duration::from_millis(500));
+        }
     }
 
     fn request(method: Method, uri: String, api_key: Option<&str>, body: Value) -> Request<Body> {
@@ -1645,11 +1666,11 @@ mod tests {
         };
         let window_start = now - (now % 60);
         let mut connection = redis.clone();
-        for window in [window_start, window_start + 60] {
+        for window in [window_start] {
             let key = format!("rate:{workspace_id}:memory:{window}");
             let result = redis::cmd("SET")
                 .arg(key)
-                .arg(120_i64)
+                .arg(crate::middleware::rate_limit::MEMORY_RPM)
                 .query_async::<()>(&mut connection)
                 .await;
             if let Err(error) = result {

@@ -930,6 +930,7 @@ mod tests {
     use redis::aio::ConnectionManager;
     use serde_json::Value;
     use sqlx::{types::Json, PgPool};
+    use tokio::sync::Semaphore;
     use tower::ServiceExt;
 
     use super::*;
@@ -960,6 +961,9 @@ mod tests {
             db: pool,
             redis,
             qdrant,
+            processor_semaphore: Arc::new(Semaphore::new(
+                usize::try_from(config.database.max_connections).unwrap_or(10),
+            )),
             embedding_provider: Arc::new(FastEmbedProvider::new("test-embedding")),
             llm_provider: Arc::new(OllamaProvider::new("http://127.0.0.1:9", "test-llm", 1)),
             config: Arc::new(config),

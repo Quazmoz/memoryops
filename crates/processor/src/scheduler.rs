@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Timelike, Utc, Weekday};
 use common::{
     audit::spawn_audit_log,
@@ -43,7 +41,7 @@ struct WorkspaceLifecycleSettings {
     pruning_threshold: f32,
 }
 
-pub async fn run_scheduler(state: Arc<AppState>) {
+pub async fn run_scheduler(state: AppState) {
     loop {
         let maintenance_hour = state.config.processor.maintenance_window_hour_utc.min(23);
         let decay_hour = state.config.processor.decay_window_hour_utc.min(23);

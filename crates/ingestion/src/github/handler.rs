@@ -138,6 +138,7 @@ mod tests {
     use serde_json::json;
     use sha2::Sha256;
     use sqlx::PgPool;
+    use tokio::sync::Semaphore;
     use tower::ServiceExt;
 
     use crate::router::ingestion_router;
@@ -210,6 +211,9 @@ mod tests {
             db: pool,
             redis,
             qdrant,
+            processor_semaphore: Arc::new(Semaphore::new(
+                usize::try_from(config.database.max_connections).unwrap_or(10),
+            )),
             embedding_provider: Arc::new(TestEmbeddingProvider),
             llm_provider: Arc::new(TestLlmProvider),
             config: Arc::new(config),

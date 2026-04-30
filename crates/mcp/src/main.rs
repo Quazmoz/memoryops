@@ -16,6 +16,7 @@ use mcp::{
 use qdrant_client::Qdrant;
 use redis::aio::ConnectionManager;
 use sqlx::postgres::PgPoolOptions;
+use tokio::sync::Semaphore;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -72,6 +73,9 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         db,
         redis,
         qdrant,
+        processor_semaphore: Arc::new(Semaphore::new(
+            usize::try_from(config.database.max_connections).unwrap_or(10),
+        )),
         embedding_provider: build_embedding_provider(&config),
         llm_provider: build_llm_provider(&config),
         config: Arc::new(config),

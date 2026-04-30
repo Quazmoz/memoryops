@@ -10,9 +10,16 @@ use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use tokio::time::{timeout, Duration};
 
 const INGEST_RPM: i64 = 300;
-const MEMORY_RPM: i64 = 120;
+pub const MEMORY_RPM: i64 = 120;
 const API_RPM: i64 = 120;
 const RATE_LIMIT_REDIS_TIMEOUT_MS: u64 = 250;
+const RATE_LIMIT_SCRIPT: &str = r#"
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+    redis.call('EXPIREAT', KEYS[1], ARGV[1])
+end
+return count
+"#;
 
 #[derive(Debug, Clone, Copy)]
 enum RateLimitGroup {
@@ -48,9 +55,11 @@ pub async fn rate_limit(
     let Some(group) = endpoint_group(path) else {
         return Ok(next.run(request).await);
     };
-    let subject = rate_limit_subject(&request);
+    let Some(subject) = rate_limit_subject(&request) else {
+        return Ok(next.run(request).await);
+    };
 
-    enforce_limit(&state, &subject, group).await?;
+    enforce_limit(&state, subject, group).await?;
     Ok(next.run(request).await)
 }
 
@@ -58,7 +67,6 @@ pub async fn rate_limit(
 enum RateLimitSubject {
     Workspace(uuid::Uuid),
     Ip(IpAddr),
-    UnknownIp,
 }
 
 impl RateLimitSubject {
@@ -66,7 +74,6 @@ impl RateLimitSubject {
         match self {
             Self::Workspace(workspace_id) => format!("workspace:{workspace_id}"),
             Self::Ip(ip) => format!("ip:{ip}"),
-            Self::UnknownIp => "ip:unknown".to_owned(),
         }
     }
 
@@ -77,7 +84,7 @@ impl RateLimitSubject {
 
 async fn enforce_limit(
     state: &AppState,
-    subject: &RateLimitSubject,
+    subject: RateLimitSubject,
     group: RateLimitGroup,
 ) -> AppResult<()> {
     let now = unix_timestamp_secs()?;
@@ -88,16 +95,13 @@ async fn enforce_limit(
     let mut redis = state.redis.clone();
     let redis_result = timeout(
         Duration::from_millis(RATE_LIMIT_REDIS_TIMEOUT_MS),
-        redis::pipe()
-            .cmd("INCR")
-            .arg(&key)
-            .cmd("EXPIREAT")
-            .arg(&key)
+        redis::Script::new(RATE_LIMIT_SCRIPT)
+            .key(&key)
             .arg(expires_at)
-            .query_async::<(i64, bool)>(&mut redis),
+            .invoke_async::<i64>(&mut redis),
     )
     .await;
-    let (count, _expires_set) = match redis_result {
+    let count = match redis_result {
         Ok(Ok(result)) => result,
         Ok(Err(error)) => {
             tracing::warn!(
@@ -130,6 +134,9 @@ async fn enforce_limit(
 
 fn endpoint_group(path: &str) -> Option<RateLimitGroup> {
     if path.starts_with("/v1/ingest/") {
+        if path.starts_with("/v1/ingest/observation") {
+            return Some(RateLimitGroup::Api);
+        }
         Some(RateLimitGroup::Ingest)
     } else if path.starts_with("/v1/memory") || path.starts_with("/v1/retrieve") {
         Some(RateLimitGroup::Memory)
@@ -140,14 +147,17 @@ fn endpoint_group(path: &str) -> Option<RateLimitGroup> {
     }
 }
 
-fn rate_limit_subject(request: &Request<Body>) -> RateLimitSubject {
+fn rate_limit_subject(request: &Request<Body>) -> Option<RateLimitSubject> {
     if let Some(workspace_id) = workspace_id_from_auth_context(request) {
-        return RateLimitSubject::Workspace(workspace_id);
+        return Some(RateLimitSubject::Workspace(workspace_id));
     }
 
     match client_ip_from_request(request) {
-        Some(ip) => RateLimitSubject::Ip(ip),
-        None => RateLimitSubject::UnknownIp,
+        Some(ip) => Some(RateLimitSubject::Ip(ip)),
+        None => {
+            tracing::warn!("rate limit skipped because client IP was unavailable");
+            None
+        }
     }
 }
 
@@ -194,6 +204,10 @@ mod tests {
         ));
         assert!(matches!(
             endpoint_group("/v1/workspaces"),
+            Some(RateLimitGroup::Api)
+        ));
+        assert!(matches!(
+            endpoint_group("/v1/ingest/observation"),
             Some(RateLimitGroup::Api)
         ));
     }

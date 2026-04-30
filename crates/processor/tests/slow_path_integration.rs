@@ -26,6 +26,7 @@ use qdrant_client::{
 use redis::aio::ConnectionManager;
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 const TEST_VECTOR: [f32; 3] = [0.1, 0.2, 0.3];
@@ -355,6 +356,9 @@ async fn test_state(pool: PgPool) -> AppState {
         db: pool,
         redis,
         qdrant,
+        processor_semaphore: Arc::new(Semaphore::new(
+            usize::try_from(config.database.max_connections).unwrap_or(10),
+        )),
         embedding_provider: Arc::new(TestEmbeddingProvider),
         llm_provider: Arc::new(TestLlmProvider),
         config: Arc::new(config),
