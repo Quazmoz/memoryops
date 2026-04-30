@@ -54,17 +54,14 @@ Follow these steps precisely using your available terminal and file manipulation
      }
      ```
 
-6. **Start Frontend**
-   - Attempt to start the frontend container. If it fails (e.g. build error), start it locally in dev mode.
+6. **Start Frontend Container**
+   - The frontend **MUST** run as a container.
    - PowerShell:
      ```powershell
      $env:VITE_MEMORYOPS_WORKSPACE_ID=$workspace_id
      docker compose up -d --build frontend
-     if ($LASTEXITCODE -ne 0) {
-         Write-Host "Docker build failed, falling back to local npm run dev..."
-         cd frontend; npm install; Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$env:VITE_MEMORYOPS_WORKSPACE_ID='$workspace_id'; npm run dev" -WindowStyle Minimized
-     }
      ```
+   - Verify it initializes and port `5173` is reachable.
 
 7. **Seed Test Data** (optional)
    - Run the seed script if bash is available, or skip.

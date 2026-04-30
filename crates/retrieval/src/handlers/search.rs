@@ -214,7 +214,10 @@ async fn run_memory_search(
     let units = memory_store
         .get_memory_units_by_ids(&ids, options.workspace_id)
         .await?;
-    let mut units_by_id = units.into_iter().map(|unit| (unit.id, unit)).collect::<HashMap<_, _>>();
+    let mut units_by_id = units
+        .into_iter()
+        .map(|unit| (unit.id, unit))
+        .collect::<HashMap<_, _>>();
     let memories = ids
         .into_iter()
         .filter_map(|id| units_by_id.remove(&id))

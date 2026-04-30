@@ -149,6 +149,9 @@ mod tests {
 
     #[test]
     fn list_observations_definition_name_matches() {
-        assert_eq!(list_observations_definition().name, "memory_list_observations");
+        assert_eq!(
+            list_observations_definition().name,
+            "memory_list_observations"
+        );
     }
 }

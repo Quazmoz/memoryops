@@ -396,11 +396,13 @@ impl<B: McpBackend> McpServer<B> {
             }
             "memory_list_observations" => {
                 let input =
-                    serde_json::from_value::<tools::observe::ListObservationsInput>(
-                        call.arguments,
-                    )
-                    .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
-                serialize_tool_value(self.backend.memory_list_observations(&context, input).await?)
+                    serde_json::from_value::<tools::observe::ListObservationsInput>(call.arguments)
+                        .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(
+                    self.backend
+                        .memory_list_observations(&context, input)
+                        .await?,
+                )
             }
             "memory_delete" => {
                 let input = serde_json::from_value::<tools::delete::DeleteInput>(call.arguments)
@@ -430,14 +432,23 @@ impl<B: McpBackend> McpServer<B> {
                         call.arguments,
                     )
                     .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
-                serialize_tool_value(self.backend.memory_list_contradictions(&context, input).await?)
+                serialize_tool_value(
+                    self.backend
+                        .memory_list_contradictions(&context, input)
+                        .await?,
+                )
             }
             "memory_resolve_contradiction" => {
-                let input = serde_json::from_value::<
-                    tools::contradiction::ResolveContradictionInput,
-                >(call.arguments)
-                .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
-                serialize_tool_value(self.backend.memory_resolve_contradiction(&context, input).await?)
+                let input =
+                    serde_json::from_value::<tools::contradiction::ResolveContradictionInput>(
+                        call.arguments,
+                    )
+                    .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(
+                    self.backend
+                        .memory_resolve_contradiction(&context, input)
+                        .await?,
+                )
             }
             _ => return Err(JsonRpcError::new(INVALID_PARAMS, "unknown tool name")),
         };
@@ -914,8 +925,7 @@ mod tests {
     #[tokio::test]
     async fn memory_list_observations_returns_array_shape() {
         let server = initialized_server().await;
-        let response =
-            call_tool(&server, "memory_list_observations", json!({ "limit": 5 })).await;
+        let response = call_tool(&server, "memory_list_observations", json!({ "limit": 5 })).await;
         let first = first_structured_item(&response);
 
         assert!(first.get("id").is_some());

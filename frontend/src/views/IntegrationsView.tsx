@@ -13,6 +13,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import { formatCount, formatDateTime, formatRelativeTime, previewText } from "../lib/format";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
+import type { MemoryUnit } from "../api/types";
 
 type DlqMutationContext = { previous: DlqJob[] | undefined };
 type PendingDlqJob = { job: DlqJob; action: "retry" | "discard" };
@@ -368,13 +369,7 @@ export function IntegrationsView() {
   );
 }
 
-type ObservationItem = {
-  id: string;
-  scope: Record<string, unknown> | null;
-  importance_score: number;
-  created_at: string;
-  content: string;
-};
+type ObservationItem = MemoryUnit;
 
 function ObservationFeed({
   isLoading,
@@ -446,7 +441,7 @@ function ObservationFeed({
   );
 }
 
-function scopeField(scope: Record<string, unknown> | null, field: string): string | null {
+function scopeField(scope: any, field: string): string | null {
   if (!scope || typeof scope !== "object") {
     return null;
   }

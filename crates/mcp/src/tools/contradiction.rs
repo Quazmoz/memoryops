@@ -178,7 +178,11 @@ pub async fn run_resolve(
     })
 }
 
-async fn soft_delete_if_active(state: &AppState, workspace_id: Uuid, memory_id: Uuid) -> AppResult<()> {
+async fn soft_delete_if_active(
+    state: &AppState,
+    workspace_id: Uuid,
+    memory_id: Uuid,
+) -> AppResult<()> {
     let deleted = store::soft_delete_memory_unit(&state.db, memory_id, workspace_id).await?;
     if deleted.is_some() {
         let request = DeletePointsBuilder::new(processor::embedder::COLLECTION_NAME)

@@ -1,10 +1,10 @@
-import { Activity, CheckCircle2, Download, GitMerge, KeyRound, Loader2, Play, RefreshCw, Save, ServerCog, ShieldAlert, ShieldCheck, SlidersHorizontal, Upload, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Download, GitMerge, KeyRound, Loader2, Play, RefreshCw, Save, ServerCog, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Upload, XCircle } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import type { ImportMemoriesResponse, PromotionReport, WorkspaceConfig } from "../api/types";
+import type { ForgetUserDataResponse, ImportMemoriesResponse, PromotionReport, WorkspaceConfig } from "../api/types";
 import { getSystemHealth, type HealthCheck } from "../api/health";
-import { exportMemories, getWorkspace, importMemories, triggerPromotion, triggerReindex, updateWorkspaceConfig } from "../api/workspaces";
+import { exportMemories, forgetUserData, getWorkspace, importMemories, triggerPromotion, triggerReindex, updateWorkspaceConfig } from "../api/workspaces";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -33,6 +33,12 @@ export function SettingsView() {
   const [llmModel, setLlmModel] = useState("llama3");
   const [subAgentPools, setSubAgentPools] = useState("");
   const [contradictionMode, setContradictionMode] = useState<"quarantine" | "auto_resolve">("quarantine");
+  const [retentionMaxAgeDays, setRetentionMaxAgeDays] = useState<number | undefined>(undefined);
+  const [complianceHardPurge, setComplianceHardPurge] = useState(false);
+  const [eraseUserId, setEraseUserId] = useState("");
+  const [confirmEraseUserId, setConfirmEraseUserId] = useState<string | null>(null);
+  const [eraseNotice, setEraseNotice] = useState<string | null>(null);
+  const [eraseError, setEraseError] = useState<string | null>(null);
   const [reindexResult, setReindexResult] = useState<{ enqueued: number; next_cursor: string | null } | null>(null);
   const [reindexError, setReindexError] = useState<string | null>(null);
   const [confirmReindex, setConfirmReindex] = useState(false);
@@ -105,6 +111,8 @@ export function SettingsView() {
       setLlmProvider(workspace.llm_provider ?? "ollama");
       setLlmModel(workspace.llm_model ?? "llama3");
       setSubAgentPools((workspace.sub_agent_pools ?? []).join(", "));
+      setRetentionMaxAgeDays(workspace.retention_max_age_days ?? undefined);
+      setComplianceHardPurge(workspace.compliance_hard_purge ?? false);
       const mode = workspace.contradiction_mode;
       if (mode === "quarantine" || mode === "auto_resolve") {
         setContradictionMode(mode);
@@ -125,6 +133,22 @@ export function SettingsView() {
       setPromotionError(error.message);
     },
   });
+  const forgetUserMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "forget-user"],
+    mutationFn: (userId: string) => forgetUserData(workspaceId, userId),
+    onSuccess: (result: ForgetUserDataResponse) => {
+      setEraseError(null);
+      setEraseNotice(`Erased ${result.memories_purged} memories for ${result.user_id}`);
+      setEraseUserId("");
+      setConfirmEraseUserId(null);
+      void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "memory"] });
+      void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "settings"] });
+    },
+    onError: (error: Error) => {
+      setEraseNotice(null);
+      setEraseError(error.message);
+    },
+  });
 
   useEffect(() => {
     if (workspaceQuery.data) {
@@ -137,6 +161,8 @@ export function SettingsView() {
       setLlmProvider(workspaceQuery.data.llm_provider ?? "ollama");
       setLlmModel(workspaceQuery.data.llm_model ?? "llama3");
       setSubAgentPools((workspaceQuery.data.sub_agent_pools ?? []).join(", "));
+      setRetentionMaxAgeDays(workspaceQuery.data.retention_max_age_days ?? undefined);
+      setComplianceHardPurge(workspaceQuery.data.compliance_hard_purge ?? false);
       const mode = workspaceQuery.data.contradiction_mode;
       if (mode === "quarantine" || mode === "auto_resolve") {
         setContradictionMode(mode);
@@ -213,6 +239,51 @@ export function SettingsView() {
     const next = contradictionMode === "quarantine" ? "auto_resolve" : "quarantine";
     setContradictionMode(next);
     configMutation.mutate({ contradiction_mode: next });
+  }
+
+  function saveRetentionMaxAgeDays(value: string) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      setRetentionMaxAgeDays(undefined);
+      configMutation.mutate({ retention_max_age_days: null });
+      return;
+    }
+
+    const days = Number(trimmed);
+    if (!Number.isInteger(days) || days < 1 || days > 3650) {
+      setConfigError("retention_max_age_days must be between 1 and 3650");
+      return;
+    }
+
+    setConfigError(null);
+    setRetentionMaxAgeDays(days);
+    configMutation.mutate({ retention_max_age_days: days });
+  }
+
+  function toggleComplianceHardPurge() {
+    const next = !complianceHardPurge;
+    setComplianceHardPurge(next);
+    configMutation.mutate({ compliance_hard_purge: next });
+  }
+
+  function requestEraseUserData() {
+    const userId = eraseUserId.trim();
+    if (userId.length === 0) {
+      setEraseNotice(null);
+      setEraseError("Enter a user_id to erase.");
+      return;
+    }
+
+    setEraseError(null);
+    setConfirmEraseUserId(userId);
+  }
+
+  function confirmEraseUserData() {
+    if (!confirmEraseUserId) {
+      return;
+    }
+
+    forgetUserMutation.mutate(confirmEraseUserId);
   }
 
   function chooseImportFile() {
@@ -605,6 +676,117 @@ export function SettingsView() {
           ) : !healthQuery.isFetching ? (
             <p className="text-sm text-ink/55">Connect to see system health.</p>
           ) : null}
+        </CardContent>
+      </Card>
+
+      {/* Compliance ───────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Compliance</CardTitle>
+            <p className="mt-1 text-xs text-ink/60">Data retention and right-to-erasure settings</p>
+          </div>
+          {configMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin text-accent-strong" aria-hidden="true" /> : <Shield className="h-4 w-4 text-accent-strong" aria-hidden="true" />}
+        </CardHeader>
+        <CardContent className="grid gap-5">
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
+            <div>
+              <p className="text-sm font-medium text-ink">Memory retention limit</p>
+              <p className="mt-1 text-xs text-ink/60">Hard-purge memories older than this many days. Leave blank to disable.</p>
+              {retentionMaxAgeDays ? (
+                <Badge variant="amber" className="mt-2">
+                  Active — memories older than {retentionMaxAgeDays} days will be purged daily
+                </Badge>
+              ) : null}
+            </div>
+            <Input
+              data-testid="retention-max-age-days-input"
+              type="number"
+              min={1}
+              max={3650}
+              placeholder="No limit"
+              value={retentionMaxAgeDays ?? ""}
+              onChange={(event) => saveRetentionMaxAgeDays(event.target.value)}
+              disabled={!canAct || configMutation.isPending}
+              className="w-full lg:w-48"
+            />
+          </div>
+
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-ink">Include source events in purge</p>
+              <p className="mt-1 text-xs text-ink/60">Also delete originating webhook events on erasure and retention purge. Cannot be undone.</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={complianceHardPurge}
+              data-testid="compliance-hard-purge-toggle"
+              onClick={toggleComplianceHardPurge}
+              disabled={!canAct || configMutation.isPending}
+              className={cn(
+                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50",
+                complianceHardPurge ? "bg-accent" : "bg-ink/20",
+              )}
+            >
+              <span
+                className={cn(
+                  "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform",
+                  complianceHardPurge ? "translate-x-5" : "translate-x-0",
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="grid gap-3 rounded-lg border border-line bg-soft/40 p-4">
+            <div>
+              <p className="text-sm font-medium text-ink">Right to Erasure</p>
+              <p className="mt-1 text-xs text-ink/60">Hard-purge all memories for a specific user ID (GDPR Article 17 / CCPA). Cannot be undone.</p>
+            </div>
+            {eraseNotice ? (
+              <div className="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700" role="status">
+                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                <span>{eraseNotice}</span>
+              </div>
+            ) : null}
+            {eraseError ? <InlineError title="Erasure failed" message={eraseError} /> : null}
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                data-testid="erase-user-id-input"
+                value={eraseUserId}
+                onChange={(event) => setEraseUserId(event.target.value)}
+                placeholder="user_id to erase"
+                disabled={!canAct || forgetUserMutation.isPending}
+              />
+              <Button
+                type="button"
+                variant="destructive"
+                data-testid="erase-user-data-button"
+                onClick={requestEraseUserData}
+                disabled={!canAct || eraseUserId.trim().length === 0 || forgetUserMutation.isPending}
+              >
+                {forgetUserMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <AlertTriangle className="h-4 w-4" aria-hidden="true" />}
+                Erase User Data
+              </Button>
+            </div>
+            {confirmEraseUserId ? (
+              <div className="rounded-lg border border-rust/30 bg-orange-50 p-3">
+                <p className="text-sm font-medium text-ink">Erase all data for this user?</p>
+                <p className="mt-1 text-sm text-ink/70">
+                  This will {complianceHardPurge ? "permanently delete" : "soft-delete"} all memories scoped to '{confirmEraseUserId}'.
+                </p>
+                <div className="mt-3 flex justify-end gap-2">
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmEraseUserId(null)} disabled={forgetUserMutation.isPending}>
+                    Cancel
+                  </Button>
+                  <Button type="button" variant="destructive" size="sm" onClick={confirmEraseUserData} disabled={forgetUserMutation.isPending}>
+                    {forgetUserMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />}
+                    Erase
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
     </div>

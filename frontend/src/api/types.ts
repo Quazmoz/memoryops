@@ -299,6 +299,8 @@ export type WorkspaceConfig = {
   dedup_cosine_threshold?: number;
   decay_half_life_days?: number;
   pruning_threshold?: number;
+  retention_max_age_days?: number | null;
+  compliance_hard_purge?: boolean;
   contradiction_mode?: "quarantine" | "auto_resolve" | string;
   contradiction_threshold?: number;
   contradiction_candidates?: number;
@@ -350,6 +352,13 @@ export type PromotionReport = {
   clusters_found: number;
   units_promoted: number;
   units_skipped: number;
+};
+
+export type ForgetUserDataResponse = {
+  user_id: string;
+  memories_purged: number;
+  raw_events_purged: number;
+  mode: "hard_purge" | "soft_delete" | string;
 };
 
 export type CreateApiKeyResponse = {

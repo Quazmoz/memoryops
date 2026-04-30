@@ -51,6 +51,14 @@ pub struct WorkspaceConfig {
     pub contradiction_candidates: usize,
     #[serde(default)]
     pub sub_agent_pools: Vec<String>,
+    /// Maximum age in days before a memory is eligible for compliance hard-purge.
+    /// None = no retention limit (default, no automatic purge).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retention_max_age_days: Option<u32>,
+    /// When true, right-to-erasure and retention purges also hard-delete the
+    /// originating raw_events. When false, only memory_units are affected.
+    #[serde(default)]
+    pub compliance_hard_purge: bool,
 }
 
 impl Default for WorkspaceConfig {
@@ -72,6 +80,8 @@ impl Default for WorkspaceConfig {
             contradiction_threshold: default_contradiction_threshold(),
             contradiction_candidates: default_contradiction_candidates(),
             sub_agent_pools: Vec::new(),
+            retention_max_age_days: None,
+            compliance_hard_purge: false,
         }
     }
 }
@@ -206,5 +216,37 @@ mod tests {
 
         assert_eq!(decoded.decay_half_life_days, None);
         assert_eq!(decoded.pruning_threshold, None);
+    }
+
+    #[test]
+    fn compliance_fields_round_trip_json() {
+        let config = WorkspaceConfig {
+            retention_max_age_days: Some(365),
+            compliance_hard_purge: true,
+            ..WorkspaceConfig::default()
+        };
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(
+            value
+                .get("retention_max_age_days")
+                .and_then(|value| value.as_u64()),
+            Some(365)
+        );
+        assert_eq!(
+            value
+                .get("compliance_hard_purge")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        let decoded: WorkspaceConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.retention_max_age_days, Some(365));
+        assert!(decoded.compliance_hard_purge);
+    }
+
+    #[test]
+    fn compliance_fields_absent_deserialize_to_defaults() {
+        let decoded: WorkspaceConfig = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(decoded.retention_max_age_days, None);
+        assert!(!decoded.compliance_hard_purge);
     }
 }

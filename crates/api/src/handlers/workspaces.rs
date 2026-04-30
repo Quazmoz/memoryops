@@ -46,6 +46,9 @@ pub struct UpdateWorkspaceConfigRequest {
     pub dedup_cosine_threshold: Option<f32>,
     pub decay_half_life_days: Option<u32>,
     pub pruning_threshold: Option<f32>,
+    #[serde(default)]
+    pub retention_max_age_days: Option<Option<u32>>,
+    pub compliance_hard_purge: Option<bool>,
     pub contradiction_mode: Option<ContradictionMode>,
     pub contradiction_threshold: Option<f32>,
     pub contradiction_candidates: Option<usize>,
@@ -297,6 +300,7 @@ pub async fn update_workspace_config(
         0.99,
     )?;
     validate_lifecycle_config(&config)?;
+    validate_compliance_config(&config)?;
     validate_contradiction_config(&config)?;
     validate_sub_agent_pools(&config)?;
 
@@ -715,6 +719,18 @@ fn merge_workspace_config(target: &mut serde_json::Value, patch: &UpdateWorkspac
     if let Some(value) = patch.pruning_threshold {
         object.insert("pruning_threshold".to_owned(), json!(value));
     }
+    match patch.retention_max_age_days {
+        Some(Some(value)) => {
+            object.insert("retention_max_age_days".to_owned(), json!(value));
+        }
+        Some(None) => {
+            object.remove("retention_max_age_days");
+        }
+        None => {}
+    }
+    if let Some(value) = patch.compliance_hard_purge {
+        object.insert("compliance_hard_purge".to_owned(), json!(value));
+    }
     if let Some(value) = patch.contradiction_mode {
         object.insert("contradiction_mode".to_owned(), json!(value));
     }
@@ -800,6 +816,18 @@ fn validate_lifecycle_config(config: &UpdateWorkspaceConfigRequest) -> AppResult
         if !threshold.is_finite() || !(0.01..=0.50).contains(&threshold) {
             return Err(AppError::Validation(
                 "pruning_threshold must be between 0.01 and 0.50".to_owned(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_compliance_config(config: &UpdateWorkspaceConfigRequest) -> AppResult<()> {
+    if let Some(Some(days)) = config.retention_max_age_days {
+        if !(1..=3650).contains(&days) {
+            return Err(AppError::Validation(
+                "retention_max_age_days must be between 1 and 3650".to_owned(),
             ));
         }
     }
@@ -1101,6 +1129,8 @@ mod tests {
             dedup_cosine_threshold: None,
             decay_half_life_days,
             pruning_threshold,
+            retention_max_age_days: None,
+            compliance_hard_purge: None,
             contradiction_mode: None,
             contradiction_threshold: None,
             contradiction_candidates: None,

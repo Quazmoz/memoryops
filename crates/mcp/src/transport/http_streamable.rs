@@ -47,7 +47,12 @@ pub fn router(server: SharedServer) -> Router {
     };
 
     Router::new()
-        .route("/mcp", post(handle_mcp_post).get(handle_mcp_get).delete(handle_mcp_delete))
+        .route(
+            "/mcp",
+            post(handle_mcp_post)
+                .get(handle_mcp_get)
+                .delete(handle_mcp_delete),
+        )
         .route("/health", get(health))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -184,7 +189,10 @@ fn is_initialize_request(body: &Value) -> bool {
         .is_some_and(|method| method == "initialize")
 }
 
-fn with_session_header(mut response: axum::response::Response, session_id: Uuid) -> axum::response::Response {
+fn with_session_header(
+    mut response: axum::response::Response,
+    session_id: Uuid,
+) -> axum::response::Response {
     let value = match HeaderValue::from_str(&session_id.to_string()) {
         Ok(value) => value,
         Err(_) => return response,
@@ -193,7 +201,11 @@ fn with_session_header(mut response: axum::response::Response, session_id: Uuid)
     response
 }
 
-fn json_response(status: StatusCode, body: Value, session_id: Option<Uuid>) -> axum::response::Response {
+fn json_response(
+    status: StatusCode,
+    body: Value,
+    session_id: Option<Uuid>,
+) -> axum::response::Response {
     let mut response = (status, Json(body)).into_response();
     if let Some(session_id) = session_id {
         response = with_session_header(response, session_id);
@@ -202,9 +214,5 @@ fn json_response(status: StatusCode, body: Value, session_id: Option<Uuid>) -> a
 }
 
 fn bad_request(message: &str) -> axum::response::Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(json!({ "error": message })),
-    )
-        .into_response()
+    (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))).into_response()
 }

@@ -3,6 +3,7 @@ import type {
   CreatedApiKey,
   CreateApiKeyResponse,
   CreateWorkspaceResponse,
+  ForgetUserDataResponse,
   ImportMemoriesResponse,
   JsonValue,
   PromotionReport,
@@ -81,6 +82,12 @@ export function triggerPromotion(workspaceId: string): Promise<PromotionReport> 
   });
 }
 
+export function forgetUserData(workspaceId: string, userId: string): Promise<ForgetUserDataResponse> {
+  return apiRequest<ForgetUserDataResponse>(`/v1/workspaces/${workspaceId}/forget/user/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function exportMemories(workspaceId: string): Promise<Blob> {
   const response = await fetch(apiUrl(`/v1/workspaces/${workspaceId}/export`), {
     headers: requestHeaders(),
@@ -147,6 +154,8 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   const embeddingProvider = stringConfig(config.embedding_provider);
   const embeddingModel = stringConfig(config.embedding_model);
   const subAgentPools = stringArrayConfig(config.sub_agent_pools);
+  const retentionMaxAgeDays = numberConfig(config.retention_max_age_days);
+  const complianceHardPurge = booleanConfig(config.compliance_hard_purge);
 
   if (decayHalfLifeDays !== undefined) {
     normalized.decay_half_life_days = decayHalfLifeDays;
@@ -169,6 +178,12 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   if (subAgentPools !== undefined) {
     normalized.sub_agent_pools = subAgentPools;
   }
+  if (retentionMaxAgeDays !== undefined) {
+    normalized.retention_max_age_days = retentionMaxAgeDays;
+  }
+  if (complianceHardPurge !== undefined) {
+    normalized.compliance_hard_purge = complianceHardPurge;
+  }
 
   return normalized;
 }
@@ -187,6 +202,10 @@ function numberConfig(value: JsonValue | undefined): number | undefined {
 
 function stringConfig(value: JsonValue | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function booleanConfig(value: JsonValue | undefined): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function stringArrayConfig(value: JsonValue | undefined): string[] | undefined {

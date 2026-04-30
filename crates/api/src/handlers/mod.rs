@@ -3,6 +3,7 @@ use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use uuid::Uuid;
 
 pub mod audit;
+pub mod compliance;
 pub mod contradictions;
 pub mod export;
 pub mod integrations;
@@ -53,6 +54,10 @@ pub fn protected_router() -> Router<AppState> {
             axum::routing::delete(keys::revoke_key),
         )
         .route("/v1/workspaces/{id}/audit", get(audit::list_audit))
+        .route(
+            "/v1/workspaces/{workspace_id}/forget/user/{user_id}",
+            axum::routing::delete(compliance::forget_user_data),
+        )
         .route(
             "/v1/workspaces/{id}/contradictions",
             get(contradictions::list_contradictions),
