@@ -40,17 +40,22 @@ pub async fn forget_user_data(
     }
 
     let config = load_workspace_config(&state, path.workspace_id).await?;
+
     let (memories_purged, raw_events_purged, mode) = if config.compliance_hard_purge {
+        let mut tx = state.db.begin().await.map_err(AppError::Database)?;
         let source_event_ids =
-            user_source_event_ids(&state, path.workspace_id, &path.user_id).await?;
+            user_source_event_ids(&mut tx, path.workspace_id, &path.user_id).await?;
         let raw_events_purged =
-            delete_raw_events(&state, path.workspace_id, &source_event_ids).await?;
+            delete_raw_events(&mut tx, path.workspace_id, &source_event_ids).await?;
         let memories_purged =
-            hard_delete_user_memories(&state, path.workspace_id, &path.user_id).await?;
+            hard_delete_user_memories(&mut tx, path.workspace_id, &path.user_id).await?;
+        tx.commit().await.map_err(AppError::Database)?;
         (memories_purged, raw_events_purged, "hard_purge")
     } else {
+        let mut tx = state.db.begin().await.map_err(AppError::Database)?;
         let memories_purged =
-            soft_delete_user_memories(&state, path.workspace_id, &path.user_id).await?;
+            soft_delete_user_memories(&mut tx, path.workspace_id, &path.user_id).await?;
+        tx.commit().await.map_err(AppError::Database)?;
         (memories_purged, 0, "soft_delete")
     };
 
@@ -106,13 +111,14 @@ async fn load_workspace_config(state: &AppState, workspace_id: Uuid) -> AppResul
 }
 
 async fn user_source_event_ids(
-    state: &AppState,
+    conn: &mut sqlx::PgConnection,
     workspace_id: Uuid,
     user_id: &str,
 ) -> AppResult<Vec<Uuid>> {
     let source_event_ids = sqlx::query_scalar::<_, Option<Vec<Uuid>>>(
         r#"
         SELECT ARRAY_AGG(DISTINCT source_event_id)
+               FILTER (WHERE source_event_id IS NOT NULL)
         FROM (
             SELECT UNNEST(source_events) AS source_event_id
             FROM memory_units
@@ -124,7 +130,7 @@ async fn user_source_event_ids(
     )
     .bind(workspace_id)
     .bind(user_id)
-    .fetch_one(&state.db)
+    .fetch_one(conn)
     .await
     .map_err(AppError::Database)?;
 
@@ -132,7 +138,7 @@ async fn user_source_event_ids(
 }
 
 async fn delete_raw_events(
-    state: &AppState,
+    conn: &mut sqlx::PgConnection,
     workspace_id: Uuid,
     source_event_ids: &[Uuid],
 ) -> AppResult<u64> {
@@ -148,14 +154,14 @@ async fn delete_raw_events(
     )
     .bind(workspace_id)
     .bind(source_event_ids)
-    .execute(&state.db)
+    .execute(conn)
     .await
     .map(|result| result.rows_affected())
     .map_err(AppError::Database)
 }
 
 async fn hard_delete_user_memories(
-    state: &AppState,
+    conn: &mut sqlx::PgConnection,
     workspace_id: Uuid,
     user_id: &str,
 ) -> AppResult<u64> {
@@ -168,14 +174,14 @@ async fn hard_delete_user_memories(
     )
     .bind(workspace_id)
     .bind(user_id)
-    .execute(&state.db)
+    .execute(conn)
     .await
     .map(|result| result.rows_affected())
     .map_err(AppError::Database)
 }
 
 async fn soft_delete_user_memories(
-    state: &AppState,
+    conn: &mut sqlx::PgConnection,
     workspace_id: Uuid,
     user_id: &str,
 ) -> AppResult<u64> {
@@ -190,7 +196,7 @@ async fn soft_delete_user_memories(
     )
     .bind(workspace_id)
     .bind(user_id)
-    .execute(&state.db)
+    .execute(conn)
     .await
     .map(|result| result.rows_affected())
     .map_err(AppError::Database)

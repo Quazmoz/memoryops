@@ -612,8 +612,10 @@ mod tests {
         let revoked_at = if revoked { Some(Utc::now()) } else { None };
         let result = sqlx::query(
             r#"
-            INSERT INTO api_keys (id, workspace_id, name, key_hash, prefix, revoked, revoked_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO api_keys (
+                id, workspace_id, name, key_hash, prefix, prefix_version, revoked, revoked_at
+            )
+            VALUES ($1, $2, $3, $4, $5, 2, $6, $7)
             "#,
         )
         .bind(key_id)

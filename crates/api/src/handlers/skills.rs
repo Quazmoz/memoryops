@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sqlx::{Postgres, QueryBuilder};
 use uuid::Uuid;
 
-use crate::security::{decrypt_secret, encrypt_secret};
+use crate::security::{decrypt_secret_legacy_or_current, encrypt_secret};
 
 use super::require_workspace;
 
@@ -308,7 +308,7 @@ pub async fn get_skill_secret(
 
     Ok(Json(SkillSecretResponse {
         auth_header: row.auth_header,
-        plaintext_secret: decrypt_secret(&ciphertext)?,
+        plaintext_secret: decrypt_secret_legacy_or_current(&ciphertext)?,
     }))
 }
 
@@ -468,7 +468,7 @@ pub async fn test_skill(
         skill.auth_header.as_deref(),
         skill.auth_secret_enc.as_deref(),
     ) {
-        let secret = decrypt_secret(enc)?;
+        let secret = decrypt_secret_legacy_or_current(enc)?;
         req_builder = req_builder.header(header_name, secret);
     }
 

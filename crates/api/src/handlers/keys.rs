@@ -47,13 +47,24 @@ pub async fn insert_key(
     workspace_id: Uuid,
     name: &str,
 ) -> AppResult<(String, KeyRecord)> {
+    let mut tx = db.begin().await.map_err(AppError::Database)?;
+    let inserted = insert_key_record(&mut tx, workspace_id, name).await?;
+    tx.commit().await.map_err(AppError::Database)?;
+    Ok(inserted)
+}
+
+async fn insert_key_record(
+    conn: &mut sqlx::PgConnection,
+    workspace_id: Uuid,
+    name: &str,
+) -> AppResult<(String, KeyRecord)> {
     let key_id = Uuid::now_v7();
     let (plaintext, prefix) = generate_api_key(workspace_id);
     let key_hash = hash_secret(&plaintext)?;
     let created = sqlx::query_as::<_, ApiKeySummary>(
         r#"
-        INSERT INTO api_keys (id, workspace_id, name, key_hash, prefix)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO api_keys (id, workspace_id, name, key_hash, prefix, prefix_version)
+        VALUES ($1, $2, $3, $4, $5, 2)
         RETURNING id, name, prefix, created_at, last_used_at, revoked
         "#,
     )
@@ -62,7 +73,7 @@ pub async fn insert_key(
     .bind(name)
     .bind(key_hash)
     .bind(&prefix)
-    .fetch_one(db)
+    .fetch_one(conn)
     .await
     .map_err(AppError::Database)?;
 
@@ -76,22 +87,24 @@ pub async fn create_key(
     Path(id): Path<Uuid>,
     Json(request): Json<CreateKeyRequest>,
 ) -> AppResult<Json<CreateKeyResponse>> {
-    let actor = match auth.as_ref() {
-        Some(auth) => {
-            require_workspace(&auth.0, id)?;
-            auth.0.actor()
-        }
-        None => {
-            ensure_first_key_bootstrap(&state, id).await?;
-            "bootstrap".to_owned()
-        }
-    };
     if request.name.trim().is_empty() {
         return Err(AppError::Validation("key name is required".to_owned()));
     }
 
     let name = request.name.trim().to_owned();
-    let (plaintext, created) = insert_key(&state.db, id, &name).await?;
+    let (actor, plaintext, created) = match auth.as_ref() {
+        Some(auth) => {
+            require_workspace(&auth.0, id)?;
+            let (plaintext, created) = insert_key(&state.db, id, &name).await?;
+            (auth.0.actor(), plaintext, created)
+        }
+        None => {
+            let mut tx = ensure_first_key_bootstrap(&state, id).await?;
+            let (plaintext, created) = insert_key_record(&mut tx, id, &name).await?;
+            tx.commit().await.map_err(AppError::Database)?;
+            ("bootstrap".to_owned(), plaintext, created)
+        }
+    };
 
     spawn_audit_log(
         state.db.clone(),
@@ -111,32 +124,52 @@ pub async fn create_key(
     }))
 }
 
-async fn ensure_first_key_bootstrap(state: &AppState, workspace_id: Uuid) -> AppResult<()> {
+/// Validates that no active API keys exist for the workspace before allowing
+/// unauthenticated first-key bootstrap. Uses a serialized transaction with
+/// FOR UPDATE to prevent concurrent duplicate bootstrap key creation.
+/// Returns the open transaction so the bootstrap insert commits under the same lock.
+async fn ensure_first_key_bootstrap(
+    state: &AppState,
+    workspace_id: Uuid,
+) -> AppResult<sqlx::Transaction<'static, sqlx::Postgres>> {
+    let mut tx = state.db.begin().await.map_err(AppError::Database)?;
+
     let workspace_exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND deleted_at IS NULL)",
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM workspaces
+            WHERE id = $1 AND deleted_at IS NULL
+            FOR UPDATE
+        )
+        "#,
     )
     .bind(workspace_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await
     .map_err(AppError::Database)?;
 
     if !workspace_exists {
+        tx.rollback().await.map_err(AppError::Database)?;
         return Err(AppError::NotFound {
             resource: format!("workspace:{workspace_id}"),
         });
     }
 
-    let active_keys = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM api_keys WHERE workspace_id = $1 AND revoked = false",
+    let active_key_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*) FROM api_keys
+        WHERE workspace_id = $1 AND revoked = false
+        "#,
     )
     .bind(workspace_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await
     .map_err(AppError::Database)?;
 
-    if active_keys == 0 {
-        Ok(())
+    if active_key_count == 0 {
+        Ok(tx)
     } else {
+        tx.rollback().await.map_err(AppError::Database)?;
         Err(AppError::Unauthorized)
     }
 }

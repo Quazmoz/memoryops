@@ -1030,8 +1030,10 @@ mod tests {
         };
         let result = sqlx::query(
             r#"
-            INSERT INTO api_keys (id, workspace_id, name, key_hash, prefix, revoked, revoked_at)
-            VALUES ($1, $2, $3, $4, $5, false, NULL)
+            INSERT INTO api_keys (
+                id, workspace_id, name, key_hash, prefix, prefix_version, revoked, revoked_at
+            )
+            VALUES ($1, $2, $3, $4, $5, 2, false, NULL)
             "#,
         )
         .bind(key_id)

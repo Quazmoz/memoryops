@@ -14,7 +14,7 @@ use crate::{error::AppResult, models::ApiKey, AppError};
 
 const API_KEY_PREFIX: &str = "mops";
 const WORKSPACE_PREFIX_LEN: usize = 8;
-const STORED_PREFIX_LEN: usize = 8;
+const STORED_PREFIX_LEN: usize = 13;
 const RANDOM_BYTES_LEN: usize = 32;
 const AUTH_CACHE_TTL_SECS: u64 = 30;
 
@@ -253,6 +253,7 @@ mod tests {
         let (key, prefix) = generate_api_key(workspace_id);
 
         assert!(api_key_prefix(&key).is_some());
+        assert_eq!(STORED_PREFIX_LEN, 13);
         assert_eq!(prefix.len(), STORED_PREFIX_LEN);
         assert_eq!(api_key_prefix(&key), Some(prefix));
     }
