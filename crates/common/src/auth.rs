@@ -3,7 +3,7 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, SaltString},
     Argon2, PasswordHasher, PasswordVerifier,
 };
-use rand::RngCore;
+use rand::TryRngCore;
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -35,7 +35,9 @@ pub fn generate_api_key(workspace_id: Uuid) -> (String, String) {
     let workspace_simple = workspace_id.simple().to_string();
     let workspace_prefix = &workspace_simple[..WORKSPACE_PREFIX_LEN];
     let mut random_bytes = [0_u8; RANDOM_BYTES_LEN];
-    rand::rngs::OsRng.fill_bytes(&mut random_bytes);
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut random_bytes)
+        .expect("os rng should be available");
     let random_part = bs58::encode(random_bytes).into_string();
     let plaintext = format!("{API_KEY_PREFIX}_{workspace_prefix}_{random_part}");
     let prefix = plaintext[..STORED_PREFIX_LEN].to_owned();
