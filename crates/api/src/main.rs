@@ -1666,19 +1666,22 @@ mod tests {
         assert_eq!(overall_health_status(&[]), "healthy");
     }
 
-    async fn seed_rate_limit(redis: &ConnectionManager, workspace_id: Uuid) {
+    async fn seed_rate_limit(redis: &deadpool_redis::Pool, workspace_id: Uuid) {
         let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
             Ok(duration) => i64::try_from(duration.as_secs()).unwrap_or(0),
             Err(error) => panic!("system time should be after epoch: {error}"),
         };
         let window_start = now - (now % 60);
-        let mut connection = redis.clone();
+        let mut connection = match redis.get().await {
+            Ok(conn) => conn,
+            Err(error) => panic!("test redis connection should succeed: {error}"),
+        };
         for window in [window_start] {
             let key = format!("rate:workspace:{workspace_id}:memory:{window}");
             let result = redis::cmd("SET")
                 .arg(key)
                 .arg(crate::middleware::rate_limit::MEMORY_RPM)
-                .query_async::<()>(&mut connection)
+                .query_async::<()>(&mut *connection)
                 .await;
             if let Err(error) = result {
                 panic!("rate limit seed should succeed: {error}");
