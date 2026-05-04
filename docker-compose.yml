@@ -54,14 +54,31 @@ services:
     container_name: memoryops-frontend
     ports:
       - "5173:80"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      - api
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/index.html | grep -q '<html' || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/index.html | grep -q '<html' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
+
+  api:
+    build:
+      context: .
+    command: ["api"]
+    environment:
+      DATABASE_URL: postgres://memoryops:memoryops@postgres:5432/memoryops
+      REDIS_URL: redis://redis:6379
+      QDRANT_URL: http://qdrant:6334
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8080"
+      APP_SECRET_KEY: ${APP_SECRET_KEY}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-dev-placeholder}
+    depends_on:
+      - postgres
+      - redis
+      - qdrant
 
   mcp:
     build:
@@ -72,7 +89,7 @@ services:
     environment:
       DATABASE_URL: postgres://memoryops:memoryops@postgres:5432/memoryops
       REDIS_URL: redis://redis:6379
-      QDRANT_URL: http://qdrant:6333
+      QDRANT_URL: http://qdrant:6334
       MCP_PORT: "3003"
       MCP_TRANSPORT: "http"
       APP_SECRET_KEY: ${APP_SECRET_KEY}

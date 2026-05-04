@@ -79,11 +79,12 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         .connect(&database_url)
         .await?;
     let redis_client = redis::Client::open(redis_url)?;
-    let redis = ConnectionManager::new(redis_client).await?;
+    let redis = ConnectionManager::new(redis_client.clone()).await?;
     let qdrant = Qdrant::from_url(&qdrant_url).build()?;
 
     Ok(AppState {
         db,
+        redis_client,
         redis,
         qdrant,
         processor_semaphore: Arc::new(Semaphore::new(

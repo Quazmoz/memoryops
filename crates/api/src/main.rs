@@ -110,7 +110,7 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         .await?;
     ensure_skill_secret_configuration(&db).await?;
     let redis_client = redis::Client::open(redis_url)?;
-    let redis = ConnectionManager::new(redis_client).await?;
+    let redis = ConnectionManager::new(redis_client.clone()).await?;
     let qdrant = Qdrant::from_url(&qdrant_url).build()?;
 
     let embedding_provider = build_embedding_provider(&config);
@@ -118,6 +118,7 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
 
     Ok(AppState {
         db,
+        redis_client,
         redis,
         qdrant,
         processor_semaphore: Arc::new(Semaphore::new(
@@ -557,7 +558,7 @@ mod tests {
             Ok(client) => client,
             Err(error) => panic!("test Redis URL should be valid: {error}"),
         };
-        let redis = match ConnectionManager::new(redis_client).await {
+        let redis = match ConnectionManager::new(redis_client.clone()).await {
             Ok(connection) => connection,
             Err(error) => panic!("test Redis should be reachable: {error}"),
         };
@@ -574,6 +575,7 @@ mod tests {
 
         AppState {
             db: pool,
+            redis_client,
             redis,
             qdrant,
             processor_semaphore: Arc::new(Semaphore::new(

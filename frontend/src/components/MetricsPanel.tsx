@@ -47,6 +47,7 @@ export function MetricsPanel() {
   const metrics = useMetrics(workspaceId);
   const [expanded, setExpanded] = useState(true);
   const [now, setNow] = useState(() => Date.now());
+  const metricsUnsupported = !metrics.isPending && !metrics.isError && metrics.data === null;
 
   useEffect(() => {
     const handle = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -54,12 +55,12 @@ export function MetricsPanel() {
   }, []);
 
   const lastUpdatedLabel = useMemo(() => {
-    if (!metrics.dataUpdatedAt) {
+    if (metricsUnsupported || !metrics.dataUpdatedAt) {
       return null;
     }
     const seconds = Math.max(0, Math.round((now - metrics.dataUpdatedAt) / 1000));
     return `Last updated: ${seconds}s ago`;
-  }, [metrics.dataUpdatedAt, now]);
+  }, [metrics.dataUpdatedAt, metricsUnsupported, now]);
 
   return (
     <Card data-testid="metrics-panel">
@@ -83,6 +84,11 @@ export function MetricsPanel() {
       {expanded ? (
         <CardContent id="metrics-panel-grid">
           {metrics.isError ? <InlineError title="Metrics unavailable" message={errorMessage(metrics.error)} /> : null}
+          {metricsUnsupported ? (
+            <p className="text-sm text-ink/60">
+              Telemetry is not available per workspace yet. Process-wide metrics are intentionally hidden here.
+            </p>
+          ) : null}
           {metrics.isPending ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {Array.from({ length: 9 }).map((_, index) => (
@@ -90,7 +96,7 @@ export function MetricsPanel() {
               ))}
             </div>
           ) : null}
-          {!metrics.isPending && !metrics.isError ? (
+          {!metrics.isPending && !metrics.isError && !metricsUnsupported ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {METRICS.flat().map((spec) => (
                 <MetricCell key={spec.key} spec={spec} value={metrics.data?.metrics?.[spec.key] ?? metrics.data?.[spec.key] ?? null} />

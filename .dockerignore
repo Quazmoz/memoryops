@@ -1,0 +1,10 @@
+.git
+.github
+target
+tmp
+frontend/node_modules
+frontend/test-results
+frontend/out.txt
+frontend/e2e
+docs/assets
+_reference

@@ -338,7 +338,7 @@ async fn test_state(pool: PgPool) -> AppState {
         Ok(client) => client,
         Err(error) => panic!("test Redis URL should be valid: {error}"),
     };
-    let redis = match ConnectionManager::new(redis_client).await {
+    let redis = match ConnectionManager::new(redis_client.clone()).await {
         Ok(connection) => connection,
         Err(error) => panic!("test Redis should be reachable: {error}"),
     };
@@ -354,6 +354,7 @@ async fn test_state(pool: PgPool) -> AppState {
 
     AppState {
         db: pool,
+        redis_client,
         redis,
         qdrant,
         processor_semaphore: Arc::new(Semaphore::new(

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use qdrant_client::Qdrant;
-use redis::aio::ConnectionManager;
+use redis::{aio::ConnectionManager, Client};
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
 
@@ -13,6 +13,7 @@ use crate::{
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
+    pub redis_client: Client,
     pub redis: ConnectionManager,
     pub qdrant: Qdrant,
     pub processor_semaphore: Arc<Semaphore>,

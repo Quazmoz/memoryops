@@ -10,6 +10,7 @@ use common::{
     error::AppResult,
     AppError, AppState,
 };
+use redis::aio::ConnectionManager;
 use uuid::Uuid;
 
 pub const API_KEY_HEADER: HeaderName = HeaderName::from_static("x-api-key");
@@ -28,7 +29,9 @@ pub async fn require_api_key(
     let api_key = api_key_header
         .to_str()
         .map_err(|_| AppError::Unauthorized)?;
-    let mut redis = state.redis.clone();
+    let mut redis = ConnectionManager::new(state.redis_client.clone())
+        .await
+        .map_err(|_| AppError::Unauthorized)?;
     let context = validate_api_key_cached(&state.db, &mut redis, api_key).await?;
     spawn_last_used_update(state.db.clone(), context.key_id);
     request.extensions_mut().insert(context);

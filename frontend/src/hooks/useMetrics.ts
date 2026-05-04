@@ -1,18 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { fetchMetrics } from "../api/metrics";
+import type { MetricsSnapshot } from "../api/metrics";
 import { hasWorkspaceAuth } from "../lib/auth";
 import { useAppStore } from "../store/app-store";
 
 export function useMetrics(workspaceId: string) {
   const apiKey = useAppStore((state) => state.apiKey);
 
-  return useQuery({
+  return useQuery<MetricsSnapshot | null>({
     queryKey: ["workspace", workspaceId, "metrics"],
-    queryFn: () => fetchMetrics(workspaceId),
+    queryFn: async () => null,
     enabled: hasWorkspaceAuth(workspaceId, apiKey),
-    refetchInterval: 60_000,
-    staleTime: 25_000,
+    refetchInterval: false,
+    staleTime: Number.POSITIVE_INFINITY,
     retry: false,
   });
 }
