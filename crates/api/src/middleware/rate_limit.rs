@@ -12,7 +12,7 @@ use tokio::time::{timeout, Duration};
 const INGEST_RPM: i64 = 300;
 pub const MEMORY_RPM: i64 = 120;
 const API_RPM: i64 = 120;
-const RATE_LIMIT_REDIS_TIMEOUT_MS: u64 = 250;
+const RATE_LIMIT_REDIS_TIMEOUT_MS: u64 = 2000;
 const RATE_LIMIT_SCRIPT: &str = r#"
 local count = redis.call('INCR', KEYS[1])
 if count == 1 then

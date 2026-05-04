@@ -45,7 +45,17 @@ pub fn generate_api_key(workspace_id: Uuid) -> (String, String) {
 
 pub fn hash_secret(secret: &str) -> AppResult<String> {
     let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
+    let params = if cfg!(debug_assertions) {
+        argon2::Params::new(1024, 1, 1, None).unwrap()
+    } else {
+        argon2::Params::default()
+    };
+    let argon2 = Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        params,
+    );
+    argon2
         .hash_password(secret.as_bytes(), &salt)
         .map(|hash| hash.to_string())
         .map_err(|error| AppError::Internal(anyhow!(error)))
@@ -115,7 +125,16 @@ async fn validate_api_key_uncached(db: &PgPool, api_key: &str) -> AppResult<Auth
     let candidates = find_candidate_keys(db, &prefix).await?;
 
     for candidate in candidates {
-        if verify_secret(api_key, &candidate.key_hash) {
+        let secret = api_key.to_owned();
+        let hash = candidate.key_hash.clone();
+        
+        let is_valid = tokio::task::spawn_blocking(move || {
+            verify_secret(&secret, &hash)
+        })
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+
+        if is_valid {
             return Ok(AuthContext {
                 workspace_id: candidate.workspace_id,
                 key_id: candidate.id,
@@ -131,14 +150,21 @@ async fn read_auth_context_cache(
     redis: &mut ConnectionManager,
     cache_key: &str,
 ) -> Option<AuthContext> {
-    let cached = match redis::cmd("GET")
-        .arg(cache_key)
-        .query_async::<Option<String>>(&mut *redis)
-        .await
+    let cached = match tokio::time::timeout(
+        std::time::Duration::from_millis(2000),
+        redis::cmd("GET")
+            .arg(cache_key)
+            .query_async::<Option<String>>(&mut *redis)
+    )
+    .await
     {
-        Ok(value) => value,
-        Err(error) => {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => {
             tracing::warn!(error = ?error, "failed to read API key auth cache");
+            return None;
+        }
+        Err(_) => {
+            tracing::warn!("timed out reading API key auth cache");
             return None;
         }
     };
@@ -166,20 +192,25 @@ async fn write_auth_context_cache(
     };
 
     let index_key = auth_cache_index_key(context.key_id);
-    let result = redis::pipe()
-        .cmd("SETEX")
-        .arg(cache_key)
-        .arg(AUTH_CACHE_TTL_SECS)
-        .arg(payload)
-        .cmd("SETEX")
-        .arg(index_key)
-        .arg(AUTH_CACHE_TTL_SECS)
-        .arg(cache_key)
-        .query_async::<()>(&mut *redis)
-        .await;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_millis(2000),
+        redis::pipe()
+            .cmd("SETEX")
+            .arg(cache_key)
+            .arg(AUTH_CACHE_TTL_SECS)
+            .arg(payload)
+            .cmd("SETEX")
+            .arg(index_key)
+            .arg(AUTH_CACHE_TTL_SECS)
+            .arg(cache_key)
+            .query_async::<()>(&mut *redis)
+    )
+    .await;
 
-    if let Err(error) = result {
-        tracing::warn!(error = ?error, "failed to write API key auth cache");
+    match result {
+        Ok(Err(error)) => tracing::warn!(error = ?error, "failed to write API key auth cache"),
+        Err(_) => tracing::warn!("timed out writing API key auth cache"),
+        Ok(Ok(_)) => {}
     }
 }
 
