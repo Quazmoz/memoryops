@@ -21,41 +21,26 @@ Follow these steps precisely using your available terminal and file manipulation
    - *(Note: `sqlx` typically reads `.env` automatically, but if on Windows PowerShell, ensure the variables are loaded).*
 
 4. **Start API Server** (background process)
-   - Start the backend API asynchronously.
-   - On Windows PowerShell (background):
+   - Start the backend API and all dependencies via Docker.
+   - PowerShell:
      ```powershell
-     Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Get-Content .env | ForEach-Object { if ($_ -match "^\s*([^#]\w*)\s*=\s*(.*)") { [Environment]::SetEnvironmentVariable($matches[1], $matches[2]) } }; cargo run -p api' -WindowStyle Minimized
+     docker compose up -d api
      ```
-   - Use `curl.exe http://localhost:8080/health` to poll until it responds (API takes ~30-60s to compile on first run).
+   - Use `curl.exe http://localhost:8080/health` to poll until it responds.
 
 5. **Bootstrap Workspace & Key**
-   - Execute a POST request to create a workspace (handles existing):
+   - Execute a POST request to create a workspace:
      ```powershell
-     $name = "Local Dev Workspace"
+     $name = "Local Dev Workspace " + (Get-Date -Format "yyyyMMddHHmmss")
      $body = @{ name = $name } | ConvertTo-Json
-     try {
-         $workspace = Invoke-RestMethod -Uri "http://localhost:8080/v1/workspaces" -Method Post -ContentType "application/json" -Body $body
-         $workspace_id = $workspace.workspace_id
-         $key = $workspace.api_key
-     } catch {
-         # Fallback: Fetch existing workspace ID if it already exists
-         $workspaces = Invoke-RestMethod -Uri "http://localhost:8080/v1/workspaces" -Method Get -Headers @{"X-API-Key"="ANY_KEY_NOT_NEEDED_HERE_IF_BOOTSTRAP"} # Wait, list needs key
-         # Better fallback: just use a unique name or trust the DB query if we have access.
-         # For the skill, we'll just use a timestamped name to ensure success.
-         $name = "Local Dev Workspace " + (Get-Date -Format "yyyyMMddHHmmss")
-         $body = @{ name = $name } | ConvertTo-Json
-         $workspace = Invoke-RestMethod -Uri "http://localhost:8080/v1/workspaces" -Method Post -ContentType "application/json" -Body $body
-         $workspace_id = $workspace.workspace_id
-     }
-     # Generate a key if we didn't get one (or just generate another one)
-     if (-not $key) {
-         $keyResponse = Invoke-RestMethod -Uri "http://localhost:8080/v1/workspaces/$workspace_id/keys" -Method Post -ContentType "application/json" -Body (@{name="Dev Key"} | ConvertTo-Json)
-         $key = $keyResponse.key
-     }
+     $workspace = Invoke-RestMethod -Uri "http://localhost:8080/v1/workspaces" -Method Post -ContentType "application/json" -Body $body
+     $workspace_id = $workspace.workspace_id
+     $keyResponse = Invoke-RestMethod -Uri "http://localhost:8080/v1/workspaces/$workspace_id/keys" -Method Post -ContentType "application/json" -Body (@{name="Dev Key"} | ConvertTo-Json)
+     $key = $keyResponse.key
      ```
 
 6. **Start Frontend Container**
-   - The frontend **MUST** run as a container.
+   - Ensure the frontend is built with the workspace ID and started.
    - PowerShell:
      ```powershell
      $env:VITE_MEMORYOPS_WORKSPACE_ID=$workspace_id
