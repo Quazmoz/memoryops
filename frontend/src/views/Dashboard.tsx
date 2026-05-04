@@ -84,7 +84,7 @@ export function Dashboard() {
             <p className="text-sm font-medium text-accent-strong">Trend</p>
             <h2 className="mt-1 text-xl font-semibold tracking-normal text-ink">Memory Activity (30 days)</h2>
           </div>
-          {hasWorkspace ? <MemoryTrendChart workspaceId={workspaceId} days={30} /> : null}
+          {hasWorkspace && isMounted ? <MemoryTrendChart workspaceId={workspaceId} days={30} /> : null}
         </div>
 
         <Card>
@@ -132,7 +132,7 @@ export function Dashboard() {
         </Card>
       </section>
 
-      {hasWorkspace && !readiness.isPending && !stats.isPending ? <MetricsPanel /> : null}
+      {hasWorkspace && isMounted && !readiness.isPending && !stats.isPending ? <MetricsPanel /> : null}
 
       <section className="grid gap-4 md:grid-cols-2">
         <Card>

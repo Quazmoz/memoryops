@@ -14,7 +14,8 @@ export function useWorkspaceStats(workspaceId: string) {
     queryFn: () => getWorkspaceStats(workspaceId),
     enabled: hasWorkspaceAuth(workspaceId, apiKey),
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    refetchInterval: 120_000,
+    retry: false,
   });
 }
 
@@ -26,6 +27,7 @@ export function useStatsHistory(workspaceId: string, days = 30) {
     queryFn: () => getWorkspaceStatsHistory(workspaceId, days),
     enabled: hasWorkspaceAuth(workspaceId, apiKey),
     staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 }
 

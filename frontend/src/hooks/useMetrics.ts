@@ -11,7 +11,8 @@ export function useMetrics(workspaceId: string) {
     queryKey: ["workspace", workspaceId, "metrics"],
     queryFn: () => fetchMetrics(workspaceId),
     enabled: hasWorkspaceAuth(workspaceId, apiKey),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
     staleTime: 25_000,
+    retry: false,
   });
 }
