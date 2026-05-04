@@ -1,4 +1,12 @@
-import { Check, Clipboard, KeyRound, Loader2, Sparkles } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Clipboard,
+  KeyRound,
+  Loader2,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
@@ -22,9 +30,20 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
   const setWorkspace = useAppStore((state) => state.setWorkspace);
   const setWorkspaceId = useAppStore((state) => state.setWorkspaceId);
   const [workspaceName, setWorkspaceName] = useState("MemoryOps Workspace");
-  const [step, setStep] = useState<FirstRunStep>(() => (workspaceId.trim().length > 0 ? "key" : "workspace"));
+  const [step, setStep] = useState<FirstRunStep>(() =>
+    workspaceId.trim().length > 0 ? "key" : "workspace"
+  );
   const [plaintextKey, setPlaintextKey] = useState("");
   const [copied, setCopied] = useState(false);
+  const [workspaceCopied, setWorkspaceCopied] = useState(false);
+
+  // Fix #2 — controlled inputs replacing raw DOM access
+  const [existingKey, setExistingKey] = useState("");
+  const [connectWorkspaceId, setConnectWorkspaceId] = useState("");
+  const [connectApiKey, setConnectApiKey] = useState("");
+
+  // Fix #1 — collapsible "Already have a workspace?" section
+  const [connectOpen, setConnectOpen] = useState(false);
 
   const workspaceMutation = useMutation({
     mutationKey: ["first-run", "workspace"],
@@ -64,6 +83,19 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
     void navigator.clipboard.writeText(plaintextKey).then(() => setCopied(true));
   }
 
+  // Fix #3 — copy workspace ID
+  function copyWorkspaceId() {
+    if (!workspaceId) {
+      return;
+    }
+    void navigator.clipboard
+      .writeText(workspaceId)
+      .then(() => {
+        setWorkspaceCopied(true);
+        setTimeout(() => setWorkspaceCopied(false), 2000);
+      });
+  }
+
   function finishSetup() {
     if (workspaceId.trim().length > 0 && plaintextKey.trim().length > 0) {
       setWorkspace(workspaceId, plaintextKey);
@@ -78,94 +110,290 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
             <Sparkles className="h-5 w-5" aria-hidden="true" />
           </div>
           <CardTitle>Set Up MemoryOps</CardTitle>
-          <p className="text-sm text-ink/65">Create a workspace and generate the first API key for this browser session.</p>
+          <p className="text-sm text-ink/65">
+            Create a workspace and generate the first API key for this browser
+            session.
+          </p>
         </CardHeader>
         <CardContent className="space-y-5">
+          {/* Fix #6 — step pills with step number when incomplete */}
           <div className="grid grid-cols-2 gap-2 text-xs font-medium text-ink/60">
-            <StepPill active={step === "workspace"} complete={workspaceId.trim().length > 0} label="Workspace" />
-            <StepPill active={step === "key"} complete={plaintextKey.trim().length > 0} label="API key" />
+            <StepPill
+              active={step === "workspace"}
+              complete={workspaceId.trim().length > 0}
+              label="Workspace"
+              step={1}
+            />
+            <StepPill
+              active={step === "key"}
+              complete={plaintextKey.trim().length > 0}
+              label="API key"
+              step={2}
+            />
           </div>
 
-          {step === "workspace" ? (
-            <form className="grid gap-4" onSubmit={submitWorkspace}>
-              <label className="grid gap-2 text-sm font-medium text-ink/70">
-                Name
-                <Input data-testid="workspace-name-input" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} />
-              </label>
-              <Button type="submit" data-testid="create-workspace-button" disabled={workspaceMutation.isPending || workspaceName.trim().length === 0}>
-                {workspaceMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
-                {workspaceMutation.isPending ? "Creating" : "Create Workspace"}
-              </Button>
-              {workspaceMutation.isError ? <InlineError message={workspaceMutation.error.message} /> : null}
-            </form>
-          ) : (
-            <div className="grid gap-4">
-              <div className="rounded-md border border-line bg-soft px-3 py-2 font-mono text-xs text-ink/70">{workspaceId}</div>
-              {!plaintextKey ? (
-                <div className="grid gap-4">
-                  <Button type="button" data-testid="create-api-key-button" onClick={() => keyMutation.mutate()} disabled={keyMutation.isPending || workspaceId.trim().length === 0}>
-                    {keyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
-                    {keyMutation.isPending ? "Creating" : "Create API Key"}
+          {/* Fix #8 — aria-live region for step content */}
+          <div aria-live="polite" aria-atomic="true">
+            {step === "workspace" ? (
+              <form className="grid gap-4" onSubmit={submitWorkspace}>
+                <label className="grid gap-2 text-sm font-medium text-ink/70">
+                  Name
+                  <Input
+                    data-testid="workspace-name-input"
+                    value={workspaceName}
+                    onChange={(event) => setWorkspaceName(event.target.value)}
+                  />
+                </label>
+                <Button
+                  type="submit"
+                  data-testid="create-workspace-button"
+                  disabled={
+                    workspaceMutation.isPending ||
+                    workspaceName.trim().length === 0
+                  }
+                >
+                  {workspaceMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <KeyRound className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {workspaceMutation.isPending ? "Creating" : "Create Workspace"}
+                </Button>
+                {workspaceMutation.isError ? (
+                  <InlineError message={workspaceMutation.error.message} />
+                ) : null}
+              </form>
+            ) : (
+              <div className="grid gap-4">
+                {/* Fix #3 — workspace ID display with copy button */}
+                <div className="flex min-w-0 items-center gap-2 rounded-md border border-line bg-soft px-3 py-2">
+                  <code className="min-w-0 flex-1 truncate font-mono text-xs text-ink/70">
+                    {workspaceId}
+                  </code>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={copyWorkspaceId}
+                    aria-label="Copy workspace ID"
+                  >
+                    {workspaceCopied ? (
+                      <Check className="h-4 w-4" aria-hidden="true" />
+                    ) : (
+                      <Clipboard className="h-4 w-4" aria-hidden="true" />
+                    )}
+                    {workspaceCopied ? "Copied" : "Copy"}
                   </Button>
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-line" /></div>
-                    <div className="relative flex justify-center text-xs uppercase"><span className="bg-soft px-2 text-ink/45">Or use existing</span></div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Input data-testid="existing-key-input" id="existing-key-input" placeholder="Paste API key (mops_...)" />
-                    <Button type="button" variant="secondary" data-testid="existing-key-submit" onClick={() => {
-                      const val = (document.getElementById("existing-key-input") as HTMLInputElement)?.value.trim();
-                      if (val) setWorkspace(workspaceId, val);
-                    }}>Submit</Button>
-                  </div>
                 </div>
-              ) : (
-                <div className="grid gap-3">
-                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
-                    Copy this key now — it will not be shown again.
+
+                {!plaintextKey ? (
+                  <div className="grid gap-4">
+                    <Button
+                      type="button"
+                      data-testid="create-api-key-button"
+                      onClick={() => keyMutation.mutate()}
+                      disabled={
+                        keyMutation.isPending || workspaceId.trim().length === 0
+                      }
+                    >
+                      {keyMutation.isPending ? (
+                        <Loader2
+                          className="h-4 w-4 animate-spin"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <KeyRound className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      {keyMutation.isPending ? "Creating" : "Create API Key"}
+                    </Button>
+
+                    {/* Fix #5 — divider uses bg-soft to match card background */}
+                    <div className="relative">
+                      <div className="absolute inset-0 flex items-center">
+                        <span className="w-full border-t border-line" />
+                      </div>
+                      <div className="relative flex justify-center text-xs uppercase">
+                        <span className="bg-soft px-2 text-ink/45">
+                          Or use existing
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Fix #2 — controlled existingKey state */}
+                    <div className="flex gap-2">
+                      <Input
+                        data-testid="existing-key-input"
+                        placeholder="Paste API key (mops_...)"
+                        value={existingKey}
+                        onChange={(e) => setExistingKey(e.target.value)}
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        data-testid="existing-key-submit"
+                        onClick={() => {
+                          const val = existingKey.trim();
+                          if (val) setWorkspace(workspaceId, val);
+                        }}
+                      >
+                        Submit
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex min-w-0 items-center gap-2 rounded-md border border-line bg-white p-2">
-                    <code className="min-w-0 flex-1 truncate text-xs text-ink/75">{plaintextKey}</code>
-                    <Button type="button" variant="secondary" size="sm" data-testid="copy-key-button" onClick={copyKey} aria-label="Copy API key">
-                      {copied ? <Check className="h-4 w-4" aria-hidden="true" /> : <Clipboard className="h-4 w-4" aria-hidden="true" />}
-                      {copied ? "Copied" : "Copy"}
+                ) : (
+                  <div className="grid gap-3">
+                    {/* Fix #4 — amber banner with TriangleAlert icon, semibold, role="alert" */}
+                    <div
+                      role="alert"
+                      className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900"
+                    >
+                      <TriangleAlert
+                        className="h-4 w-4 shrink-0"
+                        aria-hidden="true"
+                      />
+                      Copy this key now — it will not be shown again.
+                    </div>
+                    <div className="flex min-w-0 items-center gap-2 rounded-md border border-line bg-white p-2">
+                      <code className="min-w-0 flex-1 truncate text-xs text-ink/75">
+                        {plaintextKey}
+                      </code>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        data-testid="copy-key-button"
+                        onClick={copyKey}
+                        aria-label="Copy API key"
+                      >
+                        {copied ? (
+                          <Check className="h-4 w-4" aria-hidden="true" />
+                        ) : (
+                          <Clipboard className="h-4 w-4" aria-hidden="true" />
+                        )}
+                        {copied ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+
+                    {/* Fix #7 — Continue disabled until copied, success ring when enabled */}
+                    <Button
+                      type="button"
+                      data-testid="finish-setup-button"
+                      onClick={finishSetup}
+                      disabled={!copied}
+                      className={
+                        copied
+                          ? "ring-2 ring-offset-1 ring-accent/40"
+                          : undefined
+                      }
+                    >
+                      {copied ? "Continue →" : "Copy key to continue"}
                     </Button>
                   </div>
-                  <Button type="button" data-testid="finish-setup-button" onClick={finishSetup}>Continue</Button>
-                </div>
-              )}
-              {keyMutation.isError ? <InlineError message={keyMutation.error.message} /> : null}
-            </div>
-          )}
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-line" /></div>
-            <div className="relative flex justify-center text-xs uppercase"><span className="bg-panel px-2 text-ink/45">Or connect existing</span></div>
+                )}
+                {keyMutation.isError ? (
+                  <InlineError message={keyMutation.error.message} />
+                ) : null}
+              </div>
+            )}
           </div>
-          <div className="grid gap-3">
-            <label className="grid gap-2 text-sm font-medium text-ink/70">
-              Workspace ID
-              <Input data-testid="workspace-id-input" placeholder="Paste workspace ID" />
-            </label>
-            <label className="grid gap-2 text-sm font-medium text-ink/70">
-              API Key
-              <Input data-testid="api-key-input" type="password" placeholder="mops_..." />
-            </label>
-            <Button type="button" data-testid="connect-button" variant="secondary" onClick={() => {
-              const wsId = (document.querySelector('[data-testid="workspace-id-input"]') as HTMLInputElement)?.value.trim();
-              const key = (document.querySelector('[data-testid="api-key-input"]') as HTMLInputElement)?.value.trim();
-              if (wsId && key) setWorkspace(wsId, key);
-            }}>Connect</Button>
-          </div>        </CardContent>
+
+          {/* Fix #1 — collapsible "Already have a workspace?" section */}
+          <div>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between rounded-md px-1 py-2 text-xs font-medium text-ink/50 transition-colors hover:text-ink/75"
+              onClick={() => setConnectOpen((prev) => !prev)}
+              aria-expanded={connectOpen}
+            >
+              <span>Already have a workspace?</span>
+              <ChevronDown
+                className={`h-3.5 w-3.5 transition-transform duration-200 ${connectOpen ? "rotate-180" : ""}`}
+                aria-hidden="true"
+              />
+            </button>
+
+            {connectOpen && (
+              <div className="mt-2 grid gap-3">
+                {/* Fix #5 — both dividers now use bg-soft */}
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t border-line" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-soft px-2 text-ink/45">
+                      Or connect existing
+                    </span>
+                  </div>
+                </div>
+
+                {/* Fix #2 — controlled connectWorkspaceId + connectApiKey state */}
+                <label className="grid gap-2 text-sm font-medium text-ink/70">
+                  Workspace ID
+                  <Input
+                    data-testid="workspace-id-input"
+                    placeholder="Paste workspace ID"
+                    value={connectWorkspaceId}
+                    onChange={(e) => setConnectWorkspaceId(e.target.value)}
+                  />
+                </label>
+                <label className="grid gap-2 text-sm font-medium text-ink/70">
+                  API Key
+                  <Input
+                    data-testid="api-key-input"
+                    type="password"
+                    placeholder="mops_..."
+                    value={connectApiKey}
+                    onChange={(e) => setConnectApiKey(e.target.value)}
+                  />
+                </label>
+                <Button
+                  type="button"
+                  data-testid="connect-button"
+                  variant="secondary"
+                  onClick={() => {
+                    const wsId = connectWorkspaceId.trim();
+                    const key = connectApiKey.trim();
+                    if (wsId && key) setWorkspace(wsId, key);
+                  }}
+                >
+                  Connect
+                </Button>
+              </div>
+            )}
+          </div>
+        </CardContent>
       </Card>
     </div>
   );
 }
 
-function StepPill({ active, complete, label }: { active: boolean; complete: boolean; label: string }) {
+// Fix #6 — StepPill with step number when incomplete
+function StepPill({
+  active,
+  complete,
+  label,
+  step,
+}: {
+  active: boolean;
+  complete: boolean;
+  label: string;
+  step: number;
+}) {
   return (
-    <div className={`flex items-center justify-center gap-2 rounded-md border px-3 py-2 ${active ? "border-accent bg-accent/10 text-accent-strong" : "border-line bg-white"}`}>
-      {complete ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+    <div
+      className={`flex items-center justify-center gap-2 rounded-md border px-3 py-2 ${
+        active
+          ? "border-accent bg-accent/10 text-accent-strong"
+          : "border-line bg-white"
+      }`}
+    >
+      {complete ? (
+        <Check className="h-3.5 w-3.5" aria-hidden="true" />
+      ) : (
+        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-ink/15 text-[10px] font-semibold">
+          {step}
+        </span>
+      )}
       <span>{label}</span>
     </div>
   );
