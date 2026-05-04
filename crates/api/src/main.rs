@@ -241,8 +241,11 @@ async fn health() -> Json<Value> {
 }
 
 async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
-    let (database, redis, qdrant) =
-        tokio::join!(check_database(&state.db), check_redis(), check_qdrant());
+    let (database, redis, qdrant) = tokio::join!(
+        check_database(&state.db),
+        check_redis(&state.redis),
+        check_qdrant()
+    );
     let ready = database.is_ready() && redis.is_ready() && qdrant.is_ready();
     let status = if ready {
         StatusCode::OK
@@ -296,21 +299,13 @@ async fn check_database(pool: &sqlx::PgPool) -> DependencyStatus {
     }
 }
 
-async fn check_redis() -> DependencyStatus {
-    let Ok(redis_url) = std::env::var("REDIS_URL") else {
-        return DependencyStatus::MissingConfig;
-    };
-
-    let Ok(client) = redis::Client::open(redis_url) else {
-        return DependencyStatus::Unavailable;
-    };
-
-    let Ok(mut connection) = client.get_multiplexed_async_connection().await else {
+async fn check_redis(pool: &deadpool_redis::Pool) -> DependencyStatus {
+    let Ok(mut connection) = pool.get().await else {
         return DependencyStatus::Unavailable;
     };
 
     match redis::cmd("PING")
-        .query_async::<String>(&mut connection)
+        .query_async::<String>(&mut *connection)
         .await
     {
         Ok(_) => DependencyStatus::Ok,
@@ -1680,7 +1675,7 @@ mod tests {
             let key = format!("rate:workspace:{workspace_id}:memory:{window}");
             let result = redis::cmd("SET")
                 .arg(key)
-                .arg(crate::middleware::rate_limit::MEMORY_RPM)
+                .arg(crate::middleware::rate_limit::MEMORY_RPM + 1)
                 .query_async::<()>(&mut *connection)
                 .await;
             if let Err(error) = result {
