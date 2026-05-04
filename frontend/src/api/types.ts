@@ -287,11 +287,13 @@ export type CreateWorkspaceResponse = {
   id?: string;
   name?: string;
   workspace_id?: string;
+  api_key?: string;
 };
 
 export type WorkspaceSummary = {
   id: string;
   name: string;
+  api_key?: string;
 };
 
 export type WorkspaceConfig = {

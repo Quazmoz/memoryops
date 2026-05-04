@@ -27,10 +27,16 @@ export async function createWorkspace(name: string): Promise<WorkspaceSummary> {
     throw new Error("Workspace response did not include an id");
   }
 
-  return {
+  const result: WorkspaceSummary = {
     id,
     name: response.name ?? name,
   };
+
+  if (response.api_key) {
+    result.api_key = response.api_key;
+  }
+
+  return result;
 }
 
 export async function createApiKey(workspaceId: string, name: string): Promise<CreatedApiKey> {

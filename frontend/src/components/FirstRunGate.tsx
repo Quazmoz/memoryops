@@ -67,6 +67,10 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
     mutationFn: (name: string) => createWorkspace(name.trim()),
     onSuccess: (workspace) => {
       setWorkspaceId(workspace.id);
+      if (workspace.api_key) {
+        setPlaintextKey(workspace.api_key);
+        setCopied(false);
+      }
       setStep("key");
     },
   });
