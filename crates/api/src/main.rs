@@ -32,6 +32,7 @@ async fn main() -> anyhow::Result<()> {
     let _telemetry_guard = init_telemetry(&config.telemetry)?;
     crate::security::validate_secret_key_at_startup()
         .map_err(|_| anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
+    workspace_creation_secret_from_env()?;
     let state = build_state(config.clone()).await?;
     processor::start_workers(state.clone()).await?;
     tokio::spawn(processor::scheduler::run_scheduler(state.clone()));
@@ -164,6 +165,15 @@ fn webhook_secret_from_env(name: &'static str) -> anyhow::Result<String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => Ok(value),
         _ => Err(anyhow::anyhow!(format!("{name} must be set"))),
+    }
+}
+
+fn workspace_creation_secret_from_env() -> anyhow::Result<String> {
+    match std::env::var("WORKSPACE_CREATION_SECRET") {
+        Ok(value) if !value.trim().is_empty() => Ok(value),
+        _ => Err(anyhow::anyhow!(
+            "WORKSPACE_CREATION_SECRET must be set"
+        )),
     }
 }
 
@@ -558,6 +568,7 @@ mod tests {
     use super::*;
 
     async fn test_state(pool: PgPool) -> AppState {
+        std::env::set_var("WORKSPACE_CREATION_SECRET", "test-workspace-create-secret");
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:16379".to_owned());
         let redis = {
@@ -831,10 +842,19 @@ mod tests {
     }
 
     fn request(method: Method, uri: String, api_key: Option<&str>, body: Value) -> Request<Body> {
+        let is_workspace_create = method == Method::POST && uri == "/v1/workspaces";
         let mut builder = Request::builder()
             .method(method)
             .uri(uri)
             .header("content-type", "application/json");
+
+        if is_workspace_create {
+            if let Ok(secret) = std::env::var("WORKSPACE_CREATION_SECRET") {
+                builder = builder
+                    .header("x-admin-token", secret)
+                    .header("x-forwarded-for", "127.0.0.1");
+            }
+        }
 
         if let Some(api_key) = api_key {
             builder = builder.header("x-api-key", api_key);

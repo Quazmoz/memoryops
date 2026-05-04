@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::{Postgres, QueryBuilder};
+use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::security::{decrypt_secret_legacy_or_current, encrypt_secret};
@@ -305,10 +305,12 @@ pub async fn get_skill_secret(
     let ciphertext = row.auth_secret_enc.ok_or_else(|| AppError::NotFound {
         resource: format!("workspace_skill_secret:{name}"),
     })?;
+    let decrypted = decrypt_secret_legacy_or_current(&ciphertext)?;
+    persist_migrated_ciphertext(&state.db, id, &name, &decrypted).await?;
 
     Ok(Json(SkillSecretResponse {
         auth_header: row.auth_header,
-        plaintext_secret: decrypt_secret_legacy_or_current(&ciphertext)?,
+        plaintext_secret: decrypted.plaintext,
     }))
 }
 
@@ -409,6 +411,29 @@ fn encrypted_secret(value: Option<&str>) -> AppResult<Option<String>> {
     encrypt_secret(&secret).map(Some)
 }
 
+async fn persist_migrated_ciphertext(
+    db: &PgPool,
+    workspace_id: Uuid,
+    name: &str,
+    decrypted: &crate::security::DecryptedSecret,
+) -> AppResult<()> {
+    let Some(migrated_ciphertext) = decrypted.migrated_ciphertext.as_ref() else {
+        return Ok(());
+    };
+
+    sqlx::query(
+        "UPDATE workspace_skills SET auth_secret_enc = $3 WHERE workspace_id = $1 AND name = $2",
+    )
+    .bind(workspace_id)
+    .bind(name)
+    .bind(migrated_ciphertext)
+    .execute(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(())
+}
+
 /// Request body for the skill test proxy.
 #[derive(Debug, Deserialize)]
 pub struct SkillTestRequest {
@@ -468,8 +493,9 @@ pub async fn test_skill(
         skill.auth_header.as_deref(),
         skill.auth_secret_enc.as_deref(),
     ) {
-        let secret = decrypt_secret_legacy_or_current(enc)?;
-        req_builder = req_builder.header(header_name, secret);
+        let decrypted = decrypt_secret_legacy_or_current(enc)?;
+        persist_migrated_ciphertext(&state.db, id, &name, &decrypted).await?;
+        req_builder = req_builder.header(header_name, decrypted.plaintext);
     }
 
     // Forward caller-supplied headers (cannot override the auth header)

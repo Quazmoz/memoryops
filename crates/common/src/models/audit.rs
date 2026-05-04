@@ -41,6 +41,7 @@ pub enum AuditAction {
     IntegrationRemoved,
     ContradictionResolved,
     WorkspaceReindexed,
+    WorkspaceDeleted,
     ObservationIngested,
     UserErasure,
 }

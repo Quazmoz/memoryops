@@ -1,9 +1,16 @@
-use std::{str, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    str,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::anyhow;
 use axum::{
-    body::Body, extract::Path, extract::Query, extract::State, response::IntoResponse, Extension,
-    Json,
+    body::Body,
+    extract::{connect_info::ConnectInfo, Path, Query, State},
+    http::{header::HeaderName, HeaderMap, StatusCode},
+    response::IntoResponse,
+    Extension, Json,
 };
 use chrono::{DateTime, NaiveDate, Utc};
 use common::{
@@ -15,10 +22,12 @@ use common::{
 };
 use futures_util::StreamExt;
 use processor::worker::enqueue_slow_job;
+use processor::embedder::COLLECTION_NAME;
 use processor::{
     config::fetch_workspace_promotion_config,
     promoter::{run_promotion_pass, PromotionReport},
 };
+use qdrant_client::qdrant::DeletePointsBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
@@ -27,6 +36,30 @@ use uuid::Uuid;
 use super::{keys, require_workspace};
 
 pub const MAX_IMPORT_BODY_BYTES: usize = 50 * 1024 * 1024;
+const WORKSPACE_CREATE_RATE_LIMIT_CAPACITY: i64 = 5;
+const WORKSPACE_CREATE_REFILL_TOKENS_PER_SEC: f64 = 5.0 / 3600.0;
+const X_ADMIN_TOKEN_HEADER: HeaderName = HeaderName::from_static("x-admin-token");
+const X_FORWARDED_FOR_HEADER: HeaderName = HeaderName::from_static("x-forwarded-for");
+const KNOWN_CONFIG_KEYS: &[&str] = &[
+    "promotion_threshold",
+    "dedup_cosine_threshold",
+    "access_count_trigger",
+    "half_life_days",
+    "decay_rate_episodic",
+    "decay_rate_semantic",
+    "llm_provider",
+    "embedding_provider",
+    "llm_model",
+    "embedding_model",
+    "decay_half_life_days",
+    "pruning_threshold",
+    "retention_max_age_days",
+    "compliance_hard_purge",
+    "contradiction_mode",
+    "contradiction_threshold",
+    "contradiction_candidates",
+    "sub_agent_pools",
+];
 
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkspaceRequest {
@@ -116,8 +149,15 @@ struct WorkspaceStatsRow {
 #[axum::debug_handler]
 pub async fn create_workspace(
     State(state): State<AppState>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(request): Json<CreateWorkspaceRequest>,
 ) -> AppResult<Json<CreateWorkspaceResponse>> {
+    authorize_workspace_creation(&headers)?;
+    let created_from_ip = resolve_client_ip(&headers, connect_info.as_ref())
+        .ok_or_else(|| AppError::Validation("client IP is required".to_owned()))?;
+    enforce_workspace_creation_rate_limit(&state, created_from_ip).await?;
+
     if request.name.trim().is_empty() {
         return Err(AppError::Validation(
             "workspace name is required".to_owned(),
@@ -131,8 +171,8 @@ pub async fn create_workspace(
 
     sqlx::query(
         r#"
-        INSERT INTO workspaces (id, name, config, promotion_threshold, dedup_cosine_threshold)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO workspaces (id, name, config, promotion_threshold, dedup_cosine_threshold, created_from_ip)
+        VALUES ($1, $2, $3, $4, $5, $6)
         "#,
     )
     .bind(workspace_id)
@@ -140,6 +180,7 @@ pub async fn create_workspace(
     .bind(config_value)
     .bind(config.promotion_threshold)
     .bind(config.dedup_cosine_threshold)
+    .bind(created_from_ip)
     .execute(&state.db)
     .await
     .map_err(|error| {
@@ -166,13 +207,14 @@ pub async fn create_workspace(
 pub async fn list_workspaces(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
-) -> AppResult<Json<Vec<Workspace>>> {
+) -> AppResult<Json<Workspace>> {
+    // TODO: if/when multi-workspace accounts are introduced, add a dedicated list endpoint.
     let workspace = get_workspace_by_id(&state, auth.workspace_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             resource: format!("workspace:{}", auth.workspace_id),
         })?;
-    Ok(Json(vec![workspace]))
+    Ok(Json(workspace))
 }
 
 pub async fn get_workspace(
@@ -312,7 +354,7 @@ pub async fn update_workspace_config(
             resource: format!("workspace:{id}"),
         })?;
     let mut config_value = before.config.clone();
-    merge_workspace_config(&mut config_value, &config);
+    merge_workspace_config(&mut config_value, &config)?;
     let promotion_threshold = config
         .promotion_threshold
         .unwrap_or(before.promotion_threshold);
@@ -358,6 +400,48 @@ pub async fn update_workspace_config(
     );
 
     Ok(Json(updated))
+}
+
+#[axum::debug_handler]
+pub async fn delete_workspace(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_workspace(&auth, id)?;
+
+    let deleted = sqlx::query(
+        r#"
+        UPDATE workspaces
+        SET deleted_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .execute(&state.db)
+    .await
+    .map_err(AppError::Database)?
+    .rows_affected();
+
+    if deleted == 0 {
+        return Err(AppError::NotFound {
+            resource: format!("workspace:{id}"),
+        });
+    }
+
+    spawn_audit_log(
+        state.db.clone(),
+        id,
+        auth.actor(),
+        AuditAction::WorkspaceDeleted,
+        id,
+        "workspace",
+        None,
+    );
+
+    enqueue_workspace_purge_job(state.clone(), id);
+
+    Ok(Json(json!({ "deleted": true })))
 }
 
 #[axum::debug_handler]
@@ -429,9 +513,9 @@ pub async fn import_memories(
         })?;
         buffer.push_str(text);
         if buffer.len() > MAX_IMPORT_BODY_BYTES {
-            return Err(AppError::Validation(
-                "import body exceeds 50MB limit".to_owned(),
-            ));
+            process_complete_import_lines(&state, workspace_id, &mut buffer, &mut response).await;
+            response.errors = response.errors.saturating_add(1);
+            return Ok((StatusCode::UNPROCESSABLE_ENTITY, Json(response)));
         }
         process_complete_import_lines(&state, workspace_id, &mut buffer, &mut response).await;
     }
@@ -708,13 +792,16 @@ async fn release_promotion_lock(state: &AppState, key: &str, token: &str) {
     }
 }
 
-fn merge_workspace_config(target: &mut serde_json::Value, patch: &UpdateWorkspaceConfigRequest) {
+fn merge_workspace_config(
+    target: &mut serde_json::Value,
+    patch: &UpdateWorkspaceConfigRequest,
+) -> AppResult<()> {
     if !target.is_object() {
         *target = json!({});
     }
 
     let Some(object) = target.as_object_mut() else {
-        return;
+        return Ok(());
     };
 
     if let Some(value) = patch.promotion_threshold {
@@ -756,9 +843,195 @@ fn merge_workspace_config(target: &mut serde_json::Value, patch: &UpdateWorkspac
             json!(normalized_sub_agent_pools(value)),
         );
     }
-    for (key, value) in &patch.extra {
-        object.insert(key.clone(), value.clone());
+    for key in patch.extra.keys() {
+        if KNOWN_CONFIG_KEYS.contains(&key.as_str()) {
+            return Err(AppError::Validation(format!(
+                "config field '{key}' must be set via the typed request field"
+            )));
+        }
+
+        tracing::warn!(
+            key = %key,
+            "ignoring unknown workspace config patch field"
+        );
     }
+
+    Ok(())
+}
+
+fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
+    let expected_secret = std::env::var("WORKSPACE_CREATION_SECRET")
+        .map_err(|_| AppError::Internal(anyhow!("WORKSPACE_CREATION_SECRET is not configured")))?;
+
+    let Some(provided_header) = headers.get(&X_ADMIN_TOKEN_HEADER) else {
+        return Err(AppError::Forbidden);
+    };
+
+    let Ok(provided_secret) = provided_header.to_str() else {
+        return Err(AppError::Forbidden);
+    };
+
+    if provided_secret == expected_secret {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden)
+    }
+}
+
+fn resolve_client_ip(
+    headers: &HeaderMap,
+    connect_info: Option<&ConnectInfo<SocketAddr>>,
+) -> Option<IpAddr> {
+    if let Some(value) = headers.get(&X_FORWARDED_FOR_HEADER) {
+        if let Ok(raw) = value.to_str() {
+            if let Some(first) = raw.split(',').next() {
+                let candidate = first.trim();
+                if let Ok(ip) = candidate.parse::<IpAddr>() {
+                    return Some(ip);
+                }
+                if let Ok(addr) = candidate.parse::<SocketAddr>() {
+                    return Some(addr.ip());
+                }
+            }
+        }
+    }
+
+    connect_info.map(|info| info.0.ip())
+}
+
+async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> AppResult<()> {
+    let key = format!("workspace:create:ratelimit:{ip}");
+    let now = unix_timestamp_secs()?;
+
+    let mut redis = state.redis.clone();
+    let allowed = redis::Script::new(
+        r#"
+        local data = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+        local tokens = tonumber(data[1])
+        local ts = tonumber(data[2])
+        local now = tonumber(ARGV[1])
+        local capacity = tonumber(ARGV[2])
+        local refill = tonumber(ARGV[3])
+
+        if tokens == nil then
+          tokens = capacity
+          ts = now
+        end
+
+        local elapsed = math.max(0, now - ts)
+        tokens = math.min(capacity, tokens + (elapsed * refill))
+
+        local allowed = 0
+        if tokens >= 1 then
+          tokens = tokens - 1
+          allowed = 1
+        end
+
+        redis.call('HMSET', KEYS[1], 'tokens', tokens, 'ts', now)
+        redis.call('EXPIRE', KEYS[1], 7200)
+        return allowed
+        "#,
+    )
+    .key(&key)
+    .arg(now)
+    .arg(WORKSPACE_CREATE_RATE_LIMIT_CAPACITY)
+    .arg(WORKSPACE_CREATE_REFILL_TOKENS_PER_SEC)
+    .invoke_async::<i64>(&mut redis)
+    .await
+    .map_err(|error| AppError::Internal(anyhow!(error)))?;
+
+    if allowed == 1 {
+        Ok(())
+    } else {
+        Err(AppError::RateLimited {
+            retry_after_secs: 3600,
+        })
+    }
+}
+
+fn unix_timestamp_secs() -> AppResult<i64> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    i64::try_from(duration.as_secs()).map_err(|error| AppError::Internal(anyhow!(error)))
+}
+
+fn enqueue_workspace_purge_job(state: AppState, workspace_id: Uuid) {
+    tokio::spawn(async move {
+        if let Err(error) = purge_workspace_associations(&state, workspace_id).await {
+            tracing::warn!(error = ?error, workspace_id = %workspace_id, "workspace purge job failed");
+        }
+    });
+}
+
+async fn purge_workspace_associations(state: &AppState, workspace_id: Uuid) -> AppResult<()> {
+    #[derive(sqlx::FromRow)]
+    struct WorkspaceEmbeddingRow {
+        id: Uuid,
+    }
+
+    let embedded_ids = sqlx::query_as::<_, WorkspaceEmbeddingRow>(
+        r#"
+        SELECT id
+        FROM memory_units
+        WHERE workspace_id = $1
+          AND embedding_id IS NOT NULL
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    for row in &embedded_ids {
+        if let Err(error) = state
+            .qdrant
+            .delete_points(
+                DeletePointsBuilder::new(COLLECTION_NAME)
+                    .points([row.id.to_string()])
+                    .wait(true),
+            )
+            .await
+        {
+            tracing::warn!(
+                error = ?error,
+                workspace_id = %workspace_id,
+                memory_id = %row.id,
+                "failed to delete workspace point from Qdrant"
+            );
+        }
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE memory_units
+        SET deleted_at = NOW(),
+            embedding_id = NULL,
+            updated_at = NOW()
+        WHERE workspace_id = $1
+          AND deleted_at IS NULL
+        "#,
+    )
+    .bind(workspace_id)
+    .execute(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    sqlx::query(
+        r#"
+        UPDATE api_keys
+        SET revoked = TRUE,
+            revoked_at = COALESCE(revoked_at, NOW())
+        WHERE workspace_id = $1
+          AND revoked = FALSE
+        "#,
+    )
+    .bind(workspace_id)
+    .execute(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(())
 }
 
 fn validate_sub_agent_pools(config: &UpdateWorkspaceConfigRequest) -> AppResult<()> {
@@ -1117,6 +1390,19 @@ mod tests {
         }
     }
 
+    fn request_with_body(method: Method, uri: String, api_key: &str, body: String) -> Request<Body> {
+        let builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/x-ndjson")
+            .header("x-api-key", api_key);
+
+        match builder.body(Body::from(body)) {
+            Ok(request) => request,
+            Err(error) => panic!("test request should build: {error}"),
+        }
+    }
+
     async fn response_json(response: axum::response::Response) -> Value {
         let bytes = match to_bytes(response.into_body(), usize::MAX).await {
             Ok(bytes) => bytes,
@@ -1152,6 +1438,12 @@ mod tests {
             sub_agent_pools: None,
             extra: serde_json::Map::new(),
         }
+    }
+
+    fn update_request_with_extra(key: &str, value: serde_json::Value) -> UpdateWorkspaceConfigRequest {
+        let mut request = update_request(None, None);
+        request.extra.insert(key.to_owned(), value);
+        request
     }
 
     fn stats_row() -> WorkspaceStatsRow {
@@ -1275,6 +1567,37 @@ mod tests {
         assert_eq!(sanitized.promoted_at, None);
         assert_eq!(sanitized.corroboration_count, 0);
         assert_eq!(sanitized.version, 1);
+    }
+
+    #[test]
+    fn merge_workspace_config_rejects_known_key_in_extra_patch() {
+        let mut target = serde_json::json!({});
+        let patch = update_request_with_extra("pruning_threshold", serde_json::json!(0.3));
+
+        let error = match merge_workspace_config(&mut target, &patch) {
+            Ok(()) => panic!("known config key in extra should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, AppError::Validation(message) if message.contains("must be set via the typed request field")));
+    }
+
+    #[test]
+    fn merge_workspace_config_ignores_unknown_extra_patch_keys() {
+        let mut target = serde_json::json!({});
+        let patch = update_request_with_extra("totally_unknown_field", serde_json::json!("x"));
+
+        if let Err(error) = merge_workspace_config(&mut target, &patch) {
+            panic!("unknown config key should be ignored, not error: {error}");
+        }
+
+        assert!(
+            target
+                .as_object()
+                .and_then(|obj| obj.get("totally_unknown_field"))
+                .is_none(),
+            "unknown key must not be merged into workspace config"
+        );
     }
 
     #[test]
@@ -1428,5 +1751,41 @@ mod tests {
 
         assert_eq!(series.len(), 1);
         assert_eq!(today.get("created").and_then(Value::as_i64), Some(2));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn import_memories_returns_structured_422_when_body_exceeds_limit(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id).await;
+        let app = crate::router(test_state(pool).await);
+
+        let first_line = match serde_json::to_string(&import_memory_unit(workspace_id)) {
+            Ok(line) => format!("{line}\n"),
+            Err(error) => panic!("memory unit should serialize: {error}"),
+        };
+        let oversized_tail = "x".repeat(MAX_IMPORT_BODY_BYTES);
+        let body = format!("{first_line}{oversized_tail}");
+
+        let response = match app
+            .oneshot(request_with_body(
+                Method::POST,
+                format!("/v1/workspaces/{workspace_id}/import"),
+                &api_key,
+                body,
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("import request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let payload = response_json(response).await;
+        assert!(
+            payload.get("errors").and_then(Value::as_u64).unwrap_or(0) >= 1,
+            "errors should signal truncation"
+        );
+        assert!(payload.get("imported").is_some());
+        assert!(payload.get("skipped").is_some());
     }
 }

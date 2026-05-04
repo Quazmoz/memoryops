@@ -13,8 +13,16 @@ pub use common::auth::{generate_api_key, hash_secret};
 
 const NONCE_LEN: usize = 12;
 const SALT_LEN: usize = 32;
+const CURRENT_CIPHERTEXT_VERSION: u8 = 0x01;
+const LEGACY_CIPHERTEXT_VERSION: u8 = 0x00;
+const MIN_CIPHERTEXT_LEN: usize = 1;
 const HKDF_INFO: &[u8] = b"memoryops-skill-secret-v1";
 const LEGACY_HKDF_SALT: &[u8] = b"memoryops-static-salt-v1";
+
+pub struct DecryptedSecret {
+    pub plaintext: String,
+    pub migrated_ciphertext: Option<String>,
+}
 
 pub fn encrypt_secret(plaintext: &str) -> Result<String, AppError> {
     let mut salt = [0u8; SALT_LEN];
@@ -29,7 +37,8 @@ pub fn encrypt_secret(plaintext: &str) -> Result<String, AppError> {
         .encrypt(nonce, plaintext.as_bytes())
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
-    let mut payload = Vec::with_capacity(SALT_LEN + NONCE_LEN + ciphertext.len());
+    let mut payload = Vec::with_capacity(1 + SALT_LEN + NONCE_LEN + ciphertext.len());
+    payload.push(CURRENT_CIPHERTEXT_VERSION);
     payload.extend_from_slice(&salt);
     payload.extend_from_slice(&nonce_bytes);
     payload.extend_from_slice(&ciphertext);
@@ -41,6 +50,22 @@ pub fn decrypt_secret(ciphertext_b64: &str) -> Result<String, AppError> {
         .decode(ciphertext_b64)
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
+    let Some((&version, encrypted_payload)) = payload.split_first() else {
+        return Err(AppError::Internal(anyhow!(
+            "encrypted skill secret payload is invalid"
+        )));
+    };
+
+    if version != CURRENT_CIPHERTEXT_VERSION {
+        return Err(AppError::Internal(anyhow!(
+            "encrypted skill secret payload has unsupported version"
+        )));
+    }
+
+    decrypt_current_payload(encrypted_payload)
+}
+
+fn decrypt_current_payload(payload: &[u8]) -> Result<String, AppError> {
     if payload.len() <= SALT_LEN + NONCE_LEN {
         return Err(AppError::Internal(anyhow!(
             "encrypted skill secret payload is invalid"
@@ -49,6 +74,11 @@ pub fn decrypt_secret(ciphertext_b64: &str) -> Result<String, AppError> {
 
     let (salt, rest) = payload.split_at(SALT_LEN);
     let (nonce_bytes, ciphertext) = rest.split_at(NONCE_LEN);
+    if ciphertext.len() < MIN_CIPHERTEXT_LEN {
+        return Err(AppError::Internal(anyhow!(
+            "encrypted skill secret payload is invalid"
+        )));
+    }
 
     let cipher = cipher_from_key_and_salt(salt)?;
     let plaintext = cipher
@@ -66,16 +96,48 @@ pub fn validate_secret_key_at_startup() -> Result<(), AppError> {
 /// Decrypt a secret that may be in either the legacy (static-salt) or
 /// current (per-encryption random salt) format. Use this only during
 /// a one-time re-encryption migration, then remove it.
-pub fn decrypt_secret_legacy_or_current(ciphertext_b64: &str) -> Result<String, AppError> {
+pub fn decrypt_secret_legacy_or_current(
+    ciphertext_b64: &str,
+) -> Result<DecryptedSecret, AppError> {
     let payload = STANDARD
         .decode(ciphertext_b64)
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
-    if payload.len() <= SALT_LEN + NONCE_LEN {
-        return decrypt_secret_with_static_salt(&payload);
-    }
+    let Some((&version, encrypted_payload)) = payload.split_first() else {
+        return Err(AppError::Internal(anyhow!(
+            "encrypted skill secret payload is invalid"
+        )));
+    };
 
-    decrypt_secret(ciphertext_b64)
+    match version {
+        CURRENT_CIPHERTEXT_VERSION => Ok(DecryptedSecret {
+            plaintext: decrypt_current_payload(encrypted_payload)?,
+            migrated_ciphertext: None,
+        }),
+        LEGACY_CIPHERTEXT_VERSION => {
+            let plaintext = decrypt_secret_with_static_salt(encrypted_payload)?;
+            let migrated_ciphertext = Some(encrypt_secret(&plaintext)?);
+            Ok(DecryptedSecret {
+                plaintext,
+                migrated_ciphertext,
+            })
+        }
+        _ => {
+            if let Ok(plaintext) = decrypt_current_payload(&payload) {
+                return Ok(DecryptedSecret {
+                    plaintext,
+                    migrated_ciphertext: None,
+                });
+            }
+
+            let plaintext = decrypt_secret_with_static_salt(&payload)?;
+            let migrated_ciphertext = Some(encrypt_secret(&plaintext)?);
+            Ok(DecryptedSecret {
+                plaintext,
+                migrated_ciphertext,
+            })
+        }
+    }
 }
 
 fn decrypt_secret_with_static_salt(payload: &[u8]) -> Result<String, AppError> {
@@ -153,5 +215,85 @@ mod tests {
             first, second,
             "each encryption should use a unique salt+nonce"
         );
+    }
+
+    #[test]
+    fn encrypt_prefixes_current_ciphertext_version() {
+        std::env::set_var("APP_SECRET_KEY", "test-secret-key-for-unit-tests");
+        let encrypted = match encrypt_secret("prefixed") {
+            Ok(encrypted) => encrypted,
+            Err(error) => panic!("encrypt should succeed: {error}"),
+        };
+        let payload = match STANDARD.decode(encrypted) {
+            Ok(payload) => payload,
+            Err(error) => panic!("ciphertext should be base64: {error}"),
+        };
+
+        assert_eq!(payload.first().copied(), Some(CURRENT_CIPHERTEXT_VERSION));
+    }
+
+    #[test]
+    fn legacy_decrypt_returns_migrated_ciphertext() {
+        std::env::set_var("APP_SECRET_KEY", "test-secret-key-for-unit-tests");
+        let plaintext = "legacy-secret";
+
+        let cipher = match cipher_from_key_and_salt(LEGACY_HKDF_SALT) {
+            Ok(cipher) => cipher,
+            Err(error) => panic!("legacy cipher should initialize: {error}"),
+        };
+        let mut nonce_bytes = [0_u8; NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = match cipher.encrypt(nonce, plaintext.as_bytes()) {
+            Ok(ciphertext) => ciphertext,
+            Err(error) => panic!("legacy encrypt should succeed: {error}"),
+        };
+        let mut payload = Vec::with_capacity(NONCE_LEN + ciphertext.len());
+        payload.extend_from_slice(&nonce_bytes);
+        payload.extend_from_slice(&ciphertext);
+        let encoded_legacy = STANDARD.encode(payload);
+
+        let decrypted = match decrypt_secret_legacy_or_current(&encoded_legacy) {
+            Ok(decrypted) => decrypted,
+            Err(error) => panic!("legacy decrypt should succeed: {error}"),
+        };
+
+        assert_eq!(decrypted.plaintext, plaintext);
+        assert!(
+            decrypted.migrated_ciphertext.is_some(),
+            "legacy decrypt should return migrated ciphertext"
+        );
+    }
+
+    #[test]
+    fn unversioned_current_payload_with_empty_plaintext_decrypts() {
+        std::env::set_var("APP_SECRET_KEY", "test-secret-key-for-unit-tests");
+
+        let mut salt = [0u8; SALT_LEN];
+        OsRng.fill_bytes(&mut salt);
+        let cipher = match cipher_from_key_and_salt(&salt) {
+            Ok(cipher) => cipher,
+            Err(error) => panic!("current cipher should initialize: {error}"),
+        };
+        let mut nonce_bytes = [0_u8; NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = match cipher.encrypt(nonce, b"".as_slice()) {
+            Ok(ciphertext) => ciphertext,
+            Err(error) => panic!("current encrypt should succeed: {error}"),
+        };
+        let mut payload = Vec::with_capacity(SALT_LEN + NONCE_LEN + ciphertext.len());
+        payload.extend_from_slice(&salt);
+        payload.extend_from_slice(&nonce_bytes);
+        payload.extend_from_slice(&ciphertext);
+        let encoded_current = STANDARD.encode(payload);
+
+        let decrypted = match decrypt_secret_legacy_or_current(&encoded_current) {
+            Ok(decrypted) => decrypted,
+            Err(error) => panic!("unversioned current decrypt should succeed: {error}"),
+        };
+
+        assert_eq!(decrypted.plaintext, "");
+        assert!(decrypted.migrated_ciphertext.is_none());
     }
 }
