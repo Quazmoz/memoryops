@@ -117,6 +117,34 @@ export async function importMemories(workspaceId: string, file: File): Promise<I
   return payload as ImportMemoriesResponse;
 }
 
+export interface WorkspaceListItem {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface WorkspaceListResponse {
+  workspaces: WorkspaceListItem[];
+}
+
+/**
+ * List all workspaces accessible with the given API key.
+ * Uses a direct fetch so the caller can supply the key explicitly
+ * before the store is populated (first-run flow).
+ */
+export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[]> {
+  const headers = requestHeaders({}, false);
+  headers.set("x-api-key", apiKey);
+  const response = await fetch(apiUrl("/v1/workspaces"), { headers });
+  const payload = await parseResponse(response);
+
+  if (!response.ok) {
+    throw new ApiError(response.status, extractDetail(payload, response.statusText));
+  }
+
+  return ((payload as WorkspaceListResponse).workspaces) ?? [];
+}
+
 export interface ReindexResponse {
   enqueued: number;
   next_cursor: string | null;

@@ -7,11 +7,11 @@ import {
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { FormEvent, ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { createApiKey, createWorkspace } from "../api/workspaces";
+import { createApiKey, createWorkspace, listWorkspaces } from "../api/workspaces";
 import { useAppStore } from "../store/app-store";
 import { InlineError } from "./InlineError";
 import { Button } from "./ui/button";
@@ -44,6 +44,22 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
 
   // Fix #1 — collapsible "Already have a workspace?" section
   const [connectOpen, setConnectOpen] = useState(false);
+
+  // Workspace discovery query — fires only when key looks valid
+  const workspacesQuery = useQuery({
+    queryKey: ["workspaces", connectApiKey],
+    queryFn: () => listWorkspaces(connectApiKey),
+    enabled: connectApiKey.startsWith("mops_") && connectApiKey.length > 20,
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  // Auto-select when exactly one workspace comes back
+  useEffect(() => {
+    if (workspacesQuery.data?.length === 1 && !connectWorkspaceId) {
+      setConnectWorkspaceId(workspacesQuery.data[0].id);
+    }
+  }, [workspacesQuery.data, connectWorkspaceId]);
 
   const workspaceMutation = useMutation({
     mutationKey: ["first-run", "workspace"],
@@ -313,29 +329,8 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
             </button>
 
             {connectOpen && (
-              <div className="mt-2 grid gap-3">
-                {/* Fix #5 — both dividers now use bg-soft */}
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <span className="w-full border-t border-line" />
-                  </div>
-                  <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-soft px-2 text-ink/45">
-                      Or connect existing
-                    </span>
-                  </div>
-                </div>
-
-                {/* Fix #2 — controlled connectWorkspaceId + connectApiKey state */}
-                <label className="grid gap-2 text-sm font-medium text-ink/70">
-                  Workspace ID
-                  <Input
-                    data-testid="workspace-id-input"
-                    placeholder="Paste workspace ID"
-                    value={connectWorkspaceId}
-                    onChange={(e) => setConnectWorkspaceId(e.target.value)}
-                  />
-                </label>
+              <div className="mt-3 grid gap-3">
+                {/* API key first — triggers workspace discovery */}
                 <label className="grid gap-2 text-sm font-medium text-ink/70">
                   API Key
                   <Input
@@ -343,13 +338,72 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
                     type="password"
                     placeholder="mops_..."
                     value={connectApiKey}
-                    onChange={(e) => setConnectApiKey(e.target.value)}
+                    onChange={(e) => {
+                      setConnectApiKey(e.target.value);
+                      setConnectWorkspaceId(""); // reset selection on key change
+                    }}
                   />
                 </label>
+
+                {/* Workspace picker — shown when key is valid and query has settled */}
+                {workspacesQuery.isLoading && (
+                  <div className="flex items-center gap-2 text-xs text-ink/50">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                    Loading workspaces…
+                  </div>
+                )}
+
+                {workspacesQuery.isError && (
+                  <InlineError message="Could not load workspaces — check your API key." />
+                )}
+
+                {workspacesQuery.data && workspacesQuery.data.length === 0 && (
+                  <p className="text-xs text-ink/50">No workspaces found for this key.</p>
+                )}
+
+                {workspacesQuery.data && workspacesQuery.data.length > 0 && (
+                  <div className="grid gap-2">
+                    <p className="text-xs font-medium text-ink/70">Select workspace</p>
+                    <div className="grid max-h-48 gap-1.5 overflow-y-auto">
+                      {workspacesQuery.data.map((ws) => (
+                        <button
+                          key={ws.id}
+                          type="button"
+                          onClick={() => setConnectWorkspaceId(ws.id)}
+                          className={`flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                            connectWorkspaceId === ws.id
+                              ? "border-accent bg-accent/10 text-accent-strong"
+                              : "border-line bg-white hover:bg-soft"
+                          }`}
+                        >
+                          <span className="font-medium">{ws.name}</span>
+                          <span className="font-mono text-xs text-ink/40">
+                            {ws.id.slice(0, 8)}…
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Manual workspace ID fallback — shown when no workspaces loaded yet */}
+                {!workspacesQuery.data && (
+                  <label className="grid gap-2 text-sm font-medium text-ink/70">
+                    Workspace ID
+                    <Input
+                      data-testid="workspace-id-input"
+                      placeholder="Paste workspace ID"
+                      value={connectWorkspaceId}
+                      onChange={(e) => setConnectWorkspaceId(e.target.value)}
+                    />
+                  </label>
+                )}
+
                 <Button
                   type="button"
                   data-testid="connect-button"
                   variant="secondary"
+                  disabled={!connectWorkspaceId || !connectApiKey}
                   onClick={() => {
                     const wsId = connectWorkspaceId.trim();
                     const key = connectApiKey.trim();
