@@ -275,7 +275,9 @@ pub async fn get_stats_history(
         ORDER BY dates.date ASC
         "#,
     )
-    .bind(auth.workspace_id)
+    // FIX: was `auth.workspace_id` — must use path `id` so the query returns
+    // data for the requested workspace, not always the caller's own workspace.
+    .bind(id)
     .bind(i64::from(days))
     .fetch_all(&state.db)
     .await
@@ -510,6 +512,14 @@ fn sanitize_imported_memory(mut memory: MemoryUnit, workspace_id: Uuid) -> Memor
     memory.scope.workspace_id = workspace_id;
     memory.embedding_id = None;
     memory.deleted_at = None;
+    // Reset promotion state so the memory goes through the normal promotion
+    // pipeline in the target workspace rather than arriving pre-promoted.
+    memory.promoted_at = None;
+    // Reset corroboration count so inflated weights from the source workspace
+    // don't carry over without the corresponding source events being present.
+    memory.corroboration_count = 0;
+    // Reset version so conflict resolution starts clean in the target workspace.
+    memory.version = 1;
     memory
 }
 
@@ -931,10 +941,12 @@ pub async fn reindex_workspace(
         }
     }
 
+    // FIX: was `format!("user:{}", auth.key_id)` — use auth.actor() for
+    // consistent audit record format across all handlers.
     spawn_audit_log(
         state.db.clone(),
         id,
-        format!("user:{}", auth.key_id),
+        auth.actor(),
         AuditAction::WorkspaceReindexed,
         id,
         "workspace",
@@ -1260,6 +1272,9 @@ mod tests {
         assert_eq!(sanitized.scope.workspace_id, target_workspace_id);
         assert_eq!(sanitized.embedding_id, None);
         assert_eq!(sanitized.deleted_at, None);
+        assert_eq!(sanitized.promoted_at, None);
+        assert_eq!(sanitized.corroboration_count, 0);
+        assert_eq!(sanitized.version, 1);
     }
 
     #[test]
