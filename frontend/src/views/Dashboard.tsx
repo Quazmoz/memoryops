@@ -38,6 +38,7 @@ export function Dashboard() {
     queryFn: () => getContradictionCount(workspaceId),
     enabled: hasWorkspace && isMounted,
     staleTime: 60_000,
+    retry: false,
   });
 
   const readinessStatus = readiness.isLoading

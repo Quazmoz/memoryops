@@ -12,6 +12,7 @@ use tokio::time::{timeout, Duration};
 const INGEST_RPM: i64 = 300;
 pub const MEMORY_RPM: i64 = 120;
 const API_RPM: i64 = 120;
+const DASHBOARD_RPM: i64 = 600;
 const RATE_LIMIT_REDIS_TIMEOUT_MS: u64 = 2000;
 const RATE_LIMIT_SCRIPT: &str = r#"
 local count = redis.call('INCR', KEYS[1])
@@ -26,6 +27,7 @@ enum RateLimitGroup {
     Ingest,
     Memory,
     Api,
+    Dashboard,
 }
 
 impl RateLimitGroup {
@@ -34,6 +36,7 @@ impl RateLimitGroup {
             RateLimitGroup::Ingest => "ingest",
             RateLimitGroup::Memory => "memory",
             RateLimitGroup::Api => "api",
+            RateLimitGroup::Dashboard => "dashboard",
         }
     }
 
@@ -42,6 +45,7 @@ impl RateLimitGroup {
             RateLimitGroup::Ingest => INGEST_RPM,
             RateLimitGroup::Memory => MEMORY_RPM,
             RateLimitGroup::Api => API_RPM,
+            RateLimitGroup::Dashboard => DASHBOARD_RPM,
         }
     }
 }
@@ -140,14 +144,32 @@ fn endpoint_group(path: &str) -> Option<RateLimitGroup> {
         if path.starts_with("/v1/ingest/observation") {
             return Some(RateLimitGroup::Api);
         }
-        Some(RateLimitGroup::Ingest)
-    } else if path.starts_with("/v1/memory") || path.starts_with("/v1/retrieve") {
-        Some(RateLimitGroup::Memory)
-    } else if path.starts_with("/v1/workspaces") {
-        Some(RateLimitGroup::Api)
-    } else {
-        None
+        return Some(RateLimitGroup::Ingest);
     }
+
+    if path.starts_with("/v1/memory") || path.starts_with("/v1/retrieve") {
+        return Some(RateLimitGroup::Memory);
+    }
+
+    // Dashboard read-only routes - separated from the general Api bucket
+    // so that continuous polling from the UI doesn't exhaust workspace quota
+    if path.starts_with("/v1/workspaces/") {
+        let after_id = path
+            .trim_start_matches("/v1/workspaces/")
+            .splitn(2, '/')
+            .nth(1)
+            .unwrap_or("");
+
+        if matches!(after_id, "stats" | "metrics" | "contradictions/count") || after_id.starts_with("stats/history") {
+            return Some(RateLimitGroup::Dashboard);
+        }
+    }
+
+    if path.starts_with("/v1/workspaces") {
+        return Some(RateLimitGroup::Api);
+    }
+
+    None
 }
 
 fn rate_limit_subject(request: &Request<Body>) -> Option<RateLimitSubject> {
@@ -211,6 +233,35 @@ mod tests {
         ));
         assert!(matches!(
             endpoint_group("/v1/ingest/observation"),
+            Some(RateLimitGroup::Api)
+        ));
+    }
+
+    #[test]
+    fn dashboard_routes_use_dashboard_bucket() {
+        let id = "018f1234-0000-0000-0000-000000000000";
+        assert!(matches!(
+            endpoint_group(&format!("/v1/workspaces/{id}/stats")),
+            Some(RateLimitGroup::Dashboard)
+        ));
+        assert!(matches!(
+            endpoint_group(&format!("/v1/workspaces/{id}/stats/history")),
+            Some(RateLimitGroup::Dashboard)
+        ));
+        assert!(matches!(
+            endpoint_group(&format!("/v1/workspaces/{id}/metrics")),
+            Some(RateLimitGroup::Dashboard)
+        ));
+        assert!(matches!(
+            endpoint_group(&format!("/v1/workspaces/{id}/contradictions/count")),
+            Some(RateLimitGroup::Dashboard)
+        ));
+        assert!(matches!(
+            endpoint_group(&format!("/v1/workspaces/{id}/keys")),
+            Some(RateLimitGroup::Api)
+        ));
+        assert!(matches!(
+            endpoint_group("/v1/workspaces"),
             Some(RateLimitGroup::Api)
         ));
     }

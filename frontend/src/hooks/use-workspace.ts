@@ -26,7 +26,8 @@ export function useStatsHistory(workspaceId: string, days = 30) {
     queryKey: ["workspace", workspaceId, "stats", "history", days],
     queryFn: () => getWorkspaceStatsHistory(workspaceId, days),
     enabled: hasWorkspaceAuth(workspaceId, apiKey),
-    staleTime: 5 * 60 * 1000,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
     retry: false,
   });
 }
