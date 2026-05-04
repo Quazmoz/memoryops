@@ -6,7 +6,6 @@ import { Link } from "react-router-dom";
 import { getContradictionCount } from "../api/contradictions";
 import { InlineError } from "../components/InlineError";
 import { MemoryTrendChart } from "../components/MemoryTrendChart";
-import { MetricsPanel } from "../components/MetricsPanel";
 import { StatusPill } from "../components/StatusPill";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -132,9 +131,6 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </section>
-
-      {hasWorkspace && isMounted && !readiness.isPending && !stats.isPending ? <MetricsPanel /> : null}
-
       <section className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>

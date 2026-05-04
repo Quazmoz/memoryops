@@ -15,7 +15,6 @@ use common::{
     AppState,
 };
 use qdrant_client::Qdrant;
-use redis::aio::ConnectionManager;
 use retrieval::retrieval_router;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -109,8 +108,11 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         .connect(&database_url)
         .await?;
     ensure_skill_secret_configuration(&db).await?;
-    let redis_client = redis::Client::open(redis_url)?;
-    let redis = ConnectionManager::new(redis_client.clone()).await?;
+    let redis = {
+        let cfg = deadpool_redis::Config::from_url(&redis_url);
+        cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .expect("failed to create Redis pool")
+    };
     let qdrant = Qdrant::from_url(&qdrant_url).build()?;
 
     let embedding_provider = build_embedding_provider(&config);
@@ -118,7 +120,6 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
 
     Ok(AppState {
         db,
-        redis_client,
         redis,
         qdrant,
         processor_semaphore: Arc::new(Semaphore::new(
@@ -385,11 +386,22 @@ async fn probe_postgres(db: sqlx::PgPool) -> HealthCheck {
     }
 }
 
-async fn probe_redis(mut redis: redis::aio::ConnectionManager) -> HealthCheck {
+async fn probe_redis(redis: deadpool_redis::Pool) -> HealthCheck {
     let started = std::time::Instant::now();
+    let mut connection = match redis.get().await {
+        Ok(connection) => connection,
+        Err(error) => {
+            return HealthCheck {
+                name: "redis".to_owned(),
+                status: "error".to_owned(),
+                latency_ms: Some(started.elapsed().as_millis() as u64),
+                message: Some(error.to_string()),
+            }
+        }
+    };
     let result = tokio::time::timeout(
         Duration::from_secs(2),
-        redis::cmd("PING").query_async::<String>(&mut redis),
+        redis::cmd("PING").query_async::<String>(&mut *connection),
     )
     .await;
     let latency_ms = started.elapsed().as_millis() as u64;
@@ -543,7 +555,6 @@ mod tests {
     };
     use chrono::{DateTime, Duration, SecondsFormat, Utc};
     use common::models::{MemoryType, ScopeVisibility};
-    use redis::aio::ConnectionManager;
     use serde_json::{json, Value};
     use sqlx::PgPool;
     use tower::ServiceExt;
@@ -554,13 +565,12 @@ mod tests {
     async fn test_state(pool: PgPool) -> AppState {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:16379".to_owned());
-        let redis_client = match redis::Client::open(redis_url) {
-            Ok(client) => client,
-            Err(error) => panic!("test Redis URL should be valid: {error}"),
-        };
-        let redis = match ConnectionManager::new(redis_client.clone()).await {
-            Ok(connection) => connection,
-            Err(error) => panic!("test Redis should be reachable: {error}"),
+        let redis = {
+            let cfg = deadpool_redis::Config::from_url(&redis_url);
+            match cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1)) {
+                Ok(pool) => pool,
+                Err(error) => panic!("test Redis pool should be created: {error}"),
+            }
         };
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:16333".to_owned());
@@ -575,7 +585,6 @@ mod tests {
 
         AppState {
             db: pool,
-            redis_client,
             redis,
             qdrant,
             processor_semaphore: Arc::new(Semaphore::new(

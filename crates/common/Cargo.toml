@@ -16,6 +16,7 @@ async-trait.workspace = true
 axum.workspace = true
 bs58.workspace = true
 chrono.workspace = true
+deadpool-redis = { version = "0.18", features = ["rt_tokio_1"] }
 qdrant-client.workspace = true
 rand.workspace = true
 redis.workspace = true

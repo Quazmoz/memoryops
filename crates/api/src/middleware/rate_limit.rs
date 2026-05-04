@@ -7,7 +7,6 @@ use anyhow::anyhow;
 use axum::extract::connect_info::ConnectInfo;
 use axum::{body::Body, extract::State, http::Request, middleware::Next, response::Response};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
-use redis::aio::ConnectionManager;
 use tokio::time::{timeout, Duration};
 
 const INGEST_RPM: i64 = 300;
@@ -97,14 +96,14 @@ async fn enforce_limit(
     let expires_at = window_start + 60;
     let subject_key = subject.key();
     let key = format!("rate:{subject_key}:{}:{window_start}", group.as_str());
-    let mut redis = match ConnectionManager::new(state.redis_client.clone()).await {
-        Ok(connection) => connection,
+    let mut redis = match state.redis.get().await {
+        Ok(conn) => conn,
         Err(error) => {
             tracing::error!(
                 error = ?error,
                 subject = %subject.log_value(),
                 group = group.as_str(),
-                "rate limit redis connection failed; denying request (fail-closed)"
+                "rate limit redis pool get failed; fail-closed"
             );
             return Err(AppError::RateLimited {
                 retry_after_secs: 5,
@@ -116,7 +115,7 @@ async fn enforce_limit(
         redis::Script::new(RATE_LIMIT_SCRIPT)
             .key(&key)
             .arg(expires_at)
-                .invoke_async::<i64>(&mut redis),
+            .invoke_async::<i64>(&mut *redis),
     )
     .await;
     let count = match redis_result {
