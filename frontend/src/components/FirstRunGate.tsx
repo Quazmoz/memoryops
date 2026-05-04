@@ -56,8 +56,9 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
 
   // Auto-select when exactly one workspace comes back
   useEffect(() => {
-    if (workspacesQuery.data?.length === 1 && !connectWorkspaceId) {
-      setConnectWorkspaceId(workspacesQuery.data[0].id);
+    const first = workspacesQuery.data?.[0];
+    if (workspacesQuery.data?.length === 1 && !connectWorkspaceId && first) {
+      setConnectWorkspaceId(first.id);
     }
   }, [workspacesQuery.data, connectWorkspaceId]);
 
@@ -299,7 +300,7 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
                       className={
                         copied
                           ? "ring-2 ring-offset-1 ring-accent/40"
-                          : undefined
+                          : ""
                       }
                     >
                       {copied ? "Continue →" : "Copy key to continue"}
