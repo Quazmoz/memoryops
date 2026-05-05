@@ -36,6 +36,14 @@ model = "llama3"
 base_url = "http://localhost:11434"
 timeout_secs = 3
 
+# Ollama Cloud / hosted Ollama (e.g. https://api.ollama.ai):
+# Set base_url to your cloud endpoint and uncomment the block below.
+# api_key_env names the environment variable that holds your Bearer token —
+# the secret itself is never stored in this file.
+#
+# [llm.ollama]
+# api_key_env = "OLLAMA_API_KEY"
+
 # Uncomment to use OpenAI (requires OPENAI_API_KEY env var)
 # [llm.openai]
 # model = "gpt-4o-mini"
