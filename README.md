@@ -50,7 +50,7 @@ Result: inconsistent behavior, repeated instructions, hallucinations from stale 
 │                     MemoryOps Platform                  │
 │                                                         │
 │  ┌──────────────┐   ┌──────────────┐   ┌────────────┐  │
-│  │  Ingestion   │──▶│  Processor   │──▶│  Retrieval │  │
+│  │  Ingestion   │──▶│  Processor   │──▶│  Retrieval│  │
 │  │  (Webhooks)  │   │  Fast + Slow │   │   Engine   │  │
 │  └──────────────┘   └──────────────┘   └────────────┘  │
 │          │                  │                  │        │
