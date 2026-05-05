@@ -35,8 +35,8 @@ Follow these steps precisely using your available terminal and file manipulation
      $body = @{ name = $name } | ConvertTo-Json
      $workspace = Invoke-RestMethod -Uri "http://localhost:8080/v1/workspaces" -Method Post -ContentType "application/json" -Body $body
      $workspace_id = $workspace.workspace_id
-     $keyResponse = Invoke-RestMethod -Uri "http://localhost:8080/v1/workspaces/$workspace_id/keys" -Method Post -ContentType "application/json" -Body (@{name="Dev Key"} | ConvertTo-Json)
-     $key = $keyResponse.key
+     # Use the bootstrap key automatically created during workspace initialization
+     $key = $workspace.api_key
      ```
 
 6. **Start Frontend Container**
