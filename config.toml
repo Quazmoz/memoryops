@@ -52,6 +52,42 @@ timeout_secs = 3
 # [llm.anthropic]
 # model = "claude-3-haiku-20240307"
 
+# ── OpenAI-Compatible Providers ───────────────────────────────────────────────
+# These providers share the /chat/completions request/response format.
+# Set provider = "openrouter", "huggingface", or "openai_compatible".
+# base_url is optional for openrouter/huggingface (defaults are injected automatically).
+#
+# OpenRouter example:
+# [llm]
+# provider = "openrouter"
+# model = "openai/gpt-4o-mini"
+# base_url = ""           # leave blank to use https://openrouter.ai/api/v1
+# timeout_secs = 30
+#
+# [llm.openai_compatible]
+# api_key_env = "OPENROUTER_API_KEY"
+# headers = { "HTTP-Referer" = "https://your-app.example", "X-OpenRouter-Title" = "MemoryOps" }
+#
+# Hugging Face Inference Router example:
+# [llm]
+# provider = "huggingface"
+# model = "meta-llama/Llama-3.1-8B-Instruct"
+# base_url = ""           # leave blank to use https://router.huggingface.co/v1
+# timeout_secs = 30
+#
+# [llm.openai_compatible]
+# api_key_env = "HF_API_KEY"
+#
+# Generic OpenAI-compatible endpoint (e.g. vLLM, LM Studio, LocalAI):
+# [llm]
+# provider = "openai_compatible"
+# model = "my-model"
+# base_url = "http://localhost:8000/v1"
+# timeout_secs = 60
+#
+# [llm.openai_compatible]
+# api_key_env = "MY_PROVIDER_API_KEY"   # omit section if no auth is needed
+
 # ── Processing Pipeline ──────────────────────────────────────────────────────
 [processor]
 # Fast path: max concurrency for synchronous processing

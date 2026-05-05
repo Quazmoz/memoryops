@@ -107,6 +107,7 @@ pub struct LlmConfig {
     pub ollama: Option<OllamaConfig>,
     pub openai: Option<OpenAiLlmConfig>,
     pub anthropic: Option<AnthropicConfig>,
+    pub openai_compatible: Option<OpenAiCompatibleConfig>,
 }
 
 /// Configuration block for Ollama-specific options.
@@ -135,17 +136,48 @@ impl OllamaConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum LlmProviderKind {
     Ollama,
     Openai,
     Anthropic,
+    OpenaiCompatible,
+    Openrouter,
+    Huggingface,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpenAiLlmConfig {
     pub model: String,
+}
+
+/// Configuration block for OpenAI-compatible providers (OpenRouter, Hugging Face, custom endpoints).
+///
+/// `api_key_env` names an environment variable that holds the Bearer token.
+/// `headers` allows injecting arbitrary HTTP headers required by some providers
+/// (e.g. `HTTP-Referer` for OpenRouter's usage tracking).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenAiCompatibleConfig {
+    /// Name of the environment variable that holds the API key.
+    /// Example: `"OPENROUTER_API_KEY"` → reads `std::env::var("OPENROUTER_API_KEY")`.
+    pub api_key_env: Option<String>,
+    /// Extra HTTP headers to attach to every request (e.g. `HTTP-Referer`).
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
+}
+
+impl OpenAiCompatibleConfig {
+    /// Resolve the API key by reading the named environment variable.
+    /// Returns `None` when `api_key_env` is not set or the variable is absent/empty.
+    pub fn resolve_api_key(&self) -> Option<String> {
+        let env_name = self.api_key_env.as_deref()?;
+        match std::env::var(env_name) {
+            Ok(value) if !value.trim().is_empty() => Some(value),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -340,6 +372,31 @@ mod tests {
     #[test]
     fn ollama_config_none_api_key_env_resolves_to_none() {
         let cfg = OllamaConfig { api_key_env: None };
+        assert!(cfg.resolve_api_key().is_none());
+    }
+
+    #[test]
+    fn openai_compatible_config_resolves_api_key_from_env() {
+        let cfg = OpenAiCompatibleConfig {
+            api_key_env: Some("_TEST_COMPAT_KEY_MEMORYOPS".to_owned()),
+            headers: Default::default(),
+        };
+        // Variable not set -> None
+        std::env::remove_var("_TEST_COMPAT_KEY_MEMORYOPS");
+        assert!(cfg.resolve_api_key().is_none());
+
+        // Variable set -> Some
+        std::env::set_var("_TEST_COMPAT_KEY_MEMORYOPS", "sk-router-test");
+        assert_eq!(cfg.resolve_api_key().as_deref(), Some("sk-router-test"));
+        std::env::remove_var("_TEST_COMPAT_KEY_MEMORYOPS");
+    }
+
+    #[test]
+    fn openai_compatible_config_none_api_key_env_resolves_to_none() {
+        let cfg = OpenAiCompatibleConfig {
+            api_key_env: None,
+            headers: Default::default(),
+        };
         assert!(cfg.resolve_api_key().is_none());
     }
 }

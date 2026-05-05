@@ -220,6 +220,104 @@ impl OpenAIProvider {
     }
 }
 
+/// A generic provider for any OpenAI-compatible `/chat/completions` endpoint.
+///
+/// Covers:
+/// - `provider = "openai_compatible"` (arbitrary self-hosted or third-party endpoint)
+/// - `provider = "openrouter"` (routes to <https://openrouter.ai/api/v1>)
+/// - `provider = "huggingface"` (routes to <https://router.huggingface.co/v1>)
+pub struct OpenAiCompatibleProvider {
+    client: Client,
+    api_key: Option<String>,
+    model: String,
+    base_url: String,
+    extra_headers: std::collections::BTreeMap<String, String>,
+}
+
+impl OpenAiCompatibleProvider {
+    pub fn new(
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        api_key: Option<String>,
+        extra_headers: std::collections::BTreeMap<String, String>,
+    ) -> Self {
+        Self {
+            client: Client::new(),
+            api_key,
+            model: model.into(),
+            base_url: base_url.into().trim_end_matches('/').to_owned(),
+            extra_headers,
+        }
+    }
+
+    /// Build a POST request to `{base_url}/chat/completions`, optionally attaching
+    /// a Bearer token and any provider-specific extra headers.
+    fn build_request(&self, body: &serde_json::Value) -> reqwest::RequestBuilder {
+        let mut builder = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(body);
+        if let Some(key) = self.api_key.as_deref() {
+            builder = builder.bearer_auth(key);
+        }
+        for (name, value) in &self.extra_headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        builder
+    }
+}
+
+#[async_trait]
+impl LlmProvider for OpenAiCompatibleProvider {
+    async fn complete(&self, prompt: &str) -> Result<String, ProviderError> {
+        let body = json!({
+            "model": self.model,
+            "messages": [{ "role": "user", "content": prompt }]
+        });
+        let response = self
+            .build_request(&body)
+            .send()
+            .await
+            .map_err(|error| ProviderError::Request(error.to_string()))?;
+        let payload = response_json(response).await?;
+        payload
+            .pointer("/choices/0/message/content")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse(
+                    "missing openai-compatible message content".to_owned(),
+                )
+            })
+    }
+
+    async fn summarize(&self, text: &str, max_tokens: usize) -> Result<String, ProviderError> {
+        let prompt = format!(
+            "Summarize this MemoryOps memory in at most {max_tokens} tokens. Preserve concrete names, repositories, decisions, and outcomes.\n\n{text}"
+        );
+        let mut body = json!({
+            "model": self.model,
+            "messages": [{ "role": "user", "content": prompt }]
+        });
+        body["max_tokens"] = json!(max_tokens);
+        let response = self
+            .build_request(&body)
+            .send()
+            .await
+            .map_err(|error| ProviderError::Request(error.to_string()))?;
+        let payload = response_json(response).await?;
+        payload
+            .pointer("/choices/0/message/content")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse(
+                    "missing openai-compatible message content".to_owned(),
+                )
+            })
+    }
+}
+
 pub struct AnthropicProvider {
     client: Client,
     api_key: Option<String>,

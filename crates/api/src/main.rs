@@ -9,7 +9,7 @@ use common::{
     config::{AppConfig, EmbeddingProviderKind, LlmProviderKind},
     providers::{
         AnthropicProvider, EmbeddingProvider, FastEmbedProvider, LlmProvider, OllamaProvider,
-        OpenAIEmbedProvider, OpenAIProvider,
+        OpenAIEmbedProvider, OpenAIProvider, OpenAiCompatibleProvider,
     },
     telemetry::init_telemetry,
     AppState,
@@ -171,9 +171,7 @@ fn webhook_secret_from_env(name: &'static str) -> anyhow::Result<String> {
 fn workspace_creation_secret_from_env() -> anyhow::Result<String> {
     match std::env::var("WORKSPACE_CREATION_SECRET") {
         Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(anyhow::anyhow!(
-            "WORKSPACE_CREATION_SECRET must be set"
-        )),
+        _ => Err(anyhow::anyhow!("WORKSPACE_CREATION_SECRET must be set")),
     }
 }
 
@@ -251,6 +249,28 @@ fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
             Arc::new(AnthropicProvider::new(
                 model,
                 std::env::var("ANTHROPIC_API_KEY").ok(),
+            ))
+        }
+        LlmProviderKind::OpenaiCompatible
+        | LlmProviderKind::Openrouter
+        | LlmProviderKind::Huggingface => {
+            let compat = config.llm.openai_compatible.as_ref();
+            let api_key = compat.and_then(|cfg| cfg.resolve_api_key());
+            let headers = compat.map(|cfg| cfg.headers.clone()).unwrap_or_default();
+            let base_url = if config.llm.base_url.trim().is_empty() {
+                match config.llm.provider {
+                    LlmProviderKind::Openrouter => "https://openrouter.ai/api/v1".to_owned(),
+                    LlmProviderKind::Huggingface => "https://router.huggingface.co/v1".to_owned(),
+                    _ => config.llm.base_url.clone(),
+                }
+            } else {
+                config.llm.base_url.clone()
+            };
+            Arc::new(OpenAiCompatibleProvider::new(
+                base_url,
+                &config.llm.model,
+                api_key,
+                headers,
             ))
         }
     }
@@ -625,7 +645,12 @@ mod tests {
                 usize::try_from(config.database.max_connections).unwrap_or(10),
             )),
             embedding_provider: Arc::new(FastEmbedProvider::new("test-embedding")),
-            llm_provider: Arc::new(OllamaProvider::new("http://127.0.0.1:9", "test-llm", 1, None)),
+            llm_provider: Arc::new(OllamaProvider::new(
+                "http://127.0.0.1:9",
+                "test-llm",
+                1,
+                None,
+            )),
             config: Arc::new(config),
             github_webhook_secret: "test-secret".to_owned(),
         }

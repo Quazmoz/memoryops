@@ -4,7 +4,7 @@ use common::{
     config::{AppConfig, EmbeddingProviderKind, LlmProviderKind},
     providers::{
         AnthropicProvider, EmbeddingProvider, FastEmbedProvider, LlmProvider, OllamaProvider,
-        OpenAIEmbedProvider, OpenAIProvider,
+        OpenAIEmbedProvider, OpenAIProvider, OpenAiCompatibleProvider,
     },
     telemetry::init_telemetry,
     AppState,
@@ -119,11 +119,19 @@ fn build_embedding_provider(config: &AppConfig) -> Arc<dyn EmbeddingProvider> {
 
 fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
     match config.llm.provider {
-        LlmProviderKind::Ollama => Arc::new(OllamaProvider::new(
-            &config.llm.base_url,
-            &config.llm.model,
-            config.llm.timeout_secs,
-        )),
+        LlmProviderKind::Ollama => {
+            let api_key = config
+                .llm
+                .ollama
+                .as_ref()
+                .and_then(|ollama_cfg| ollama_cfg.resolve_api_key());
+            Arc::new(OllamaProvider::new(
+                &config.llm.base_url,
+                &config.llm.model,
+                config.llm.timeout_secs,
+                api_key,
+            ))
+        }
         LlmProviderKind::Openai => {
             let model = config
                 .llm
@@ -146,6 +154,28 @@ fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
             Arc::new(AnthropicProvider::new(
                 model,
                 std::env::var("ANTHROPIC_API_KEY").ok(),
+            ))
+        }
+        LlmProviderKind::OpenaiCompatible
+        | LlmProviderKind::Openrouter
+        | LlmProviderKind::Huggingface => {
+            let compat = config.llm.openai_compatible.as_ref();
+            let api_key = compat.and_then(|cfg| cfg.resolve_api_key());
+            let headers = compat.map(|cfg| cfg.headers.clone()).unwrap_or_default();
+            let base_url = if config.llm.base_url.trim().is_empty() {
+                match config.llm.provider {
+                    LlmProviderKind::Openrouter => "https://openrouter.ai/api/v1".to_owned(),
+                    LlmProviderKind::Huggingface => "https://router.huggingface.co/v1".to_owned(),
+                    _ => config.llm.base_url.clone(),
+                }
+            } else {
+                config.llm.base_url.clone()
+            };
+            Arc::new(OpenAiCompatibleProvider::new(
+                base_url,
+                &config.llm.model,
+                api_key,
+                headers,
             ))
         }
     }
