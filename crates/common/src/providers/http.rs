@@ -13,10 +13,18 @@ pub struct OllamaProvider {
     client: Client,
     base_url: String,
     model: String,
+    /// Bearer token for cloud / hosted Ollama deployments that require authentication.
+    /// `None` for local instances where no auth is needed.
+    api_key: Option<String>,
 }
 
 impl OllamaProvider {
-    pub fn new(base_url: impl Into<String>, model: impl Into<String>, timeout_secs: u64) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        timeout_secs: u64,
+        api_key: Option<String>,
+    ) -> Self {
         Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(timeout_secs))
@@ -24,6 +32,16 @@ impl OllamaProvider {
                 .unwrap_or_else(|_| Client::new()),
             base_url: base_url.into().trim_end_matches('/').to_owned(),
             model: model.into(),
+            api_key,
+        }
+    }
+
+    /// Attach an `Authorization: Bearer <token>` header when an API key is
+    /// configured.  Returns the request builder unchanged for local instances.
+    fn maybe_auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.api_key.as_deref() {
+            Some(key) => builder.bearer_auth(key),
+            None => builder,
         }
     }
 }
@@ -31,10 +49,12 @@ impl OllamaProvider {
 #[async_trait]
 impl LlmProvider for OllamaProvider {
     async fn complete(&self, prompt: &str) -> Result<String, ProviderError> {
-        let response = self
+        let request = self
             .client
             .post(format!("{}/api/generate", self.base_url))
-            .json(&json!({ "model": self.model, "prompt": prompt, "stream": false }))
+            .json(&json!({ "model": self.model, "prompt": prompt, "stream": false }));
+        let response = self
+            .maybe_auth(request)
             .send()
             .await
             .map_err(|error| ProviderError::Request(error.to_string()))?;
@@ -50,7 +70,7 @@ impl LlmProvider for OllamaProvider {
         let prompt = format!(
             "Summarize this MemoryOps memory in at most {max_tokens} tokens. Preserve concrete names, repositories, decisions, and outcomes.\n\n{text}"
         );
-        let response = self
+        let request = self
             .client
             .post(format!("{}/api/generate", self.base_url))
             .json(&json!({
@@ -58,7 +78,9 @@ impl LlmProvider for OllamaProvider {
                 "prompt": prompt,
                 "stream": false,
                 "options": { "num_predict": max_tokens }
-            }))
+            }));
+        let response = self
+            .maybe_auth(request)
             .send()
             .await
             .map_err(|error| ProviderError::Request(error.to_string()))?;

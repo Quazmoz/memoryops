@@ -103,8 +103,35 @@ pub struct LlmConfig {
     pub model: String,
     pub base_url: String,
     pub timeout_secs: u64,
+    /// Optional Ollama-specific config (e.g. for Ollama Cloud which requires an API key).
+    pub ollama: Option<OllamaConfig>,
     pub openai: Option<OpenAiLlmConfig>,
     pub anthropic: Option<AnthropicConfig>,
+}
+
+/// Configuration block for Ollama-specific options.
+///
+/// The `api_key_env` field names an environment variable that holds the Bearer
+/// token required by hosted / cloud Ollama deployments.  Local Ollama instances
+/// do not need this — simply omit the `[llm.ollama]` section.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OllamaConfig {
+    /// Name of the environment variable that holds the Ollama API key.
+    /// Example: `"OLLAMA_API_KEY"` → the provider reads `std::env::var("OLLAMA_API_KEY")`.
+    pub api_key_env: Option<String>,
+}
+
+impl OllamaConfig {
+    /// Resolve the API key by reading the named environment variable.
+    /// Returns `None` when `api_key_env` is not set or the variable is absent/empty.
+    pub fn resolve_api_key(&self) -> Option<String> {
+        let env_name = self.api_key_env.as_deref()?;
+        match std::env::var(env_name) {
+            Ok(value) if !value.trim().is_empty() => Some(value),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -293,5 +320,26 @@ mod tests {
         ));
         assert!(matches!(config.llm.provider, LlmProviderKind::Ollama));
         assert_eq!(config.retrieval.default_token_budget, 4096);
+    }
+
+    #[test]
+    fn ollama_config_resolves_api_key_from_env() {
+        let cfg = OllamaConfig {
+            api_key_env: Some("_TEST_OLLAMA_KEY_MEMORYOPS".to_owned()),
+        };
+        // Variable not set -> None
+        std::env::remove_var("_TEST_OLLAMA_KEY_MEMORYOPS");
+        assert!(cfg.resolve_api_key().is_none());
+
+        // Variable set -> Some
+        std::env::set_var("_TEST_OLLAMA_KEY_MEMORYOPS", "sk-test");
+        assert_eq!(cfg.resolve_api_key().as_deref(), Some("sk-test"));
+        std::env::remove_var("_TEST_OLLAMA_KEY_MEMORYOPS");
+    }
+
+    #[test]
+    fn ollama_config_none_api_key_env_resolves_to_none() {
+        let cfg = OllamaConfig { api_key_env: None };
+        assert!(cfg.resolve_api_key().is_none());
     }
 }
