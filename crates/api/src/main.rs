@@ -204,11 +204,21 @@ fn build_embedding_provider(config: &AppConfig) -> Arc<dyn EmbeddingProvider> {
 
 fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
     match config.llm.provider {
-        LlmProviderKind::Ollama => Arc::new(OllamaProvider::new(
-            &config.llm.base_url,
-            &config.llm.model,
-            config.llm.timeout_secs,
-        )),
+        LlmProviderKind::Ollama => {
+            // Resolve an optional Bearer token for cloud/hosted Ollama instances.
+            // Local Ollama doesn't need one; the resolved key will be None in that case.
+            let api_key = config
+                .llm
+                .ollama
+                .as_ref()
+                .and_then(|ollama_cfg| ollama_cfg.resolve_api_key());
+            Arc::new(OllamaProvider::new(
+                &config.llm.base_url,
+                &config.llm.model,
+                config.llm.timeout_secs,
+                api_key,
+            ))
+        }
         LlmProviderKind::Openai => {
             if config.llm.openai.is_none() {
                 tracing::warn!(
@@ -469,8 +479,26 @@ async fn probe_ollama(config: Arc<common::config::AppConfig>) -> HealthCheck {
         };
     }
     let url = format!("{}/api/tags", config.llm.base_url.trim_end_matches('/'));
+
+    // Resolve an optional Bearer token — same source as OllamaProvider uses at
+    // runtime, so the health probe authenticates consistently with the provider.
+    let api_key = config
+        .llm
+        .ollama
+        .as_ref()
+        .and_then(|ollama_cfg| ollama_cfg.resolve_api_key());
+
+    let client = reqwest::Client::new();
+    let request = {
+        let builder = client.get(&url);
+        match api_key.as_deref() {
+            Some(key) => builder.bearer_auth(key),
+            None => builder,
+        }
+    };
+
     let started = std::time::Instant::now();
-    let result = tokio::time::timeout(Duration::from_secs(2), reqwest::get(&url)).await;
+    let result = tokio::time::timeout(Duration::from_secs(2), request.send()).await;
     let latency_ms = started.elapsed().as_millis() as u64;
     match result {
         Ok(Ok(resp)) if resp.status().is_success() => HealthCheck {
@@ -597,7 +625,7 @@ mod tests {
                 usize::try_from(config.database.max_connections).unwrap_or(10),
             )),
             embedding_provider: Arc::new(FastEmbedProvider::new("test-embedding")),
-            llm_provider: Arc::new(OllamaProvider::new("http://127.0.0.1:9", "test-llm", 1)),
+            llm_provider: Arc::new(OllamaProvider::new("http://127.0.0.1:9", "test-llm", 1, None)),
             config: Arc::new(config),
             github_webhook_secret: "test-secret".to_owned(),
         }
