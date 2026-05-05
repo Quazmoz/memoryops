@@ -52,11 +52,7 @@ pub fn hash_secret(secret: &str) -> AppResult<String> {
     } else {
         argon2::Params::default()
     };
-    let argon2 = Argon2::new(
-        argon2::Algorithm::Argon2id,
-        argon2::Version::V0x13,
-        params,
-    );
+    let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
     argon2
         .hash_password(secret.as_bytes(), &salt)
         .map(|hash| hash.to_string())
@@ -129,12 +125,10 @@ async fn validate_api_key_uncached(db: &PgPool, api_key: &str) -> AppResult<Auth
     for candidate in candidates {
         let secret = api_key.to_owned();
         let hash = candidate.key_hash.clone();
-        
-        let is_valid = tokio::task::spawn_blocking(move || {
-            verify_secret(&secret, &hash)
-        })
-        .await
-        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+
+        let is_valid = tokio::task::spawn_blocking(move || verify_secret(&secret, &hash))
+            .await
+            .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
         if is_valid {
             return Ok(AuthContext {
@@ -156,7 +150,7 @@ async fn read_auth_context_cache(
         std::time::Duration::from_millis(2000),
         redis::cmd("GET")
             .arg(cache_key)
-            .query_async::<Option<String>>(&mut *redis)
+            .query_async::<Option<String>>(&mut *redis),
     )
     .await
     {
@@ -205,7 +199,7 @@ async fn write_auth_context_cache(
             .arg(index_key)
             .arg(AUTH_CACHE_TTL_SECS)
             .arg(cache_key)
-            .query_async::<()>(&mut *redis)
+            .query_async::<()>(&mut *redis),
     )
     .await;
 

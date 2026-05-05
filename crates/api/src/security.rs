@@ -96,9 +96,7 @@ pub fn validate_secret_key_at_startup() -> Result<(), AppError> {
 /// Decrypt a secret that may be in either the legacy (static-salt) or
 /// current (per-encryption random salt) format. Use this only during
 /// a one-time re-encryption migration, then remove it.
-pub fn decrypt_secret_legacy_or_current(
-    ciphertext_b64: &str,
-) -> Result<DecryptedSecret, AppError> {
+pub fn decrypt_secret_legacy_or_current(ciphertext_b64: &str) -> Result<DecryptedSecret, AppError> {
     let payload = STANDARD
         .decode(ciphertext_b64)
         .map_err(|error| AppError::Internal(anyhow!(error)))?;

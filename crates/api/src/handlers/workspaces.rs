@@ -21,8 +21,8 @@ use common::{
     AppError, AppState,
 };
 use futures_util::StreamExt;
-use processor::worker::enqueue_slow_job;
 use processor::embedder::COLLECTION_NAME;
+use processor::worker::enqueue_slow_job;
 use processor::{
     config::fetch_workspace_promotion_config,
     promoter::{run_promotion_pass, PromotionReport},
@@ -1390,7 +1390,12 @@ mod tests {
         }
     }
 
-    fn request_with_body(method: Method, uri: String, api_key: &str, body: String) -> Request<Body> {
+    fn request_with_body(
+        method: Method,
+        uri: String,
+        api_key: &str,
+        body: String,
+    ) -> Request<Body> {
         let builder = Request::builder()
             .method(method)
             .uri(uri)
@@ -1440,7 +1445,10 @@ mod tests {
         }
     }
 
-    fn update_request_with_extra(key: &str, value: serde_json::Value) -> UpdateWorkspaceConfigRequest {
+    fn update_request_with_extra(
+        key: &str,
+        value: serde_json::Value,
+    ) -> UpdateWorkspaceConfigRequest {
         let mut request = update_request(None, None);
         request.extra.insert(key.to_owned(), value);
         request
@@ -1579,7 +1587,9 @@ mod tests {
             Err(error) => error,
         };
 
-        assert!(matches!(error, AppError::Validation(message) if message.contains("must be set via the typed request field")));
+        assert!(
+            matches!(error, AppError::Validation(message) if message.contains("must be set via the typed request field"))
+        );
     }
 
     #[test]

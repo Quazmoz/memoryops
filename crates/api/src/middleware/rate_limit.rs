@@ -173,7 +173,9 @@ fn endpoint_group(path: &str) -> Option<RateLimitGroup> {
             .nth(1)
             .unwrap_or("");
 
-        if matches!(after_id, "stats" | "metrics" | "contradictions/count") || after_id.starts_with("stats/history") {
+        if matches!(after_id, "stats" | "metrics" | "contradictions/count")
+            || after_id.starts_with("stats/history")
+        {
             return Some(RateLimitGroup::Dashboard);
         }
     }
