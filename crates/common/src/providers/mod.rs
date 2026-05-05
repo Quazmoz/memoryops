@@ -3,7 +3,7 @@ pub mod local;
 pub mod traits;
 
 pub use http::{
-    AnthropicProvider, OllamaProvider, OpenAIEmbedProvider, OpenAIProvider,
+    AnthropicProvider, GeminiProvider, OllamaProvider, OpenAIEmbedProvider, OpenAIProvider,
     OpenAiCompatibleProvider,
 };
 pub use local::FastEmbedProvider;

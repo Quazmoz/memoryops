@@ -381,6 +381,85 @@ impl AnthropicProvider {
     }
 }
 
+/// Provider for Google Gemini via the native REST API.
+///
+/// Uses `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}`
+/// — *not* the OpenAI-compatible shim — so it works correctly for local
+/// development without any extra proxy setup.
+///
+/// Supported models: `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-pro`, etc.
+pub struct GeminiProvider {
+    client: Client,
+    api_key: Option<String>,
+    model: String,
+}
+
+impl GeminiProvider {
+    pub fn new(model: impl Into<String>, api_key: Option<String>) -> Self {
+        Self {
+            client: Client::new(),
+            api_key,
+            model: model.into(),
+        }
+    }
+
+    fn endpoint(&self) -> String {
+        format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+            self.model
+        )
+    }
+
+    async fn generate(&self, prompt: &str, max_tokens: Option<usize>) -> Result<String, ProviderError> {
+        let Some(api_key) = self.api_key.as_ref() else {
+            return Err(ProviderError::NotConfigured);
+        };
+
+        let mut body = json!({
+            "contents": [{
+                "parts": [{ "text": prompt }]
+            }]
+        });
+
+        if let Some(max_tokens) = max_tokens {
+            body["generationConfig"] = json!({ "maxOutputTokens": max_tokens });
+        }
+
+        let response = self
+            .client
+            .post(self.endpoint())
+            .query(&[("key", api_key.as_str())])
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| ProviderError::Request(error.to_string()))?;
+
+        let payload = response_json(response).await?;
+
+        payload
+            .pointer("/candidates/0/content/parts/0/text")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse("missing Gemini response text".to_owned())
+            })
+    }
+}
+
+#[async_trait]
+impl LlmProvider for GeminiProvider {
+    async fn complete(&self, prompt: &str) -> Result<String, ProviderError> {
+        self.generate(prompt, None).await
+    }
+
+    async fn summarize(&self, text: &str, max_tokens: usize) -> Result<String, ProviderError> {
+        let prompt = format!(
+            "Summarize this MemoryOps memory in at most {max_tokens} tokens. Preserve concrete names, repositories, decisions, and outcomes.\n\n{text}"
+        );
+        self.generate(&prompt, Some(max_tokens)).await
+    }
+}
+
 async fn response_json(response: reqwest::Response) -> Result<Value, ProviderError> {
     if response.status() == StatusCode::TOO_MANY_REQUESTS {
         let retry_after_secs = response

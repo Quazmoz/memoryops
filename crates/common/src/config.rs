@@ -108,6 +108,7 @@ pub struct LlmConfig {
     pub openai: Option<OpenAiLlmConfig>,
     pub anthropic: Option<AnthropicConfig>,
     pub openai_compatible: Option<OpenAiCompatibleConfig>,
+    pub gemini: Option<GeminiConfig>,
 }
 
 /// Configuration block for Ollama-specific options.
@@ -144,6 +145,7 @@ pub enum LlmProviderKind {
     OpenaiCompatible,
     Openrouter,
     Huggingface,
+    Gemini,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -184,6 +186,42 @@ impl OpenAiCompatibleConfig {
 #[serde(deny_unknown_fields)]
 pub struct AnthropicConfig {
     pub model: String,
+}
+
+/// Configuration block for Google Gemini.
+///
+/// Uses the Gemini REST API (`generativelanguage.googleapis.com`), not the
+/// OpenAI-compatible shim.  `api_key_env` names the environment variable that
+/// holds a Google AI Studio or Vertex AI API key.
+///
+/// Example config.toml:
+/// ```toml
+/// [llm]
+/// provider = "gemini"
+/// model    = "gemini-2.0-flash"
+/// base_url = ""   # unused for Gemini; left blank
+///
+/// [llm.gemini]
+/// api_key_env = "GEMINI_API_KEY"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeminiConfig {
+    /// Name of the environment variable that holds the Gemini API key.
+    /// Example: `"GEMINI_API_KEY"` → reads `std::env::var("GEMINI_API_KEY")`.
+    pub api_key_env: Option<String>,
+}
+
+impl GeminiConfig {
+    /// Resolve the API key by reading the named environment variable.
+    /// Returns `None` when `api_key_env` is not set or the variable is absent/empty.
+    pub fn resolve_api_key(&self) -> Option<String> {
+        let env_name = self.api_key_env.as_deref()?;
+        match std::env::var(env_name) {
+            Ok(value) if !value.trim().is_empty() => Some(value),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -359,11 +397,9 @@ mod tests {
         let cfg = OllamaConfig {
             api_key_env: Some("_TEST_OLLAMA_KEY_MEMORYOPS".to_owned()),
         };
-        // Variable not set -> None
         std::env::remove_var("_TEST_OLLAMA_KEY_MEMORYOPS");
         assert!(cfg.resolve_api_key().is_none());
 
-        // Variable set -> Some
         std::env::set_var("_TEST_OLLAMA_KEY_MEMORYOPS", "sk-test");
         assert_eq!(cfg.resolve_api_key().as_deref(), Some("sk-test"));
         std::env::remove_var("_TEST_OLLAMA_KEY_MEMORYOPS");
@@ -381,11 +417,9 @@ mod tests {
             api_key_env: Some("_TEST_COMPAT_KEY_MEMORYOPS".to_owned()),
             headers: Default::default(),
         };
-        // Variable not set -> None
         std::env::remove_var("_TEST_COMPAT_KEY_MEMORYOPS");
         assert!(cfg.resolve_api_key().is_none());
 
-        // Variable set -> Some
         std::env::set_var("_TEST_COMPAT_KEY_MEMORYOPS", "sk-router-test");
         assert_eq!(cfg.resolve_api_key().as_deref(), Some("sk-router-test"));
         std::env::remove_var("_TEST_COMPAT_KEY_MEMORYOPS");
@@ -397,6 +431,25 @@ mod tests {
             api_key_env: None,
             headers: Default::default(),
         };
+        assert!(cfg.resolve_api_key().is_none());
+    }
+
+    #[test]
+    fn gemini_config_resolves_api_key_from_env() {
+        let cfg = GeminiConfig {
+            api_key_env: Some("_TEST_GEMINI_KEY_MEMORYOPS".to_owned()),
+        };
+        std::env::remove_var("_TEST_GEMINI_KEY_MEMORYOPS");
+        assert!(cfg.resolve_api_key().is_none());
+
+        std::env::set_var("_TEST_GEMINI_KEY_MEMORYOPS", "AIza-test");
+        assert_eq!(cfg.resolve_api_key().as_deref(), Some("AIza-test"));
+        std::env::remove_var("_TEST_GEMINI_KEY_MEMORYOPS");
+    }
+
+    #[test]
+    fn gemini_config_none_api_key_env_resolves_to_none() {
+        let cfg = GeminiConfig { api_key_env: None };
         assert!(cfg.resolve_api_key().is_none());
     }
 }
