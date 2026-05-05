@@ -48,9 +48,25 @@ Follow these steps precisely using your available terminal and file manipulation
      ```
    - Verify it initializes and port `5173` is reachable.
 
-7. **Seed Test Data** (optional)
-   - Run the seed script if bash is available, or skip.
-   - PowerShell: `if (Get-Command bash -ErrorAction SilentlyContinue) { $env:API_KEY=$key; bash scripts/seed.sh }`
+7. **Seed Test Data**
+   - Populate the workspace with initial data to ensure the dashboard has content.
+   - PowerShell:
+     ```powershell
+     $env:API_KEY=$key
+     if (Get-Command bash -ErrorAction SilentlyContinue) {
+         bash scripts/seed.sh
+     } else {
+         # Fallback simple seed if bash is missing
+         $seedBody = @{
+             workspace_id = $workspace_id
+             memory_type = "episodic"
+             user_id = "dev-user"
+             content = "Environment initialized and bootstrapped successfully."
+             importance_score = 0.8
+         } | ConvertTo-Json
+         Invoke-RestMethod -Uri "http://localhost:8080/v1/memory" -Method Post -Headers @{"x-api-key"=$key; "Content-Type"="application/json"} -Body $seedBody
+     }
+     ```
 
 8. **Handover to User**
    - Provide the **API Key** and **Workspace ID**.
