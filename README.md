@@ -49,19 +49,19 @@ Result: inconsistent behavior, repeated instructions, hallucinations from stale 
 ┌─────────────────────────────────────────────────────────┐
 │                     MemoryOps Platform                  │
 │                                                         │
-│  ┌──────────────┐   ┌──────────────┐   ┌────────────┐  │
-│  │  Ingestion   │──▶│  Processor   │──▶│  Retrieval│  │
-│  │  (Webhooks)  │   │  Fast + Slow │   │   Engine   │  │
-│  └──────────────┘   └──────────────┘   └────────────┘  │
+│  ┌──────────────┐   ┌──────────────┐   ┌────────────┐   │
+│  │  Ingestion   │──▶│  Processor   │──▶│  Retrieval│   │
+│  │  (Webhooks)  │   │  Fast + Slow │   │   Engine   │   │
+│  └──────────────┘   └──────────────┘   └────────────┘   │
 │          │                  │                  │        │
 │       Postgres           Redis Queue      Qdrant +      │
 │       (events +          (async jobs)    Tantivy        │
 │        memories)                        (hybrid search) │
 │                                                         │
-│  ┌──────────────┐   ┌──────────────────────────────┐   │
-│  │  MCP Server  │   │  Memory Control Center (UI)  │   │
-│  │  (port 3003) │   │  React 19 + TypeScript       │   │
-│  └──────────────┘   └──────────────────────────────┘   │
+│  ┌──────────────┐   ┌──────────────────────────────┐    │
+│  │  MCP Server  │   │  Memory Control Center (UI)  │    │
+│  │  (port 3003) │   │  React 19 + TypeScript       │    │
+│  └──────────────┘   └──────────────────────────────┘    │
 └─────────────────────────────────────────────────────────┘
 ```
 
