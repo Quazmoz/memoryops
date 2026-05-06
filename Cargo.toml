@@ -58,6 +58,7 @@ sqlx = { version = "0.8", features = ["chrono", "json", "migrate", "postgres", "
 
 # Redis Streams back processor queues and rate limiting; connection-manager gives pooled async handles.
 redis = { version = "0.27", features = ["connection-manager", "tokio-comp"] }
+deadpool-redis = { version = "0.18", features = ["rt_tokio_1"] }
 
 # Webhook signatures and future API key hashing use the crypto primitives pinned for the workspace.
 hmac = "0.12"

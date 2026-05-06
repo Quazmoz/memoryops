@@ -1,6 +1,5 @@
 use chrono::Utc;
 use common::{error::AppResult, models::RawEvent};
-use redis::aio::ConnectionManager;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -8,7 +7,7 @@ pub const DLQ_KEY_PREFIX: &str = "memoryops:dlq:";
 pub const DLQ_LIST_PREFIX: &str = "dlq:";
 
 pub async fn send_to_dlq(
-    redis: &mut ConnectionManager,
+    redis: &mut impl redis::aio::ConnectionLike,
     event: &RawEvent,
     error: &str,
     retry_count: i32,
@@ -55,7 +54,7 @@ pub async fn send_to_dlq(
 }
 
 pub async fn send_processor_job_to_dlq(
-    redis: &mut ConnectionManager,
+    redis: &mut impl redis::aio::ConnectionLike,
     workspace_id: Uuid,
     memory_id: Uuid,
     error: &str,
@@ -114,6 +113,7 @@ pub fn dlq_list_key(workspace_id: Uuid) -> String {
 mod tests {
     use chrono::Utc;
     use common::models::{EventType, Source};
+    use redis::aio::ConnectionManager;
     use serde_json::json;
 
     use super::*;

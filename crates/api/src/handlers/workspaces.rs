@@ -7,7 +7,7 @@ use std::{
 use anyhow::anyhow;
 use axum::{
     body::Body,
-    extract::{connect_info::ConnectInfo, Path, Query, State},
+    extract::{Path, Query, State},
     http::{header::HeaderName, HeaderMap, StatusCode},
     response::IntoResponse,
     Extension, Json,
@@ -146,16 +146,13 @@ struct WorkspaceStatsRow {
     newest_memory_at: Option<DateTime<Utc>>,
 }
 
-#[axum::debug_handler]
 pub async fn create_workspace(
     State(state): State<AppState>,
-    connect_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
     Json(request): Json<CreateWorkspaceRequest>,
 ) -> AppResult<Json<CreateWorkspaceResponse>> {
     authorize_workspace_creation(&headers)?;
-    let created_from_ip = resolve_client_ip(&headers, connect_info.as_ref())
-        .ok_or_else(|| AppError::Validation("client IP is required".to_owned()))?;
+    let created_from_ip = resolve_client_ip(&headers);
     enforce_workspace_creation_rate_limit(&state, created_from_ip).await?;
 
     if request.name.trim().is_empty() {
@@ -180,7 +177,7 @@ pub async fn create_workspace(
     .bind(config_value)
     .bind(config.promotion_threshold)
     .bind(config.dedup_cosine_threshold)
-    .bind(created_from_ip)
+    .bind(created_from_ip.to_string())
     .execute(&state.db)
     .await
     .map_err(|error| {
@@ -530,7 +527,7 @@ pub async fn import_memories(
         .await;
     }
 
-    Ok(Json(response))
+    Ok((StatusCode::OK, Json(response)))
 }
 
 async fn process_complete_import_lines(
@@ -575,9 +572,13 @@ async fn process_import_line(
     match upsert_imported_memory(&state.db, &memory).await {
         Ok(memory_id) => {
             response.imported = response.imported.saturating_add(1);
-            let mut redis = state.redis.clone();
-            if let Err(error) = enqueue_slow_job(&mut redis, memory_id, workspace_id, 0).await {
-                tracing::warn!(error = ?error, memory_id = %memory_id, "failed to enqueue imported memory for embedding");
+            match state.redis.get().await {
+                Ok(mut conn) => {
+                    if let Err(error) = enqueue_slow_job(&mut *conn, memory_id, workspace_id, 0).await {
+                        tracing::warn!(error = ?error, memory_id = %memory_id, "failed to enqueue imported memory for embedding");
+                    }
+                }
+                Err(error) => tracing::warn!(error = ?error, memory_id = %memory_id, "failed to get Redis connection for import enqueue"),
             }
         }
         Err(error) => {
@@ -749,7 +750,11 @@ fn stats_history_days(days: Option<u32>) -> AppResult<u32> {
 }
 
 async fn acquire_promotion_lock(state: &AppState, key: &str) -> AppResult<String> {
-    let mut redis = state.redis.clone();
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
     let token = Uuid::new_v4().to_string();
     let acquired = redis::cmd("SET")
         .arg(key)
@@ -757,7 +762,7 @@ async fn acquire_promotion_lock(state: &AppState, key: &str) -> AppResult<String
         .arg("NX")
         .arg("EX")
         .arg(600)
-        .query_async::<Option<String>>(&mut redis)
+        .query_async::<Option<String>>(&mut *redis)
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?
         .is_some();
@@ -772,7 +777,13 @@ async fn acquire_promotion_lock(state: &AppState, key: &str) -> AppResult<String
 }
 
 async fn release_promotion_lock(state: &AppState, key: &str, token: &str) {
-    let mut redis = state.redis.clone();
+    let mut redis = match state.redis.get().await {
+        Ok(conn) => conn,
+        Err(error) => {
+            tracing::warn!(error = ?error, key, "failed to get Redis connection to release promotion lock");
+            return;
+        }
+    };
     let script = redis::Script::new(
         r#"
         if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -785,7 +796,7 @@ async fn release_promotion_lock(state: &AppState, key: &str, token: &str) {
     if let Err(error) = script
         .key(key)
         .arg(token)
-        .invoke_async::<i64>(&mut redis)
+        .invoke_async::<i64>(&mut *redis)
         .await
     {
         tracing::warn!(error = ?error, key, "failed to release promotion lock");
@@ -878,32 +889,45 @@ fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
     }
 }
 
-fn resolve_client_ip(
-    headers: &HeaderMap,
-    connect_info: Option<&ConnectInfo<SocketAddr>>,
-) -> Option<IpAddr> {
+fn resolve_client_ip(headers: &HeaderMap) -> IpAddr {
+    // 1. X-Forwarded-For (set by nginx and most CDNs)
     if let Some(value) = headers.get(&X_FORWARDED_FOR_HEADER) {
         if let Ok(raw) = value.to_str() {
             if let Some(first) = raw.split(',').next() {
                 let candidate = first.trim();
                 if let Ok(ip) = candidate.parse::<IpAddr>() {
-                    return Some(ip);
+                    return ip;
                 }
                 if let Ok(addr) = candidate.parse::<SocketAddr>() {
-                    return Some(addr.ip());
+                    return addr.ip();
                 }
             }
         }
     }
 
-    connect_info.map(|info| info.0.ip())
+    // 2. X-Real-IP (set by some reverse proxies)
+    if let Some(value) = headers.get("x-real-ip") {
+        if let Ok(raw) = value.to_str() {
+            if let Ok(ip) = raw.trim().parse::<IpAddr>() {
+                return ip;
+            }
+        }
+    }
+
+    // 3. Local dev fallback — rate-limiting still applies but all local
+    //    requests share the same bucket, which is fine for development.
+    IpAddr::from([127, 0, 0, 1])
 }
 
 async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> AppResult<()> {
     let key = format!("workspace:create:ratelimit:{ip}");
     let now = unix_timestamp_secs()?;
 
-    let mut redis = state.redis.clone();
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
     let allowed = redis::Script::new(
         r#"
         local data = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
@@ -936,7 +960,7 @@ async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> 
     .arg(now)
     .arg(WORKSPACE_CREATE_RATE_LIMIT_CAPACITY)
     .arg(WORKSPACE_CREATE_REFILL_TOKENS_PER_SEC)
-    .invoke_async::<i64>(&mut redis)
+    .invoke_async::<i64>(&mut *redis)
     .await
     .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
@@ -1207,11 +1231,15 @@ pub async fn reindex_workspace(
     };
 
     let enqueued = rows.len();
-    let mut redis = state.redis.clone();
-    for row in &rows {
-        if let Err(error) = enqueue_slow_job(&mut redis, row.id, row.workspace_id, 0).await {
-            tracing::warn!(error = ?error, memory_id = %row.id, "failed to enqueue memory for reindex");
+    match state.redis.get().await {
+        Ok(mut conn) => {
+            for row in &rows {
+                if let Err(error) = enqueue_slow_job(&mut *conn, row.id, row.workspace_id, 0).await {
+                    tracing::warn!(error = ?error, memory_id = %row.id, "failed to enqueue memory for reindex");
+                }
+            }
         }
+        Err(error) => tracing::warn!(error = ?error, "failed to get Redis connection for reindex enqueue"),
     }
 
     // FIX: was `format!("user:{}", auth.key_id)` — use auth.actor() for

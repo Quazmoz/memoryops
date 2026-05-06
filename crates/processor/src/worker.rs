@@ -15,7 +15,7 @@ use common::{
 };
 use ingestion::STREAM_KEY;
 use redis::{
-    aio::ConnectionManager, from_redis_value, streams::StreamId, streams::StreamReadReply, Value,
+    aio::ConnectionLike, from_redis_value, streams::StreamId, streams::StreamReadReply, Value,
 };
 use sqlx::PgPool;
 use tokio::task::JoinSet;
@@ -135,14 +135,20 @@ impl SlowPathEmbedder for QdrantSlowPathEmbedder {
 
 pub async fn run_worker(worker_id: usize, state: AppState) {
     let consumer_name = format!("processor-{worker_id}");
-    let mut redis = state.redis.clone();
+    let mut redis = match state.redis.get().await {
+        Ok(conn) => conn,
+        Err(error) => {
+            tracing::error!(error = ?error, "failed to acquire Redis connection for worker");
+            return;
+        }
+    };
 
-    if let Err(error) = ensure_consumer_group(&mut redis, STREAM_KEY, GROUP_NAME).await {
+    if let Err(error) = ensure_consumer_group(&mut *redis, STREAM_KEY, GROUP_NAME).await {
         tracing::error!(error = ?error, "failed to ensure Redis consumer group");
     }
 
     loop {
-        match read_new_messages(&mut redis, STREAM_KEY, GROUP_NAME, &consumer_name, 5000).await {
+        match read_new_messages(&mut *redis, STREAM_KEY, GROUP_NAME, &consumer_name, 5000).await {
             Ok(messages) => {
                 if messages.is_empty() {
                     continue;
@@ -151,7 +157,6 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
                 let mut tasks = JoinSet::new();
                 for message in messages {
                     let task_state = state.clone();
-                    let mut task_redis = state.redis.clone();
                     let task_semaphore = Arc::clone(&state.processor_semaphore);
                     let span = tracing::info_span!("processor_task", stream_id = %message.id);
                     tasks.spawn(
@@ -161,8 +166,15 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
                             tracing::error!("processor semaphore closed unexpectedly");
                             return;
                         };
+                        let mut task_redis = match task_state.redis.get().await {
+                            Ok(conn) => conn,
+                            Err(error) => {
+                                tracing::error!(error = ?error, "failed to acquire Redis connection for task");
+                                return;
+                            }
+                        };
                         if let Err(error) =
-                            process_stream_message(task_state, &mut task_redis, message).await
+                            process_stream_message(task_state, &mut *task_redis, message).await
                         {
                             tracing::error!(error = ?error, "failed to process Redis stream message");
                         }
@@ -187,17 +199,23 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
 
 pub async fn run_slow_worker(worker_id: usize, state: AppState) {
     let consumer_name = format!("slow-processor-{worker_id}");
-    let mut redis = state.redis.clone();
+    let mut redis = match state.redis.get().await {
+        Ok(conn) => conn,
+        Err(error) => {
+            tracing::error!(error = ?error, "failed to acquire Redis connection for slow worker");
+            return;
+        }
+    };
 
     if let Err(error) =
-        ensure_consumer_group(&mut redis, PROCESSOR_JOBS_STREAM, SLOW_GROUP_NAME).await
+        ensure_consumer_group(&mut *redis, PROCESSOR_JOBS_STREAM, SLOW_GROUP_NAME).await
     {
         tracing::error!(error = ?error, "failed to ensure slow processor Redis consumer group");
     }
 
     loop {
         match read_new_messages(
-            &mut redis,
+            &mut *redis,
             PROCESSOR_JOBS_STREAM,
             SLOW_GROUP_NAME,
             &consumer_name,
@@ -213,7 +231,6 @@ pub async fn run_slow_worker(worker_id: usize, state: AppState) {
                 let mut tasks = JoinSet::new();
                 for message in messages {
                     let task_state = state.clone();
-                    let mut task_redis = state.redis.clone();
                     let task_semaphore = Arc::clone(&state.processor_semaphore);
                     let span = tracing::info_span!("processor_task", stream_id = %message.id);
                     tasks.spawn(
@@ -223,8 +240,15 @@ pub async fn run_slow_worker(worker_id: usize, state: AppState) {
                             tracing::error!("slow processor semaphore closed unexpectedly");
                             return;
                         };
+                        let mut task_redis = match task_state.redis.get().await {
+                            Ok(conn) => conn,
+                            Err(error) => {
+                                tracing::error!(error = ?error, "failed to acquire Redis connection for slow task");
+                                return;
+                            }
+                        };
                         if let Err(error) =
-                            process_slow_stream_message(task_state, &mut task_redis, message).await
+                            process_slow_stream_message(task_state, &mut *task_redis, message).await
                         {
                             tracing::error!(error = ?error, "failed to process slow processor job");
                         }
@@ -248,7 +272,7 @@ pub async fn run_slow_worker(worker_id: usize, state: AppState) {
 }
 
 pub async fn enqueue_slow_job(
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     memory_id: Uuid,
     workspace_id: Uuid,
     attempts: i32,
@@ -269,7 +293,7 @@ pub async fn enqueue_slow_job(
 }
 
 async fn ensure_consumer_group(
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     stream_key: &str,
     group_name: &str,
 ) -> anyhow::Result<()> {
@@ -290,7 +314,7 @@ async fn ensure_consumer_group(
 }
 
 async fn read_new_messages(
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     stream_key: &str,
     group_name: &str,
     consumer_name: &str,
@@ -329,7 +353,7 @@ fn parse_stream_read_reply(value: Value) -> anyhow::Result<Vec<StreamId>> {
 
 async fn process_stream_message(
     state: AppState,
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     message: StreamId,
 ) -> AppResult<()> {
     let parsed = match parse_message_ids(&message) {
@@ -410,7 +434,7 @@ async fn process_stream_message(
 
 async fn process_slow_stream_message(
     state: AppState,
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     message: StreamId,
 ) -> AppResult<()> {
     let job = match parse_processor_job(&message) {
@@ -570,7 +594,7 @@ fn elapsed_ms(started: Instant) -> f64 {
 
 async fn handle_processing_error(
     state: &AppState,
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     raw_event: &common::models::RawEvent,
     stream_id: &str,
     error: AppError,
@@ -611,7 +635,7 @@ async fn handle_processing_error(
 
 async fn handle_slow_processing_error(
     state: &AppState,
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     job: &ProcessorJob,
     error: AppError,
 ) -> AppResult<()> {
@@ -670,7 +694,7 @@ async fn handle_slow_processing_error(
 }
 
 async fn ack_message(
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     stream_key: &str,
     group_name: &str,
     stream_id: &str,

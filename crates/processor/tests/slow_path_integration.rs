@@ -23,7 +23,6 @@ use qdrant_client::{
     },
     Qdrant,
 };
-use redis::aio::ConnectionManager;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
@@ -72,8 +71,12 @@ async fn full_slow_path_integration(pool: PgPool) {
     ensure_collection(&state).await;
     let workspace_id = insert_workspace(&pool).await;
     let memory_id = insert_memory(&pool, workspace_id, "slow path memory", 1.0, None).await;
-    let mut redis = state.redis.clone();
-    if let Err(error) = enqueue_slow_job(&mut redis, memory_id, workspace_id, 0).await {
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .unwrap_or_else(|error| panic!("test Redis should connect: {error}"));
+    if let Err(error) = enqueue_slow_job(&mut *redis, memory_id, workspace_id, 0).await {
         panic!("slow job should enqueue: {error}");
     }
 
@@ -334,14 +337,9 @@ async fn soft_delete_restore_cycle(pool: PgPool) {
 
 async fn test_state(pool: PgPool) -> AppState {
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:16379".to_owned());
-    let redis_client = match redis::Client::open(redis_url) {
-        Ok(client) => client,
-        Err(error) => panic!("test Redis URL should be valid: {error}"),
-    };
-    let redis = match ConnectionManager::new(redis_client.clone()).await {
-        Ok(connection) => connection,
-        Err(error) => panic!("test Redis should be reachable: {error}"),
-    };
+    let redis = deadpool_redis::Config::from_url(&redis_url)
+        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+        .unwrap_or_else(|error| panic!("test Redis pool should be created: {error}"));
     let qdrant_url = env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:16333".to_owned());
     let qdrant = match Qdrant::from_url(&qdrant_url).build() {
         Ok(client) => client,
@@ -354,7 +352,6 @@ async fn test_state(pool: PgPool) -> AppState {
 
     AppState {
         db: pool,
-        redis_client,
         redis,
         qdrant,
         processor_semaphore: Arc::new(Semaphore::new(

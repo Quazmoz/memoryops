@@ -17,6 +17,7 @@ axum.workspace = true
 chrono.workspace = true
 common.workspace = true
 dashmap = "6.1"
+deadpool-redis.workspace = true
 futures-util.workspace = true
 ingestion.workspace = true
 processor.workspace = true

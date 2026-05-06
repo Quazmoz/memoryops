@@ -1,13 +1,19 @@
 use anyhow::anyhow;
 use common::{error::AppResult, AppError};
-use redis::aio::ConnectionManager;
+use deadpool_redis::Pool as RedisPool;
 use uuid::Uuid;
 
 pub const ACCESS_KEY_PREFIX: &str = "memoryops:access:";
 pub const ACCESS_TTL_SECS: u64 = 7_776_000;
 
-pub async fn record_access(redis: &ConnectionManager, memory_id: Uuid) -> AppResult<u64> {
-    let mut connection = redis.clone();
+pub async fn record_access(redis: &RedisPool, memory_id: Uuid) -> AppResult<u64> {
+    let mut connection = match redis.get().await {
+        Ok(conn) => conn,
+        Err(error) => {
+            tracing::warn!(error = ?error, memory_id = %memory_id, "failed to get Redis connection for access recording");
+            return Ok(0);
+        }
+    };
     let key = access_key(memory_id);
     let result = redis::pipe()
         .cmd("HINCRBY")
@@ -17,7 +23,7 @@ pub async fn record_access(redis: &ConnectionManager, memory_id: Uuid) -> AppRes
         .cmd("EXPIRE")
         .arg(&key)
         .arg(ACCESS_TTL_SECS)
-        .query_async::<(i64, bool)>(&mut connection)
+        .query_async::<(i64, bool)>(&mut *connection)
         .await;
 
     match result {
@@ -30,13 +36,19 @@ pub async fn record_access(redis: &ConnectionManager, memory_id: Uuid) -> AppRes
     }
 }
 
-pub async fn get_access_count(redis: &ConnectionManager, memory_id: Uuid) -> AppResult<u64> {
-    let mut connection = redis.clone();
+pub async fn get_access_count(redis: &RedisPool, memory_id: Uuid) -> AppResult<u64> {
+    let mut connection = match redis.get().await {
+        Ok(conn) => conn,
+        Err(error) => {
+            tracing::warn!(error = ?error, memory_id = %memory_id, "failed to get Redis connection for access count");
+            return Ok(0);
+        }
+    };
     let key = access_key(memory_id);
     redis::cmd("HGET")
         .arg(&key)
         .arg("count")
-        .query_async::<Option<u64>>(&mut connection)
+        .query_async::<Option<u64>>(&mut *connection)
         .await
         .map(|count| count.unwrap_or(0))
         .map_err(|error| AppError::Internal(anyhow!(error)))

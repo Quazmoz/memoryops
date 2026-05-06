@@ -125,9 +125,13 @@ pub async fn handle_restore(
             resource: format!("memory:{id}"),
         })?;
 
-    let mut redis = state.redis.clone();
-    if let Err(error) = enqueue_slow_job(&mut redis, restored.id, restored.workspace_id, 0).await {
-        tracing::warn!(error = ?error, memory_id = %restored.id, "failed to enqueue restored memory for re-embedding");
+    match state.redis.get().await {
+        Ok(mut conn) => {
+            if let Err(error) = enqueue_slow_job(&mut *conn, restored.id, restored.workspace_id, 0).await {
+                tracing::warn!(error = ?error, memory_id = %restored.id, "failed to enqueue restored memory for re-embedding");
+            }
+        }
+        Err(error) => tracing::warn!(error = ?error, memory_id = %restored.id, "failed to get Redis connection for restore enqueue"),
     }
 
     spawn_audit_log(
@@ -203,10 +207,13 @@ pub async fn handle_publish(
             resource: format!("memory:{id}"),
         })?;
 
-    let mut redis = state.redis.clone();
-    if let Err(error) = enqueue_slow_job(&mut redis, published.id, published.workspace_id, 0).await
-    {
-        tracing::warn!(error = ?error, memory_id = %published.id, "failed to enqueue published memory for payload refresh");
+    match state.redis.get().await {
+        Ok(mut conn) => {
+            if let Err(error) = enqueue_slow_job(&mut *conn, published.id, published.workspace_id, 0).await {
+                tracing::warn!(error = ?error, memory_id = %published.id, "failed to enqueue published memory for payload refresh");
+            }
+        }
+        Err(error) => tracing::warn!(error = ?error, memory_id = %published.id, "failed to get Redis connection for publish enqueue"),
     }
     refresh_published_qdrant_payload(&state, &published).await;
 

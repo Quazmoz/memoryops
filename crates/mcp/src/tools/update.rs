@@ -61,10 +61,13 @@ pub async fn run(
         store::update_memory_unit_patch(&state.db, input.memory_id, workspace_id, &patch).await?;
 
     if content_changed {
-        let mut redis = state.redis.clone();
-        if let Err(error) = enqueue_slow_job(&mut redis, updated.id, updated.workspace_id, 0).await
-        {
-            tracing::warn!(error = ?error, memory_id = %updated.id, "failed to enqueue MCP-updated memory for re-embedding");
+        match state.redis.get().await {
+            Ok(mut conn) => {
+                if let Err(error) = enqueue_slow_job(&mut *conn, updated.id, updated.workspace_id, 0).await {
+                    tracing::warn!(error = ?error, memory_id = %updated.id, "failed to enqueue MCP-updated memory for re-embedding");
+                }
+            }
+            Err(error) => tracing::warn!(error = ?error, memory_id = %updated.id, "failed to get Redis connection for MCP update enqueue"),
         }
     }
 

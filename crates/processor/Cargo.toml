@@ -27,4 +27,5 @@ uuid.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+deadpool-redis.workspace = true
 reqwest.workspace = true

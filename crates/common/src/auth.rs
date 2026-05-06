@@ -4,7 +4,7 @@ use argon2::{
     Argon2, PasswordHasher, PasswordVerifier,
 };
 use rand::TryRngCore;
-use redis::aio::ConnectionManager;
+use redis::aio::ConnectionLike;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -83,7 +83,7 @@ pub async fn validate_api_key(db: &PgPool, api_key: &str) -> AppResult<AuthConte
 
 pub async fn validate_api_key_cached(
     db: &PgPool,
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     api_key: &str,
 ) -> AppResult<AuthContext> {
     let cache_key = api_key_cache_key(api_key);
@@ -97,7 +97,7 @@ pub async fn validate_api_key_cached(
 }
 
 pub async fn invalidate_api_key_cache(
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     key_id: Uuid,
 ) -> AppResult<()> {
     let index_key = auth_cache_index_key(key_id);
@@ -143,7 +143,7 @@ async fn validate_api_key_uncached(db: &PgPool, api_key: &str) -> AppResult<Auth
 }
 
 async fn read_auth_context_cache(
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     cache_key: &str,
 ) -> Option<AuthContext> {
     let cached = match tokio::time::timeout(
@@ -175,7 +175,7 @@ async fn read_auth_context_cache(
 }
 
 async fn write_auth_context_cache(
-    redis: &mut ConnectionManager,
+    redis: &mut impl ConnectionLike,
     cache_key: &str,
     context: &AuthContext,
 ) {

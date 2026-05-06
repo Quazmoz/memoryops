@@ -227,7 +227,11 @@ pub async fn retry_dlq(
         .ok_or_else(|| AppError::NotFound {
             resource: format!("dlq:{job_id}"),
         })?;
-    let mut redis = state.redis.clone();
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
     let key = dlq_key(id);
     redis::pipe()
         .cmd("LREM")
@@ -241,7 +245,7 @@ pub async fn retry_dlq(
         .arg(job_id.to_string())
         .arg("workspace_id")
         .arg(id.to_string())
-        .query_async::<(i64, String)>(&mut redis)
+        .query_async::<(i64, String)>(&mut *redis)
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
@@ -260,12 +264,16 @@ pub async fn delete_dlq(
         .ok_or_else(|| AppError::NotFound {
             resource: format!("dlq:{job_id}"),
         })?;
-    let mut redis = state.redis.clone();
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
     redis::cmd("LREM")
         .arg(dlq_key(id))
         .arg(1)
         .arg(raw)
-        .query_async::<i64>(&mut redis)
+        .query_async::<i64>(&mut *redis)
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
@@ -301,12 +309,16 @@ async fn get_integration(
 }
 
 async fn dlq_values(state: &AppState, workspace_id: Uuid) -> AppResult<Vec<String>> {
-    let mut redis = state.redis.clone();
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
     redis::cmd("LRANGE")
         .arg(dlq_key(workspace_id))
         .arg(0)
         .arg(-1)
-        .query_async::<Vec<String>>(&mut redis)
+        .query_async::<Vec<String>>(&mut *redis)
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))
 }

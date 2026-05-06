@@ -221,8 +221,12 @@ pub async fn revoke_key(
         resource: format!("api_key:{key_id}"),
     })?;
 
-    let mut redis = state.redis.clone();
-    if let Err(error) = invalidate_api_key_cache(&mut redis, key_id).await {
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("redis pool error")))?;
+    if let Err(error) = invalidate_api_key_cache(&mut *redis, key_id).await {
         tracing::error!(
             error = ?error,
             key_id = %key_id,

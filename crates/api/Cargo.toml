@@ -20,6 +20,7 @@ bs58.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 common.workspace = true
+deadpool-redis.workspace = true
 futures-util.workspace = true
 hkdf = "0.12"
 ingestion.workspace = true
