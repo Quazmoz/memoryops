@@ -1,7 +1,6 @@
 # MemoryOps
 
 [![CI](https://github.com/Quazmoz/memoryops/actions/workflows/ci.yml/badge.svg)](https://github.com/Quazmoz/memoryops/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen)](https://github.com/Quazmoz/memoryops)
 [![Rust](https://img.shields.io/badge/rust-1.88-orange)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)](#status)
@@ -73,7 +72,7 @@ Result: inconsistent agent behavior, repeated instructions, and hallucinations f
 - [Rust](https://rustup.rs/) stable — see `rust-toolchain.toml` (currently 1.88.0)
 - [Docker](https://www.docker.com/) + Docker Compose
 - [Node.js](https://nodejs.org/) 20+ (frontend only)
-- [sqlx-cli](https://github.com/launchbakery/sqlx/tree/master/sqlx-cli):
+- [sqlx-cli](https://github.com/sqlx-rs/sqlx/tree/master/sqlx-cli):
   ```bash
   cargo install sqlx-cli --no-default-features --features rustls,postgres
   ```
@@ -132,8 +131,7 @@ MemoryOps exposes MCP tools via HTTP Streamable or stdio transport.
 |--------|-------|
 | Open WebUI | [docs/integrations/openwebui.md](docs/integrations/openwebui.md) |
 | Claude Code | [docs/integrations/claude-code.md](docs/integrations/claude-code.md) |
-| GitHub Copilot / VS Code | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
-| Continue.dev | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
+| GitHub Copilot / VS Code / Continue.dev | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
 
 See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport reference and HTTP Streamable session lifecycle.
 
@@ -165,6 +163,8 @@ Copy `.env.example` to `.env`. All required variables must be set before startin
 | `JIRA_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Jira webhook secret. **Required in production.** |
 | `MCP_TRANSPORT` | ❌ | `stdio` | `http` or `stdio`. Always use `http` in Docker. |
 | `MCP_PORT` | ❌ | `3003` | MCP server port (HTTP transport only). |
+| `VITE_API_BASE_URL` | ❌ | `/api` | Frontend API proxy base path (frontend only). |
+| `VITE_MEMORYOPS_WORKSPACE_ID` | ❌ | — | Workspace UUID for the frontend; set after bootstrap. |
 
 Secrets are **never** stored in `config.toml` — always via environment variables.
 
@@ -287,6 +287,12 @@ curl -X POST http://localhost:8080/v1/retrieve \
 
 ```
 memoryops/
+├── .github/
+│   ├── ISSUE_TEMPLATE/   # Bug report and feature request templates
+│   ├── workflows/
+│   │   └── ci.yml        # CI pipeline (fmt → clippy → test)
+│   ├── pull_request_template.md
+│   └── FUNDING.yml
 ├── crates/
 │   ├── api/          # REST API (axum handlers, middleware, routing)
 │   ├── common/       # Shared types, DB models, provider traits, config
@@ -300,7 +306,10 @@ memoryops/
 │   └── seed.sh       # Idempotent dev data seeding
 ├── docs/
 │   ├── integrations/ # MCP client setup guides
+│   ├── assets/       # Documentation assets
+│   ├── bootstrap.md  # Bootstrap endpoint usage and first-run flow
 │   ├── FEATURES.md   # Milestone tracker and full feature list
+│   ├── mcp-transport.md  # MCP transport reference and session lifecycle
 │   ├── PROVIDERS.md  # LLM and embedding provider configuration
 │   ├── SPEC.md       # Full technical specification
 │   ├── openapi.yaml  # OpenAPI contract (source of truth)
