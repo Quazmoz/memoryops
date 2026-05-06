@@ -77,6 +77,10 @@ pub struct CreateWorkspaceResponse {
 pub struct UpdateWorkspaceConfigRequest {
     pub promotion_threshold: Option<f32>,
     pub dedup_cosine_threshold: Option<f32>,
+    pub llm_provider: Option<String>,
+    pub llm_model: Option<String>,
+    pub embedding_provider: Option<String>,
+    pub embedding_model: Option<String>,
     pub decay_half_life_days: Option<u32>,
     pub pruning_threshold: Option<f32>,
     #[serde(default)]
@@ -821,6 +825,18 @@ fn merge_workspace_config(
     if let Some(value) = patch.dedup_cosine_threshold {
         object.insert("dedup_cosine_threshold".to_owned(), json!(value));
     }
+    if let Some(value) = &patch.llm_provider {
+        object.insert("llm_provider".to_owned(), json!(value));
+    }
+    if let Some(value) = &patch.llm_model {
+        object.insert("llm_model".to_owned(), json!(value));
+    }
+    if let Some(value) = &patch.embedding_provider {
+        object.insert("embedding_provider".to_owned(), json!(value));
+    }
+    if let Some(value) = &patch.embedding_model {
+        object.insert("embedding_model".to_owned(), json!(value));
+    }
     if let Some(value) = patch.decay_half_life_days {
         object.insert("decay_half_life_days".to_owned(), json!(value));
     }
@@ -1463,6 +1479,10 @@ mod tests {
         UpdateWorkspaceConfigRequest {
             promotion_threshold: None,
             dedup_cosine_threshold: None,
+            llm_provider: None,
+            llm_model: None,
+            embedding_provider: None,
+            embedding_model: None,
             decay_half_life_days,
             pruning_threshold,
             retention_max_age_days: None,
@@ -1619,6 +1639,31 @@ mod tests {
 
         assert!(
             matches!(error, AppError::Validation(message) if message.contains("must be set via the typed request field"))
+        );
+    }
+
+    #[test]
+    fn merge_workspace_config_applies_typed_model_provider_fields() {
+        let mut target = serde_json::json!({});
+        let mut patch = update_request(None, None);
+        patch.llm_provider = Some("openai".to_owned());
+        patch.llm_model = Some("gpt-4.1".to_owned());
+        patch.embedding_provider = Some("openai".to_owned());
+        patch.embedding_model = Some("text-embedding-3-large".to_owned());
+
+        if let Err(error) = merge_workspace_config(&mut target, &patch) {
+            panic!("typed model/provider fields should merge: {error}");
+        }
+
+        assert_eq!(target["llm_provider"], serde_json::json!("openai"));
+        assert_eq!(target["llm_model"], serde_json::json!("gpt-4.1"));
+        assert_eq!(
+            target["embedding_provider"],
+            serde_json::json!("openai")
+        );
+        assert_eq!(
+            target["embedding_model"],
+            serde_json::json!("text-embedding-3-large")
         );
     }
 

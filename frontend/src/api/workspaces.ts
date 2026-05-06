@@ -141,14 +141,30 @@ export interface WorkspaceListResponse {
 export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[]> {
   const headers = requestHeaders({}, false);
   headers.set("x-api-key", apiKey);
-  const response = await fetch(apiUrl("/v1/workspaces"), { headers });
+  const response = await fetch(apiUrl("/v1/workspaces/me"), { headers });
   const payload = await parseResponse(response);
 
   if (!response.ok) {
     throw new ApiError(response.status, extractDetail(payload, response.statusText));
   }
 
-  return ((payload as WorkspaceListResponse).workspaces) ?? [];
+  const listed = (payload as WorkspaceListResponse).workspaces;
+  if (Array.isArray(listed)) {
+    return listed;
+  }
+
+  const single = payload as Partial<WorkspaceListItem>;
+  if (typeof single.id === "string" && typeof single.name === "string") {
+    return [
+      {
+        id: single.id,
+        name: single.name,
+        created_at: typeof single.created_at === "string" ? single.created_at : "",
+      },
+    ];
+  }
+
+  return [];
 }
 
 export interface ReindexResponse {
