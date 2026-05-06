@@ -108,42 +108,71 @@ While others rely heavily on naive vector similarity, MemoryOps employs a robust
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/) stable — see `rust-toolchain.toml` (currently 1.88.0)
+**For the Quick Start (containerized):**
 - [Docker](https://www.docker.com/) + Docker Compose
-- [Node.js](https://nodejs.org/) 20+ (frontend only)
-- [sqlx-cli](https://github.com/sqlx-rs/sqlx/tree/master/sqlx-cli):
+- [sqlx-cli](https://github.com/sqlx-rs/sqlx/tree/master/sqlx-cli) (runs migrations against the Postgres container):
   ```bash
   cargo install sqlx-cli --no-default-features --features rustls,postgres
   ```
-- [Ollama](https://ollama.com/) for local LLM (default): `ollama pull llama3`
+
+**Only needed for local development (non-containerized):**
+- [Rust](https://rustup.rs/) stable (1.88.0+)
+- [Node.js](https://nodejs.org/) 20+
+- [Ollama](https://ollama.com/) (optional, for local LLM): `ollama pull llama3`
 
 ---
 
 ## Quick Start
 
+> Everything runs containerized. The only tool required on your host is
+> [Docker](https://www.docker.com/), [sqlx-cli](https://github.com/sqlx-rs/sqlx/tree/master/sqlx-cli) (for migrations), and `curl`.
+
 ```bash
-# 1. Clone
+# 1. Clone the repository
 git clone https://github.com/Quazmoz/memoryops.git
 cd memoryops
 
-# 2. Start infrastructure (Postgres, Redis, Qdrant)
-docker compose up -d
-
-# 3. Configure environment
+# 2. Configure environment
 cp .env.example .env
-# Edit .env — set DATABASE_URL, REDIS_URL, QDRANT_URL at minimum
+# Open .env and set the two required secrets (not present in .env.example):
+#   APP_SECRET_KEY=<any-random-string>
+#   WORKSPACE_CREATION_SECRET=<any-random-string>
 
-# 4. Run migrations
+# 3. Start infrastructure (Postgres, Redis, Qdrant)
+docker compose up -d postgres redis qdrant
+# Wait a few seconds for the health checks to pass, then verify:
+docker compose ps
+
+# 4. Run database migrations
+# Export DATABASE_URL from .env into your shell first:
+#
+# bash / zsh:
+#   export $(grep -v '^#' .env | xargs)
+#
+# PowerShell:
+#   Get-Content .env | ForEach-Object { if ($_ -match '^([^#][^=]*)=(.*)$') { [System.Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), 'Process') } }
+#
 sqlx migrate run
 
-# 5. Build and start the API
-cargo run -p api
+# 5. Build and start the API container
+docker compose up -d api
+# First build compiles all Rust crates (~2-5 min). Subsequent starts are instant.
 
-# 6. (Optional) Start the frontend
-cd frontend && npm install && npm run dev
+# 6. Bootstrap your first workspace
+# Replace <your-creation-secret> with WORKSPACE_CREATION_SECRET from your .env
+curl -X POST http://localhost:8080/v1/workspaces \
+  -H "Content-Type: application/json" \
+  -H "x-admin-token: <your-creation-secret>" \
+  -d '{"name": "my-workspace"}'
+# Response: {"workspace_id": "...", "api_key": "mops_..."}
+# SAVE both values — the api_key is returned only once!
 
-# 7. (Optional) Seed development data
-API_KEY=your-key bash scripts/seed.sh
+# 7. Build and start the frontend container
+# Pass the workspace_id from Step 6 so it is baked into the static build:
+VITE_MEMORYOPS_WORKSPACE_ID=<workspace_id> docker compose up -d frontend
+
+# 8. (Optional) Seed development data
+API_KEY=<api_key> bash scripts/seed.sh
 ```
 
 | Service | URL |
@@ -155,7 +184,7 @@ API_KEY=your-key bash scripts/seed.sh
 ```bash
 # Verify the API is healthy
 curl http://localhost:8080/health/ready
-# {"status": "ok"}
+# {"status": "ok", "checks": {...}}
 ```
 
 See [docs/local-development.md](docs/local-development.md) for the full local setup guide including Ollama, port reference, and the test stack.
