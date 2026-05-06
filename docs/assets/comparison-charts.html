@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MemoryOps vs. the Field</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    body {
+      background-color: #171614;
+      color: #cdccca;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      line-height: 1.6;
+    }
+    header {
+      text-align: center;
+      padding: 48px 24px 24px;
+    }
+    h1 {
+      color: #4f98a3;
+      margin: 0 0 8px 0;
+      font-size: 32px;
+      font-weight: 700;
+    }
+    .subtitle {
+      color: #797876;
+      font-size: 16px;
+      margin: 0;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+    .card {
+      background-color: #1c1b19;
+      border: 1px solid #393836;
+      border-radius: 12px;
+      padding: 32px;
+    }
+    .card-title {
+      color: #cdccca;
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0 0 24px 0;
+      text-align: center;
+    }
+    .footnote {
+      font-size: 12px;
+      color: #797876;
+      text-align: center;
+      margin-top: 16px;
+    }
+    .grid-2x2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    .doughnut-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .doughnut-label {
+      margin-top: 12px;
+      font-size: 14px;
+      color: #cdccca;
+      font-weight: 500;
+    }
+    canvas {
+      max-width: 100%;
+    }
+    .legend-container {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .legend-color {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+    }
+    .legend-text {
+      font-size: 12px;
+    }
+    @media (max-width: 768px) {
+      .grid-2x2 {
+        grid-template-columns: 1fr;
+      }
+      .card {
+        padding: 24px 16px;
+      }
+      .container {
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>MemoryOps vs. the Field</h1>
+    <p class="subtitle">Feature comparison based on public documentation — May 2026</p>
+  </header>
+
+  <div class="container">
+    
+    <!-- CHART 1 -->
+    <div class="card">
+      <h2 class="card-title">Feature Coverage</h2>
+      <canvas id="chart1"></canvas>
+    </div>
+
+    <!-- CHART 2 -->
+    <div class="card">
+      <h2 class="card-title">Self-Hosting / Data Control</h2>
+      <canvas id="chart2"></canvas>
+    </div>
+
+    <!-- CHART 3 -->
+    <div class="card">
+      <h2 class="card-title">LLM Provider Support</h2>
+      <canvas id="chart3"></canvas>
+      <div class="footnote">Provider count sourced from crates/common/src/config.rs LlmProviderKind — 7 variants</div>
+    </div>
+
+    <!-- CHART 4 -->
+    <div class="card">
+      <h2 class="card-title">Memory Lifecycle Depth</h2>
+      <canvas id="chart4"></canvas>
+    </div>
+
+    <!-- CHART 5 -->
+    <div class="card">
+      <h2 class="card-title">Retrieval Strategy</h2>
+      
+      <div class="legend-container">
+        <div class="legend-item"><span class="legend-color" style="background: #5591c7;"></span><span class="legend-text">Vector-only</span></div>
+        <div class="legend-item"><span class="legend-color" style="background: #fdab43;"></span><span class="legend-text">BM25-only</span></div>
+        <div class="legend-item"><span class="legend-color" style="background: #a86fdf;"></span><span class="legend-text">Hybrid (RRF)</span></div>
+        <div class="legend-item"><span class="legend-color" style="background: #4f98a3;"></span><span class="legend-text">Hybrid + Token-packing + Feedback</span></div>
+      </div>
+
+      <div class="grid-2x2">
+        <div class="doughnut-wrapper">
+          <canvas id="chart5-mops"></canvas>
+          <div class="doughnut-label">MemoryOps</div>
+        </div>
+        <div class="doughnut-wrapper">
+          <canvas id="chart5-mem0"></canvas>
+          <div class="doughnut-label">Mem0</div>
+        </div>
+        <div class="doughnut-wrapper">
+          <canvas id="chart5-zep"></canvas>
+          <div class="doughnut-label">Zep</div>
+        </div>
+        <div class="doughnut-wrapper">
+          <canvas id="chart5-langchain"></canvas>
+          <div class="doughnut-label">LangChain</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const colors = {
+      mops: '#4f98a3',
+      mem0: '#fdab43',
+      zep: '#a86fdf',
+      langchain: '#5591c7',
+      text: '#cdccca',
+      muted: '#797876',
+      grid: '#393836'
+    };
+
+    Chart.defaults.color = colors.text;
+    Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+    Chart.defaults.scale.grid.color = colors.grid;
+
+    // CHART 1: Radar - Feature Coverage
+    new Chart(document.getElementById('chart1'), {
+      type: 'radar',
+      data: {
+        labels: [
+          'Hybrid Search (BM25+vec)',
+          'Memory Lifecycle Mgmt',
+          'Point-in-Time Queries',
+          'Retrieval Trace/Explain',
+          'Contradiction Detection',
+          'Feedback Loop',
+          'LLM Provider Portability',
+          'Native MCP Server'
+        ],
+        datasets: [
+          {
+            label: 'MemoryOps',
+            data: [5, 5, 5, 5, 5, 5, 5, 5],
+            borderColor: colors.mops,
+            backgroundColor: colors.mops + '33',
+            pointBackgroundColor: colors.mops
+          },
+          {
+            label: 'Mem0',
+            data: [2, 3, 0, 0, 2, 2, 3, 2],
+            borderColor: colors.mem0,
+            backgroundColor: colors.mem0 + '33',
+            pointBackgroundColor: colors.mem0
+          },
+          {
+            label: 'Zep',
+            data: [3, 3, 1, 0, 1, 2, 2, 2],
+            borderColor: colors.zep,
+            backgroundColor: colors.zep + '33',
+            pointBackgroundColor: colors.zep
+          },
+          {
+            label: 'LangChain',
+            data: [2, 1, 0, 0, 0, 1, 4, 1],
+            borderColor: colors.langchain,
+            backgroundColor: colors.langchain + '33',
+            pointBackgroundColor: colors.langchain
+          }
+        ]
+      },
+      options: {
+        scales: {
+          r: {
+            angleLines: { color: colors.grid },
+            grid: { color: colors.grid },
+            pointLabels: { color: colors.text },
+            ticks: { display: false, min: 0, max: 5 }
+          }
+        },
+        plugins: { legend: { position: 'top' } }
+      }
+    });
+
+    // CHART 2: Horizontal Bar - Self-Hosting / Data Control
+    new Chart(document.getElementById('chart2'), {
+      type: 'bar',
+      data: {
+        labels: [
+          'Fully local (no cloud req.)',
+          'Zero external API required',
+          'Air-gap capable',
+          'Self-hostable vector DB'
+        ],
+        datasets: [
+          { label: 'MemoryOps', data: [10, 10, 10, 10], backgroundColor: colors.mops },
+          { label: 'Mem0', data: [4, 3, 2, 4], backgroundColor: colors.mem0 },
+          { label: 'Zep', data: [5, 4, 3, 6], backgroundColor: colors.zep },
+          { label: 'LangChain', data: [8, 7, 6, 5], backgroundColor: colors.langchain }
+        ]
+      },
+      options: {
+        indexAxis: 'y',
+        scales: {
+          x: { max: 10, grid: { color: colors.grid } },
+          y: { grid: { display: false } }
+        },
+        plugins: { legend: { position: 'top' } }
+      }
+    });
+
+    // CHART 3: Grouped Bar (Stacked) - LLM Provider Support
+    new Chart(document.getElementById('chart3'), {
+      type: 'bar',
+      data: {
+        labels: [
+          'Local (Ollama)',
+          'OpenAI-compatible shim',
+          'Named cloud (OAI/Anthr.)',
+          'OpenRouter (100s models)',
+          'HuggingFace Router',
+          'Gemini native'
+        ],
+        datasets: [
+          { label: 'MemoryOps', data: [1, 1, 2, 1, 1, 1], backgroundColor: colors.mops },
+          { label: 'Mem0', data: [0, 1, 2, 0, 0, 1], backgroundColor: colors.mem0 },
+          { label: 'Zep', data: [0, 1, 1, 0, 0, 0], backgroundColor: colors.zep },
+          { label: 'LangChain', data: [1, 1, 4, 1, 0, 1], backgroundColor: colors.langchain }
+        ]
+      },
+      options: {
+        scales: {
+          x: { stacked: true, grid: { display: false } },
+          y: { stacked: true, grid: { color: colors.grid } }
+        },
+        plugins: { legend: { position: 'top' } }
+      }
+    });
+
+    // CHART 4: Line/Area - Memory Lifecycle Depth
+    new Chart(document.getElementById('chart4'), {
+      type: 'line',
+      data: {
+        labels: [
+          'Ingestion',
+          'Entity Extraction',
+          'Episodic→Semantic',
+          'Decay + Pruning',
+          'Audit + Provenance'
+        ],
+        datasets: [
+          {
+            label: 'MemoryOps',
+            data: [5, 5, 5, 5, 5],
+            borderColor: colors.mops,
+            backgroundColor: colors.mops + '40',
+            fill: true,
+            tension: 0.3
+          },
+          {
+            label: 'Mem0',
+            data: [4, 4, 2, 2, 1],
+            borderColor: colors.mem0,
+            backgroundColor: 'transparent',
+            fill: false,
+            tension: 0.3
+          },
+          {
+            label: 'Zep',
+            data: [3, 3, 2, 2, 1],
+            borderColor: colors.zep,
+            backgroundColor: 'transparent',
+            fill: false,
+            tension: 0.3
+          },
+          {
+            label: 'LangChain',
+            data: [3, 2, 0, 0, 0],
+            borderColor: colors.langchain,
+            backgroundColor: 'transparent',
+            fill: false,
+            tension: 0.3
+          }
+        ]
+      },
+      options: {
+        scales: {
+          y: { min: 0, max: 5, grid: { color: colors.grid } },
+          x: { grid: { display: false } }
+        },
+        plugins: { legend: { position: 'top' } }
+      }
+    });
+
+    // CHART 5: Doughnuts - Retrieval Strategy
+    const dLabels = ['Vector-only', 'BM25-only', 'Hybrid (RRF)', 'Hybrid + Token-packing + Feedback'];
+    const dColors = ['#5591c7', '#fdab43', '#a86fdf', '#4f98a3'];
+    
+    const dOptions = {
+      cutout: '70%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return context.label + ': ' + context.raw + '%';
+            }
+          }
+        }
+      }
+    };
+    
+    new Chart(document.getElementById('chart5-mops'), {
+      type: 'doughnut',
+      data: { labels: dLabels, datasets: [{ data: [0, 0, 0, 100], backgroundColor: dColors, borderWidth: 0 }] },
+      options: dOptions
+    });
+    
+    new Chart(document.getElementById('chart5-mem0'), {
+      type: 'doughnut',
+      data: { labels: dLabels, datasets: [{ data: [50, 0, 50, 0], backgroundColor: dColors, borderWidth: 0 }] },
+      options: dOptions
+    });
+    
+    new Chart(document.getElementById('chart5-zep'), {
+      type: 'doughnut',
+      data: { labels: dLabels, datasets: [{ data: [40, 10, 50, 0], backgroundColor: dColors, borderWidth: 0 }] },
+      options: dOptions
+    });
+    
+    new Chart(document.getElementById('chart5-langchain'), {
+      type: 'doughnut',
+      data: { labels: dLabels, datasets: [{ data: [60, 20, 20, 0], backgroundColor: dColors, borderWidth: 0 }] },
+      options: dOptions
+    });
+
+  </script>
+</body>
+</html>
