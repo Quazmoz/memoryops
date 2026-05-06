@@ -45,15 +45,36 @@ Result: inconsistent agent behavior, repeated instructions, and hallucinations f
 
 ## MemoryOps vs. the Field
 
-<p align="center">
-  <img src="docs/assets/chart1-radar.png" alt="Feature Coverage" width="48%">
-  <img src="docs/assets/chart2-bar.png" alt="Self-Hosting and Data Control" width="48%">
-</p>
+### Feature Coverage
+MemoryOps provides a complete control plane for memory, surpassing traditional RAG systems by natively integrating lifecycle management, retrieval explanations, contradiction detection, and continuous feedback loops.
 
 <p align="center">
-  <img src="docs/assets/chart4-line.png" alt="Memory Lifecycle Depth" width="48%">
-  <img src="docs/assets/chart3-bar.png" alt="LLM Provider Support" width="48%">
+  <img src="docs/assets/chart1-radar.png" alt="Feature Coverage" width="80%">
 </p>
+
+### Self-Hosting & Data Control
+For sensitive engineering contexts, data residency is critical. MemoryOps is designed to run fully air-gapped and self-hosted with its embedded vector database, requiring zero external cloud APIs.
+
+<p align="center">
+  <img src="docs/assets/chart2-bar.png" alt="Self-Hosting and Data Control" width="80%">
+</p>
+
+### Memory Lifecycle Depth
+Instead of treating memory as a static append-only log, MemoryOps actively manages state: extracting entities, promoting episodic events to semantic knowledge, and automatically decaying or pruning outdated context.
+
+<p align="center">
+  <img src="docs/assets/chart4-line.png" alt="Memory Lifecycle Depth" width="80%">
+</p>
+
+### LLM Provider Support
+MemoryOps avoids vendor lock-in with a pluggable provider architecture, natively supporting local execution (Ollama) while retaining drop-in compatibility with OpenAI, Anthropic, Gemini, OpenRouter, and HuggingFace.
+
+<p align="center">
+  <img src="docs/assets/chart3-bar.png" alt="LLM Provider Support" width="80%">
+</p>
+
+### Retrieval Strategy
+While others rely heavily on naive vector similarity, MemoryOps employs a robust token-packed approach. It merges BM25 keyword search with semantic vectors (via Reciprocal Rank Fusion) and incorporates continuous user feedback to dynamically optimize the final context window.
 
 <p align="center">
   <img src="docs/assets/chart5-bar.png" alt="Retrieval Strategy" width="80%">
