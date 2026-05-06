@@ -2,13 +2,14 @@
 
 [![CI](https://github.com/Quazmoz/memoryops/actions/workflows/ci.yml/badge.svg)](https://github.com/Quazmoz/memoryops/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen)](https://github.com/Quazmoz/memoryops)
-[![Rust](https://img.shields.io/badge/rust-stable-orange)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.88-orange)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Status: Pre-Alpha](https://img.shields.io/badge/status-pre--alpha-red)](#status)
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)](#status)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 > The Memory Operations Platform for AI Agents
 
-**MemoryOps** is a Rust-powered backend system that turns engineering activity (GitHub, Slack, Jira) into structured, controllable, token-optimized memory for AI agents.
+**MemoryOps** is a Rust-powered backend that turns engineering activity (GitHub, Slack, Jira, Linear) into structured, controllable, token-optimized memory for AI agents.
 
 This is **not** a vector database, RAG wrapper, or agent framework.  
 This is the **control plane for what AI agents remember**.
@@ -23,7 +24,7 @@ AI agents today:
 - Use naive top-K retrieval with no context optimization
 - Have zero memory governance or lifecycle management
 
-Result: inconsistent behavior, repeated instructions, hallucinations from stale context.
+Result: inconsistent agent behavior, repeated instructions, and hallucinations from stale context.
 
 ---
 
@@ -31,14 +32,14 @@ Result: inconsistent behavior, repeated instructions, hallucinations from stale 
 
 | Layer | What It Solves |
 |-------|----------------|
-| **Ingestion** | Connects to GitHub, Slack, Jira, Linear — pulls structured activity via webhooks |
-| **Processing** | Normalizes events, extracts entities, scores importance (fast + async LLM paths) |
-| **Memory Lifecycle** | Episodic → Semantic promotion, decay, deduplication, pruning |
-| **Retrieval Engine** | Token-aware context optimization with hybrid semantic + BM25 search |
-| **Feedback Loop** | Explicit per-memory ratings bias future retrieval via rolling relevance scores |
-| **Point-in-Time Queries** | Reconstruct exact memory state at any past timestamp for incident post-mortems |
+| **Ingestion** | GitHub, Slack, Jira, Linear — structured activity via HMAC-validated webhooks |
+| **Processing** | Event normalization, entity extraction, importance scoring (fast + async LLM paths) |
+| **Memory Lifecycle** | Episodic → Semantic promotion, decay, deduplication, automatic pruning |
+| **Retrieval Engine** | Token-aware context packing with hybrid semantic + BM25 search |
+| **Feedback Loop** | Per-memory ratings bias future retrieval via rolling relevance scores |
+| **Point-in-Time Queries** | Reconstruct exact memory state at any past timestamp |
 | **Multi-Agent Memory** | Publish semantic memories to workspace pool; sub-agents inherit via config |
-| **MCP Server** | Native Model Context Protocol server — agents retrieve, search, and store without HTTP |
+| **MCP Server** | Native Model Context Protocol server — agents retrieve, search, and store without HTTP glue |
 | **Control UI** | Memory explorer, pin/delete/merge, retrieval trace, audit log, skills registry |
 
 ---
@@ -49,19 +50,19 @@ Result: inconsistent behavior, repeated instructions, hallucinations from stale 
 ┌─────────────────────────────────────────────────────────┐
 │                     MemoryOps Platform                  │
 │                                                         │
-│  ┌──────────────┐   ┌──────────────┐   ┌────────────┐   │
-│  │  Ingestion   │──▶│  Processor   │──▶│  Retrieval│   │
-│  │  (Webhooks)  │   │  Fast + Slow │   │   Engine   │   │
-│  └──────────────┘   └──────────────┘   └────────────┘   │
+│  ┌──────────────┐   ┌──────────────┐   ┌────────────┐  │
+│  │  Ingestion   │──▶│  Processor   │──▶│ Retrieval  │  │
+│  │  (Webhooks)  │   │ Fast + Slow  │   │  Engine    │  │
+│  └──────────────┘   └──────────────┘   └────────────┘  │
 │          │                  │                  │        │
 │       Postgres           Redis Queue      Qdrant +      │
-│       (events +          (async jobs)    Tantivy        │
-│        memories)                        (hybrid search) │
+│      (events +          (async jobs)     Tantivy        │
+│       memories)                         (hybrid)        │
 │                                                         │
-│  ┌──────────────┐   ┌──────────────────────────────┐    │
-│  │  MCP Server  │   │  Memory Control Center (UI)  │    │
-│  │  (port 3003) │   │  React 19 + TypeScript       │    │
-│  └──────────────┘   └──────────────────────────────┘    │
+│  ┌──────────────┐   ┌──────────────────────────────┐   │
+│  │  MCP Server  │   │  Memory Control Center (UI)  │   │
+│  │  (port 3003) │   │  React 19 + TypeScript       │   │
+│  └──────────────┘   └──────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -69,32 +70,35 @@ Result: inconsistent behavior, repeated instructions, hallucinations from stale 
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/) (stable, see `rust-toolchain.toml` — currently 1.88.0)
+- [Rust](https://rustup.rs/) stable — see `rust-toolchain.toml` (currently 1.88.0)
 - [Docker](https://www.docker.com/) + Docker Compose
 - [Node.js](https://nodejs.org/) 20+ (frontend only)
-- [sqlx-cli](https://github.com/launchbakery/sqlx/tree/master/sqlx-cli): `cargo install sqlx-cli --no-default-features --features rustls,postgres`
-- [Ollama](https://ollama.com/) (local LLM default — `ollama pull llama3`)
+- [sqlx-cli](https://github.com/launchbakery/sqlx/tree/master/sqlx-cli):
+  ```bash
+  cargo install sqlx-cli --no-default-features --features rustls,postgres
+  ```
+- [Ollama](https://ollama.com/) for local LLM (default): `ollama pull llama3`
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Clone the repo
+# 1. Clone
 git clone https://github.com/Quazmoz/memoryops.git
 cd memoryops
 
 # 2. Start infrastructure (Postgres, Redis, Qdrant)
 docker compose up -d
 
-# 3. Copy and configure environment
+# 3. Configure environment
 cp .env.example .env
 # Edit .env — set DATABASE_URL, REDIS_URL, QDRANT_URL at minimum
 
-# 4. Run database migrations
+# 4. Run migrations
 sqlx migrate run
 
-# 5. Build and run the API
+# 5. Build and start the API
 cargo run -p api
 
 # 6. (Optional) Start the frontend
@@ -104,32 +108,34 @@ cd frontend && npm install && npm run dev
 API_KEY=your-key bash scripts/seed.sh
 ```
 
-The API will be available at `http://localhost:8080`.  
-The frontend (if started) will be available at `http://localhost:5173`.  
-The MCP server (optional profile) runs at `http://localhost:3003`.
-
-### Verify it's running
+| Service | URL |
+|---------|-----|
+| API | `http://localhost:8080` |
+| Frontend | `http://localhost:5173` |
+| MCP Server | `http://localhost:3003` |
 
 ```bash
+# Verify the API is healthy
 curl http://localhost:8080/health/ready
 # {"status": "ok"}
 ```
 
-See [docs/local-development.md](docs/local-development.md) for a full step-by-step local setup guide including Ollama, test stack, and port reference.
+See [docs/local-development.md](docs/local-development.md) for the full local setup guide including Ollama, port reference, and the test stack.
 
 ---
 
 ## Connecting AI Clients
 
-MemoryOps exposes MCP tools for AI clients via HTTP Streamable or stdio transport.
+MemoryOps exposes MCP tools via HTTP Streamable or stdio transport.
 
-- **Open WebUI:** [docs/integrations/openwebui.md](docs/integrations/openwebui.md)
-- **Claude Code:** [docs/integrations/claude-code.md](docs/integrations/claude-code.md)
-- **GitHub Copilot in VS Code:** [docs/integrations/vscode.md](docs/integrations/vscode.md)
-- **Continue.dev:** [docs/integrations/vscode.md](docs/integrations/vscode.md)
+| Client | Guide |
+|--------|-------|
+| Open WebUI | [docs/integrations/openwebui.md](docs/integrations/openwebui.md) |
+| Claude Code | [docs/integrations/claude-code.md](docs/integrations/claude-code.md) |
+| GitHub Copilot / VS Code | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
+| Continue.dev | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
 
-See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport reference and 
-HTTP Streamable session lifecycle.
+See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport reference and HTTP Streamable session lifecycle.
 
 ---
 
@@ -139,31 +145,36 @@ Copy `.env.example` to `.env`. All required variables must be set before startin
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DATABASE_URL` | ✅ | — | Postgres connection string (`postgres://user:pass@host/db`) |
-| `REDIS_URL` | ✅ | — | Redis connection string (`redis://localhost:6379`) |
+| `DATABASE_URL` | ✅ | — | Postgres connection string |
+| `REDIS_URL` | ✅ | — | Redis connection string |
 | `QDRANT_URL` | ✅ | — | Qdrant gRPC URL (`http://localhost:6334`) |
 | `APP_HOST` | ❌ | `0.0.0.0` | API bind address |
 | `APP_PORT` | ❌ | `8080` | API listen port |
 | `APP_ENV` | ❌ | `development` | `development` or `production` |
 | `CONFIG_PATH` | ❌ | `config.toml` | Path to TOML config file |
-| `OPENAI_API_KEY` | ❌ | — | Required only if `embedding.provider = "openai"` |
-| `ANTHROPIC_API_KEY` | ❌ | — | Required only if `llm.provider = "anthropic"` |
-| `RUST_LOG` | ❌ | `info` | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | ❌ | — | OTLP collector endpoint (e.g. `http://localhost:4317`). Only used when `telemetry.otel_exporter = "otlp"` in `config.toml`. |
-| `GITHUB_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | HMAC-SHA256 secret for GitHub webhook validation. Required in production. |
-| `SLACK_SIGNING_SECRET` | ❌ | `dev-placeholder` | Signing secret for Slack webhook validation. Required in production. |
-| `LINEAR_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Signing secret for Linear webhook validation. Required in production. |
-| `JIRA_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Signing secret for Jira webhook validation. Required in production. |
-| `MCP_TRANSPORT` | ❌ | `stdio` | MCP server transport: `http` (recommended for all AI clients) or `stdio`. Always set to `http` when running via Docker Compose. |
-| `MCP_PORT` | ❌ | `3003` | Port the MCP server listens on. Only used when `MCP_TRANSPORT=http`. |
+| `OPENAI_API_KEY` | ❌ | — | Required if `embedding.provider = "openai"` |
+| `ANTHROPIC_API_KEY` | ❌ | — | Required if `llm.provider = "anthropic"` |
+| `OPENROUTER_API_KEY` | ❌ | — | Required if `llm.provider = "openrouter"` |
+| `HF_API_KEY` | ❌ | — | Required if `llm.provider = "huggingface"` |
+| `GEMINI_API_KEY` | ❌ | — | Required if `llm.provider = "gemini"` |
+| `RUST_LOG` | ❌ | `info` | Log level (`trace`/`debug`/`info`/`warn`/`error`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | ❌ | — | OTLP endpoint, e.g. `http://localhost:4317` |
+| `GITHUB_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | HMAC-SHA256 secret for GitHub webhooks. **Required in production.** |
+| `SLACK_SIGNING_SECRET` | ❌ | `dev-placeholder` | Slack signing secret. **Required in production.** |
+| `LINEAR_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Linear webhook secret. **Required in production.** |
+| `JIRA_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Jira webhook secret. **Required in production.** |
+| `MCP_TRANSPORT` | ❌ | `stdio` | `http` or `stdio`. Always use `http` in Docker. |
+| `MCP_PORT` | ❌ | `3003` | MCP server port (HTTP transport only). |
 
 Secrets are **never** stored in `config.toml` — always via environment variables.
+
+See [docs/PROVIDERS.md](docs/PROVIDERS.md) for the full LLM and embedding provider configuration guide.
 
 ---
 
 ## API Usage Examples
 
-### 1. Create a workspace
+### Create a workspace
 
 ```bash
 curl -X POST http://localhost:8080/v1/workspaces \
@@ -172,43 +183,43 @@ curl -X POST http://localhost:8080/v1/workspaces \
 # {"workspace_id": "018f...", "api_key": "mops_018f..._..."}
 ```
 
-The bootstrap API key is returned once. Store it securely.
+The bootstrap API key is returned **once**. Store it securely.
 
-### 2. Create an additional API key
+### Create an additional API key
 
 ```bash
 curl -X POST http://localhost:8080/v1/workspaces/018f.../keys \
   -H 'X-API-Key: mops_018f...' \
   -H 'Content-Type: application/json' \
   -d '{"name": "coding-agent"}'
-# {"key": "mops_acme_3xK9m..."} ← returned once, store it
+# {"key": "mops_acme_3xK9m..."}  ← returned once, store it
 ```
 
-### 3. Register a GitHub webhook
+### Register a GitHub webhook
 
 In your GitHub repo settings, add a webhook pointing to:
 ```
 https://your-host/v1/webhooks/github
 ```
-With your signing secret matching `GITHUB_WEBHOOK_SECRET`.
+Set the secret to match `GITHUB_WEBHOOK_SECRET`.
 
-### 4. Retrieve memory for an agent
+### Retrieve memory for an agent
 
 ```bash
 curl -X POST http://localhost:8080/v1/retrieve \
   -H 'X-API-Key: mops_acme_3xK9m...' \
   -H 'Content-Type: application/json' \
   -d '{
-    "query": "What are the recent decisions about the auth service?",
+    "query": "Recent decisions about the auth service?",
     "workspace_id": "018f...",
     "token_budget": 4096,
     "agent_id": "coding-agent"
   }'
 ```
 
-Response includes scored, token-packed memories + a retrieval trace showing **why** each memory was selected.
+Response includes scored, token-packed memories and a retrieval trace showing **why** each memory was selected.
 
-### 5. Submit feedback on a retrieved memory
+### Submit feedback on a retrieved memory
 
 ```bash
 curl -X POST http://localhost:8080/v1/memory/019a.../feedback \
@@ -224,7 +235,7 @@ curl -X POST http://localhost:8080/v1/memory/019a.../feedback \
 
 Ratings (`-1`, `0`, `1`) roll into a `relevance_score` that nudges future hybrid retrieval rankings.
 
-### 6. Query memory at a past timestamp
+### Query memory at a past timestamp
 
 ```bash
 curl -X POST http://localhost:8080/v1/retrieve \
@@ -242,15 +253,15 @@ curl -X POST http://localhost:8080/v1/retrieve \
 ## Design Decisions
 
 | Decision | Choice | Rationale |
-|----------|--------|-----------| 
+|----------|--------|-----------|
 | Embedding model | Pluggable (`EmbeddingProvider` trait) — local default via `fastembed-rs` | No external dependency required; swap to OpenAI via config |
-| LLM for summarization | Pluggable (`LlmProvider` trait) — local default via Ollama | Self-hostable by default; OpenAI/Anthropic via config |
+| LLM for summarization | Pluggable (`LlmProvider` trait) — local default via Ollama | Self-hostable by default; OpenAI/Anthropic/OpenRouter/Gemini via config |
 | Authentication | API key per workspace (`X-API-Key` header) | Simple, no OAuth complexity in v0.x |
-| Retrieval mode | Pull — agent calls `POST /retrieve` | Simpler integration; push/middleware layer is a future SDK concern |
+| Retrieval mode | Pull — agent calls `POST /retrieve` | Simpler integration; push/middleware is a future SDK concern |
 | Memory scope | Configurable: workspace / agent / user / repo | Operators define scope hierarchy in workspace config |
-| Multi-agent sharing | Opt-in publish (`POST /memory/:id/publish`) + workspace pool inheritance | Explicit promotion prevents accidental cross-agent leakage |
-| Webhook validation | HMAC-SHA256 (GitHub-style) for all sources | Consistent, battle-tested |
-| MCP transport | stdio + HTTP Streamable | Works with Claude Desktop, VS Code, Open WebUI, Continue.dev, and custom agent frameworks |
+| Multi-agent sharing | Opt-in publish + workspace pool inheritance | Explicit promotion prevents accidental cross-agent leakage |
+| Webhook validation | HMAC-SHA256 for all sources | Consistent, battle-tested |
+| MCP transport | stdio + HTTP Streamable | Works with Claude Desktop, VS Code, Open WebUI, Continue.dev |
 
 ---
 
@@ -264,91 +275,60 @@ curl -X POST http://localhost:8080/v1/retrieve \
 | Vector Search | Qdrant |
 | Full-Text Search | Tantivy (BM25) |
 | Queue / Cache | Redis Streams |
-| Embeddings | `fastembed-rs` (local default) / pluggable |
-| LLM Summarization | Ollama (local default) / pluggable |
-| MCP Server | `rmcp` crate — stdio + HTTP Streamable (MCP spec 2025-03-26) |
+| Embeddings | `fastembed-rs` (local) / pluggable |
+| LLM | Ollama (local) / OpenAI / Anthropic / OpenRouter / Gemini / any OpenAI-compatible |
+| MCP Server | `rmcp` — stdio + HTTP Streamable (MCP spec 2025-03-26) |
 | Observability | `tracing` + OpenTelemetry |
 | Frontend | React 19 + TypeScript + Vite + Tailwind v4 |
 
 ---
 
-## Workspace Structure
+## Repository Layout
 
 ```
 memoryops/
 ├── crates/
-│   ├── api/             # Public REST API (axum handlers, middleware, routing)
-│   ├── common/          # Shared types, DB models, provider traits, AppError
-│   ├── ingestion/       # Webhook receivers (GitHub, Slack, Jira, Linear)
-│   ├── mcp/             # MCP server (memory_retrieve, memory_search, memory_store tools)
-│   ├── processor/       # Fast path + async slow path workers
-│   └── retrieval/       # Hybrid search, RRF scoring, token packing, feedback scoring
-├── frontend/            # React 19 Memory Control Center
-├── migrations/          # sqlx DB migrations
+│   ├── api/          # REST API (axum handlers, middleware, routing)
+│   ├── common/       # Shared types, DB models, provider traits, config
+│   ├── ingestion/    # Webhook receivers (GitHub, Slack, Jira, Linear)
+│   ├── mcp/          # MCP server (memory_retrieve, memory_search, memory_store)
+│   ├── processor/    # Fast path + async slow-path workers
+│   └── retrieval/    # Hybrid search, RRF scoring, token packing, feedback
+├── frontend/         # React 19 Memory Control Center
+├── migrations/       # sqlx DB migrations
 ├── scripts/
-│   └── seed.sh          # Idempotent dev data seeding script
+│   └── seed.sh       # Idempotent dev data seeding
 ├── docs/
-│   ├── integrations/    # MCP client setup guides for Open WebUI, VS Code, Continue.dev
-│   ├── FEATURES.md      # Milestone tracker and full feature list
-│   ├── SPEC.md          # Full technical specification
-│   ├── openapi.yaml     # API contract (source of truth)
-│   └── local-development.md  # Step-by-step local setup guide
+│   ├── integrations/ # MCP client setup guides
+│   ├── FEATURES.md   # Milestone tracker and full feature list
+│   ├── PROVIDERS.md  # LLM and embedding provider configuration
+│   ├── SPEC.md       # Full technical specification
+│   ├── openapi.yaml  # OpenAPI contract (source of truth)
+│   └── local-development.md
 ├── .env.example
 ├── docker-compose.yml
 ├── docker-compose.test.yml
 ├── rust-toolchain.toml
-├── Cargo.toml           # Workspace root
+├── Cargo.toml        # Workspace root
 └── README.md
 ```
 
 ---
 
-## Key Differentiators
+## Status
 
-1. **Multi-source ingestion** — GitHub, Slack, Jira, Linear normalized into a single memory model with HMAC-validated webhooks
-2. **Memory lifecycle** — events promote to semantic memory, decay over time, get pruned automatically; all thresholds are per-workspace config
-3. **Token-aware retrieval** — not "top 5 chunks" but greedy context packing under real token budgets with cosine deduplication
-4. **Pluggable AI providers** — run fully local (Ollama + fastembed), swap to cloud with one config change, no code edits
-5. **Retrieval feedback loop** — explicit thumbs-up/down ratings roll into a `relevance_score` that nudges hybrid scoring, closing the agent learning loop
-6. **Agent-managed memory** — agents can delete, update, and rate memories directly via MCP tools (`memory_delete`, `memory_update`, `memory_feedback`), not just read and store
-7. **Point-in-time memory** — reconstruct exact memory state + decay scores at any past timestamp; useful for incident post-mortems
-8. **Temporal memory queries** — `memory_timeline` MCP tool lets agents reconstruct what they knew at any past timestamp — useful for incident post-mortems and audit
-9. **Multi-agent scope inheritance** — publish semantic memories to a workspace pool; sub-agents inherit without duplicating context
-10. **MCP-native** — agents connect directly via Model Context Protocol (stdio or HTTP Streamable); no HTTP client glue required
-11. **Memory Control Center** — inspect, edit, pin, merge, trace, and audit exactly what your agent remembers and why
+MemoryOps is in **alpha**. Core ingestion, processing, retrieval, and MCP transport are functional. The API surface may change before v1.0. Not recommended for production use without review of the security considerations in [SECURITY.md](SECURITY.md).
+
+See [docs/FEATURES.md](docs/FEATURES.md) for the full milestone tracker.
 
 ---
 
-```bash
-# 1. Clone the repo
-git clone https://github.com/Quazmoz/memoryops.git
-cd memoryops
+## Contributing
 
-# 2. Start infrastructure (Postgres, Redis, Qdrant)
-docker compose up -d
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
-# 3. Copy and configure environment
-cp .env.example .env
-# Edit .env — set DATABASE_URL, REDIS_URL, QDRANT_URL at minimum
+---
 
-# 4. Run database migrations
-sqlx migrate run
+## License
 
-# 5. Build and run the API
-cargo run -p api
-
-# 6. (Optional) Start the frontend
-cd frontend && npm install && npm run dev
-
-# 7. (Optional) Start the MCP server for AI client connections
-#    IMPORTANT: override the docker-compose.yml default (which uses deprecated sse)
-docker compose --profile mcp run --rm --service-ports \
-  -e MCP_TRANSPORT=http \
-  -e MCP_PORT=3003 \
-  mcp
-
-# 8. (Optional) Seed development data
-API_KEY=your-key bash scripts/seed.sh
-```
-
-MIT
+[MIT](LICENSE)
