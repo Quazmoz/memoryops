@@ -46,11 +46,18 @@ Result: inconsistent agent behavior, repeated instructions, and hallucinations f
 ## MemoryOps vs. the Field
 
 <p align="center">
-  <img src="docs/assets/chart1-radar.png" alt="Feature Coverage Radar Chart" width="48%">
-  <img src="docs/assets/chart2-bar.png" alt="Self-Hosting and Data Control Bar Chart" width="48%">
+  <img src="docs/assets/chart1-radar.png" alt="Feature Coverage" width="48%">
+  <img src="docs/assets/chart2-bar.png" alt="Self-Hosting and Data Control" width="48%">
 </p>
 
-*To view the full interactive breakdown, open [docs/assets/comparison-charts.html](docs/assets/comparison-charts.html) locally in your browser.*
+<p align="center">
+  <img src="docs/assets/chart4-line.png" alt="Memory Lifecycle Depth" width="48%">
+  <img src="docs/assets/chart3-bar.png" alt="LLM Provider Support" width="48%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/chart5-bar.png" alt="Retrieval Strategy" width="80%">
+</p>
 
 ---
 
