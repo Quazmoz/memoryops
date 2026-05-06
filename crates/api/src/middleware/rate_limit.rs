@@ -169,8 +169,8 @@ fn endpoint_group(path: &str) -> Option<RateLimitGroup> {
     if path.starts_with("/v1/workspaces/") {
         let after_id = path
             .trim_start_matches("/v1/workspaces/")
-            .splitn(2, '/')
-            .nth(1)
+            .split_once('/')
+            .map(|x| x.1)
             .unwrap_or("");
 
         if matches!(after_id, "stats" | "metrics" | "contradictions/count")

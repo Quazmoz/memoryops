@@ -93,20 +93,21 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires a live Redis instance because ConnectionManager opens a TCP connection"]
+    #[ignore = "requires a live Redis instance because deadpool creates a TCP connection"]
     async fn publish_raw_event_to_live_redis_stream() {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:16379".to_owned());
-        let client = match redis::Client::open(redis_url) {
-            Ok(client) => client,
-            Err(error) => panic!("test Redis URL should be valid: {error}"),
+        let cfg = deadpool_redis::Config::from_url(&redis_url);
+        let pool = match cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1)) {
+            Ok(pool) => pool,
+            Err(error) => panic!("test Redis pool should be created: {error}"),
         };
-        let mut redis = match ConnectionManager::new(client).await {
-            Ok(connection) => connection,
+        let mut redis = match pool.get().await {
+            Ok(conn) => conn,
             Err(error) => panic!("test Redis should be reachable: {error}"),
         };
 
-        if let Err(error) = publish_raw_event(&mut redis, &raw_event()).await {
+        if let Err(error) = publish_raw_event(&mut *redis, &raw_event()).await {
             panic!("publish should not fail the caller: {error}");
         }
     }

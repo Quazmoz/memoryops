@@ -45,6 +45,7 @@ pub fn encrypt_secret(plaintext: &str) -> Result<String, AppError> {
     Ok(STANDARD.encode(payload))
 }
 
+#[allow(dead_code)]
 pub fn decrypt_secret(ciphertext_b64: &str) -> Result<String, AppError> {
     let payload = STANDARD
         .decode(ciphertext_b64)

@@ -31,6 +31,7 @@ impl AuthContext {
     }
 }
 
+#[allow(clippy::expect_used)]
 pub fn generate_api_key(workspace_id: Uuid) -> (String, String) {
     let workspace_simple = workspace_id.simple().to_string();
     let workspace_prefix = &workspace_simple[..WORKSPACE_PREFIX_LEN];
@@ -45,9 +46,11 @@ pub fn generate_api_key(workspace_id: Uuid) -> (String, String) {
     (plaintext, prefix)
 }
 
+#[allow(clippy::unwrap_used)]
 pub fn hash_secret(secret: &str) -> AppResult<String> {
     let salt = SaltString::generate(&mut OsRng);
     let params = if cfg!(debug_assertions) {
+        // SAFETY: hardcoded valid params — Params::new is infallible with these inputs
         argon2::Params::new(1024, 1, 1, None).unwrap()
     } else {
         argon2::Params::default()

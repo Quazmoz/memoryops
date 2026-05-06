@@ -100,16 +100,13 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    async fn live_redis() -> ConnectionManager {
+    async fn live_redis() -> RedisPool {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:16379".to_owned());
-        let client = match redis::Client::open(redis_url) {
-            Ok(client) => client,
-            Err(error) => panic!("test Redis URL should be valid: {error}"),
-        };
-        match ConnectionManager::new(client).await {
-            Ok(connection) => connection,
-            Err(error) => panic!("test Redis should be reachable: {error}"),
+        let cfg = deadpool_redis::Config::from_url(&redis_url);
+        match cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1)) {
+            Ok(pool) => pool,
+            Err(error) => panic!("test Redis pool should be created: {error}"),
         }
     }
 }

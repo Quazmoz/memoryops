@@ -1419,6 +1419,7 @@ dependencies = [
  "axum 0.8.9",
  "chrono",
  "common",
+ "deadpool-redis",
  "hex",
  "hmac",
  "qdrant-client",

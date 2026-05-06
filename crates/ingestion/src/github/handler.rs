@@ -141,7 +141,6 @@ mod tests {
     };
     use hmac::{Hmac, Mac};
     use qdrant_client::Qdrant;
-    use redis::aio::ConnectionManager;
     use serde_json::json;
     use sha2::Sha256;
     use sqlx::PgPool;
@@ -195,13 +194,12 @@ mod tests {
     async fn test_state(pool: PgPool, secret: &str) -> AppState {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:16379".to_owned());
-        let redis_client = match redis::Client::open(redis_url) {
-            Ok(client) => client,
-            Err(error) => panic!("test Redis URL should be valid: {error}"),
-        };
-        let redis = match ConnectionManager::new(redis_client.clone()).await {
-            Ok(connection) => connection,
-            Err(error) => panic!("test Redis should be reachable: {error}"),
+        let redis = {
+            let cfg = deadpool_redis::Config::from_url(&redis_url);
+            match cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1)) {
+                Ok(pool) => pool,
+                Err(error) => panic!("test Redis pool should be created: {error}"),
+            }
         };
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:16333".to_owned());
@@ -216,7 +214,6 @@ mod tests {
 
         AppState {
             db: pool,
-            redis_client,
             redis,
             qdrant,
             processor_semaphore: Arc::new(Semaphore::new(

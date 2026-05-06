@@ -730,13 +730,16 @@ fn parse_workspace_id(response: &Value) -> Uuid {
     }
 }
 
-async fn processor_stream_mentions_memory(redis: &ConnectionManager, memory_id: Uuid) -> bool {
-    let mut connection = redis.clone();
+async fn processor_stream_mentions_memory(redis: &deadpool_redis::Pool, memory_id: Uuid) -> bool {
+    let mut connection = match redis.get().await {
+        Ok(conn) => conn,
+        Err(error) => panic!("test Redis should connect: {error}"),
+    };
     let value = match redis::cmd("XRANGE")
         .arg("processor_jobs")
         .arg("-")
         .arg("+")
-        .query_async::<redis::Value>(&mut connection)
+        .query_async::<redis::Value>(&mut *connection)
         .await
     {
         Ok(value) => value,

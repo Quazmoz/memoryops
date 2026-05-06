@@ -107,6 +107,7 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         .connect(&database_url)
         .await?;
     ensure_skill_secret_configuration(&db).await?;
+    #[allow(clippy::expect_used)]
     let redis = {
         let cfg = deadpool_redis::Config::from_url(&redis_url);
         cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))
