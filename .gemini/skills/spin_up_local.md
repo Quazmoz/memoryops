@@ -29,11 +29,17 @@ Follow these steps precisely using your available terminal and file manipulation
    - Use `curl.exe http://localhost:8080/health` to poll until it responds.
 
 5. **Bootstrap Workspace & Key**
-   - Execute a POST request to create a workspace:
+   - Execute a POST request to create a workspace using the admin token from `.env`:
      ```powershell
+     # Extract admin secret from .env
+     $secretLine = Get-Content .env | Select-String "WORKSPACE_CREATION_SECRET="
+     $adminSecret = $secretLine.ToString().Split("=")[1].Trim()
+     
      $name = "Local Dev Workspace " + (Get-Date -Format "yyyyMMddHHmmss")
      $body = @{ name = $name } | ConvertTo-Json
-     $workspace = Invoke-RestMethod -Uri "http://localhost:8080/v1/workspaces" -Method Post -ContentType "application/json" -Body $body
+     $headers = @{ "x-admin-token" = $adminSecret }
+     
+     $workspace = Invoke-RestMethod -Uri "http://localhost:8080/v1/workspaces" -Method Post -ContentType "application/json" -Headers $headers -Body $body
      $workspace_id = $workspace.workspace_id
      # Use the bootstrap key automatically created during workspace initialization
      $key = $workspace.api_key
