@@ -50,7 +50,7 @@ Result: inconsistent agent behavior, repeated instructions, and hallucinations f
   <img src="docs/assets/chart2-bar.png" alt="Self-Hosting and Data Control Bar Chart" width="48%">
 </p>
 
-*See the full interactive breakdown in [docs/assets/comparison-charts.html](docs/assets/comparison-charts.html).*
+*See the full interactive breakdown via [GitHub HTML Preview](https://htmlpreview.github.io/?https://github.com/Quazmoz/memoryops/blob/main/docs/assets/comparison-charts.html).*
 
 ---
 
