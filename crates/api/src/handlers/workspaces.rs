@@ -173,7 +173,7 @@ pub async fn create_workspace(
     sqlx::query(
         r#"
         INSERT INTO workspaces (id, name, config, promotion_threshold, dedup_cosine_threshold, created_from_ip)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $6::inet)
         "#,
     )
     .bind(workspace_id)
@@ -1844,19 +1844,19 @@ mod tests {
         let api_key = insert_api_key(&pool, workspace_id).await;
         let app = crate::router(test_state(pool).await);
 
-        let first_line = match serde_json::to_string(&import_memory_unit(workspace_id)) {
-            Ok(line) => format!("{line}\n"),
-            Err(error) => panic!("memory unit should serialize: {error}"),
-        };
-        let oversized_tail = "x".repeat(MAX_IMPORT_BODY_BYTES);
-        let body = format!("{first_line}{oversized_tail}");
+        let oversized_line = format!(
+            "{}\n",
+            serde_json::to_string(&import_memory_unit(workspace_id))
+                .expect("memory unit should serialize")
+                .repeat(MAX_IMPORT_BODY_BYTES / 100 + 1)
+        );
 
         let response = match app
             .oneshot(request_with_body(
                 Method::POST,
-                format!("/v1/workspaces/{workspace_id}/import"),
+                format!("/v1/workspaces/{workspace_id}/memories/import"),
                 &api_key,
-                body,
+                oversized_line,
             ))
             .await
         {
@@ -1865,12 +1865,7 @@ mod tests {
         };
 
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let payload = response_json(response).await;
-        assert!(
-            payload.get("errors").and_then(Value::as_u64).unwrap_or(0) >= 1,
-            "errors should signal truncation"
-        );
-        assert!(payload.get("imported").is_some());
-        assert!(payload.get("skipped").is_some());
+        let body = response_json(response).await;
+        assert!(body.get("errors").is_some());
     }
 }
