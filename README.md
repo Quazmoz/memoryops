@@ -43,6 +43,17 @@ Result: inconsistent agent behavior, repeated instructions, and hallucinations f
 
 ---
 
+## MemoryOps vs. the Field
+
+<p align="center">
+  <img src="docs/assets/chart1-radar.png" alt="Feature Coverage Radar Chart" width="48%">
+  <img src="docs/assets/chart2-bar.png" alt="Self-Hosting and Data Control Bar Chart" width="48%">
+</p>
+
+*See the full interactive breakdown in [docs/assets/comparison-charts.html](docs/assets/comparison-charts.html).*
+
+---
+
 ## Architecture
 
 ```
