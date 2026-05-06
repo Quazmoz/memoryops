@@ -85,7 +85,12 @@ impl AppError {
             }
             AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             AppError::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
-            AppError::Provider(_) => (StatusCode::BAD_GATEWAY, "provider_error"),
+            AppError::Provider(ref inner) => match inner {
+                ProviderError::NotConfigured => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, "provider_not_configured")
+                }
+                _ => (StatusCode::BAD_GATEWAY, "provider_error"),
+            },
             AppError::Database(_) | AppError::Internal(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
             }

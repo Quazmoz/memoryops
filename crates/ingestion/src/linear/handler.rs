@@ -11,7 +11,7 @@ use common::{
     telemetry::INGEST_EVENTS,
     AppError, AppState,
 };
-use redis::aio::ConnectionManager;
+use redis::aio::ConnectionLike;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -171,17 +171,21 @@ async fn insert_and_publish_linear_event(
     .await
     .map_err(AppError::Database)?;
 
-    let mut redis = state.redis.clone();
-    publish_raw_event_strict(&mut redis, &event).await?;
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    publish_raw_event_strict(&mut *redis, &event).await?;
     transaction.commit().await.map_err(AppError::Database)?;
 
     Ok(event)
 }
 
-async fn publish_raw_event_strict(
-    redis: &mut ConnectionManager,
-    event: &RawEvent,
-) -> Result<(), AppError> {
+async fn publish_raw_event_strict<C>(redis: &mut C, event: &RawEvent) -> Result<(), AppError>
+where
+    C: ConnectionLike + Send,
+{
     redis::cmd("XADD")
         .arg(STREAM_KEY)
         .arg("*")
@@ -193,7 +197,7 @@ async fn publish_raw_event_strict(
         .arg(source_as_str(event.source))
         .arg("event_type")
         .arg(event_type_as_str(event.event_type))
-        .query_async::<String>(&mut *redis)
+        .query_async::<String>(redis)
         .await
         .map(|_| ())
         .map_err(|error| AppError::Internal(anyhow!(error)))

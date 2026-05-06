@@ -1,12 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use common::{
-    config::{AppConfig, EmbeddingProviderKind, LlmProviderKind},
-    providers::{
-        AnthropicProvider, EmbeddingProvider, FastEmbedProvider, LlmProvider, OllamaProvider,
-        OpenAIEmbedProvider, OpenAIProvider, OpenAiCompatibleProvider,
-    },
-    telemetry::init_telemetry,
+    build_embedding_provider, build_llm_provider, config::AppConfig, telemetry::init_telemetry,
     AppState,
 };
 use mcp::{
@@ -14,7 +9,6 @@ use mcp::{
     transport, MCP_PROTOCOL_VERSION,
 };
 use qdrant_client::Qdrant;
-use redis::aio::ConnectionManager;
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::Semaphore;
 
@@ -71,6 +65,7 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
     let redis_url = std::env::var("REDIS_URL").map_err(|_| anyhow::anyhow!("REDIS_URL not set"))?;
     let qdrant_url =
         std::env::var("QDRANT_URL").map_err(|_| anyhow::anyhow!("QDRANT_URL not set"))?;
+    let github_webhook_secret = webhook_secret_from_env("GITHUB_WEBHOOK_SECRET")?;
 
     let db = PgPoolOptions::new()
         .max_connections(config.database.max_connections)
@@ -78,13 +73,15 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         .acquire_timeout(Duration::from_secs(config.database.connect_timeout_secs))
         .connect(&database_url)
         .await?;
-    let redis_client = redis::Client::open(redis_url)?;
-    let redis = ConnectionManager::new(redis_client.clone()).await?;
+    let redis = {
+        let cfg = deadpool_redis::Config::from_url(&redis_url);
+        cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .map_err(|error| anyhow::anyhow!("failed to create Redis pool: {error}"))?
+    };
     let qdrant = Qdrant::from_url(&qdrant_url).build()?;
 
     Ok(AppState {
         db,
-        redis_client,
         redis,
         qdrant,
         processor_semaphore: Arc::new(Semaphore::new(
@@ -93,90 +90,13 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         embedding_provider: build_embedding_provider(&config),
         llm_provider: build_llm_provider(&config),
         config: Arc::new(config),
-        github_webhook_secret: std::env::var("GITHUB_WEBHOOK_SECRET").unwrap_or_default(),
+        github_webhook_secret,
     })
 }
 
-fn build_embedding_provider(config: &AppConfig) -> Arc<dyn EmbeddingProvider> {
-    match config.embedding.provider {
-        EmbeddingProviderKind::FastEmbed => {
-            Arc::new(FastEmbedProvider::new(&config.embedding.model))
-        }
-        EmbeddingProviderKind::Openai => {
-            let model = config
-                .embedding
-                .openai
-                .as_ref()
-                .map(|openai| openai.model.as_str())
-                .unwrap_or(&config.embedding.model);
-            Arc::new(OpenAIEmbedProvider::new(
-                model,
-                std::env::var("OPENAI_API_KEY").ok(),
-            ))
-        }
-    }
-}
-
-fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
-    match config.llm.provider {
-        LlmProviderKind::Ollama => {
-            let api_key = config
-                .llm
-                .ollama
-                .as_ref()
-                .and_then(|ollama_cfg| ollama_cfg.resolve_api_key());
-            Arc::new(OllamaProvider::new(
-                &config.llm.base_url,
-                &config.llm.model,
-                config.llm.timeout_secs,
-                api_key,
-            ))
-        }
-        LlmProviderKind::Openai => {
-            let model = config
-                .llm
-                .openai
-                .as_ref()
-                .map(|openai| openai.model.as_str())
-                .unwrap_or(&config.llm.model);
-            Arc::new(OpenAIProvider::new(
-                model,
-                std::env::var("OPENAI_API_KEY").ok(),
-            ))
-        }
-        LlmProviderKind::Anthropic => {
-            let model = config
-                .llm
-                .anthropic
-                .as_ref()
-                .map(|anthropic| anthropic.model.as_str())
-                .unwrap_or(&config.llm.model);
-            Arc::new(AnthropicProvider::new(
-                model,
-                std::env::var("ANTHROPIC_API_KEY").ok(),
-            ))
-        }
-        LlmProviderKind::OpenaiCompatible
-        | LlmProviderKind::Openrouter
-        | LlmProviderKind::Huggingface => {
-            let compat = config.llm.openai_compatible.as_ref();
-            let api_key = compat.and_then(|cfg| cfg.resolve_api_key());
-            let headers = compat.map(|cfg| cfg.headers.clone()).unwrap_or_default();
-            let base_url = if config.llm.base_url.trim().is_empty() {
-                match config.llm.provider {
-                    LlmProviderKind::Openrouter => "https://openrouter.ai/api/v1".to_owned(),
-                    LlmProviderKind::Huggingface => "https://router.huggingface.co/v1".to_owned(),
-                    _ => config.llm.base_url.clone(),
-                }
-            } else {
-                config.llm.base_url.clone()
-            };
-            Arc::new(OpenAiCompatibleProvider::new(
-                base_url,
-                &config.llm.model,
-                api_key,
-                headers,
-            ))
-        }
+fn webhook_secret_from_env(name: &'static str) -> anyhow::Result<String> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Ok(value),
+        _ => Err(anyhow::anyhow!(format!("{name} must be set"))),
     }
 }

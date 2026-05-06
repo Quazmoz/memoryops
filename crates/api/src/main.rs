@@ -6,12 +6,7 @@ use axum::{
 };
 use chrono::Utc;
 use common::{
-    config::{AppConfig, EmbeddingProviderKind, LlmProviderKind},
-    providers::{
-        AnthropicProvider, EmbeddingProvider, FastEmbedProvider, GeminiProvider, LlmProvider,
-        OllamaProvider, OpenAIEmbedProvider, OpenAIProvider, OpenAiCompatibleProvider,
-    },
-    telemetry::init_telemetry,
+    build_embedding_provider, build_llm_provider, config::AppConfig, telemetry::init_telemetry,
     AppState,
 };
 use qdrant_client::Qdrant;
@@ -20,6 +15,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::Semaphore;
+
+#[cfg(test)]
+use common::providers::{FastEmbedProvider, OllamaProvider};
 
 mod handlers;
 mod middleware;
@@ -172,128 +170,6 @@ fn workspace_creation_secret_from_env() -> anyhow::Result<String> {
     match std::env::var("WORKSPACE_CREATION_SECRET") {
         Ok(value) if !value.trim().is_empty() => Ok(value),
         _ => Err(anyhow::anyhow!("WORKSPACE_CREATION_SECRET must be set")),
-    }
-}
-
-fn build_embedding_provider(config: &AppConfig) -> Arc<dyn EmbeddingProvider> {
-    match config.embedding.provider {
-        EmbeddingProviderKind::FastEmbed => {
-            Arc::new(FastEmbedProvider::new(&config.embedding.model))
-        }
-        EmbeddingProviderKind::Openai => {
-            if config.embedding.openai.is_none() {
-                tracing::warn!(
-                    "provider-specific config block is None; falling back to config.llm.model"
-                );
-            }
-            let model = config
-                .embedding
-                .openai
-                .as_ref()
-                .map(|openai| openai.model.as_str())
-                .unwrap_or(&config.embedding.model);
-            Arc::new(OpenAIEmbedProvider::new(
-                model,
-                std::env::var("OPENAI_API_KEY").ok(),
-            ))
-        }
-    }
-}
-
-fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
-    match config.llm.provider {
-        LlmProviderKind::Ollama => {
-            // Resolve an optional Bearer token for cloud/hosted Ollama instances.
-            // Local Ollama doesn't need one; the resolved key will be None in that case.
-            let api_key = config
-                .llm
-                .ollama
-                .as_ref()
-                .and_then(|ollama_cfg| ollama_cfg.resolve_api_key());
-            Arc::new(OllamaProvider::new(
-                &config.llm.base_url,
-                &config.llm.model,
-                config.llm.timeout_secs,
-                api_key,
-            ))
-        }
-        LlmProviderKind::Openai => {
-            if config.llm.openai.is_none() {
-                tracing::warn!(
-                    "provider-specific config block is None; falling back to config.llm.model"
-                );
-            }
-            let model = config
-                .llm
-                .openai
-                .as_ref()
-                .map(|openai| openai.model.as_str())
-                .unwrap_or(&config.llm.model);
-            Arc::new(OpenAIProvider::new(
-                model,
-                std::env::var("OPENAI_API_KEY").ok(),
-            ))
-        }
-        LlmProviderKind::Anthropic => {
-            if config.llm.anthropic.is_none() {
-                tracing::warn!(
-                    "provider-specific config block is None; falling back to config.llm.model"
-                );
-            }
-            let model = config
-                .llm
-                .anthropic
-                .as_ref()
-                .map(|anthropic| anthropic.model.as_str())
-                .unwrap_or(&config.llm.model);
-            Arc::new(AnthropicProvider::new(
-                model,
-                std::env::var("ANTHROPIC_API_KEY").ok(),
-            ))
-        }
-        LlmProviderKind::OpenaiCompatible
-        | LlmProviderKind::Openrouter
-        | LlmProviderKind::Huggingface => {
-            let compat = config.llm.openai_compatible.as_ref();
-            let api_key = compat.and_then(|cfg| cfg.resolve_api_key());
-            let headers = compat.map(|cfg| cfg.headers.clone()).unwrap_or_default();
-            let base_url = if config.llm.base_url.trim().is_empty() {
-                match config.llm.provider {
-                    LlmProviderKind::Openrouter => "https://openrouter.ai/api/v1".to_owned(),
-                    LlmProviderKind::Huggingface => "https://router.huggingface.co/v1".to_owned(),
-                    _ => config.llm.base_url.clone(),
-                }
-            } else {
-                config.llm.base_url.clone()
-            };
-            Arc::new(OpenAiCompatibleProvider::new(
-                base_url,
-                &config.llm.model,
-                api_key,
-                headers,
-            ))
-        }
-        LlmProviderKind::Gemini => {
-            if config.llm.gemini.is_none() {
-                tracing::warn!(
-                    "[llm.gemini] config block is missing; GEMINI_API_KEY env var will be used directly"
-                );
-            }
-            let api_key = config
-                .llm
-                .gemini
-                .as_ref()
-                .and_then(|gemini_cfg| gemini_cfg.resolve_api_key())
-                // Fall back to the conventional env var name if no config block present.
-                .or_else(|| std::env::var("GEMINI_API_KEY").ok().filter(|v| !v.trim().is_empty()));
-            let model = config
-                .llm
-                .gemini
-                .as_ref()
-                .map(|_| config.llm.model.as_str())
-                .unwrap_or(&config.llm.model);
-            Arc::new(GeminiProvider::new(model, api_key))
-        }
     }
 }
 
@@ -519,7 +395,15 @@ async fn probe_ollama(config: Arc<common::config::AppConfig>) -> HealthCheck {
             message: Some("not configured".to_owned()),
         };
     }
-    let url = format!("{}/api/tags", config.llm.base_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/api/tags",
+        config
+            .llm
+            .base_url
+            .as_deref()
+            .unwrap_or("")
+            .trim_end_matches('/')
+    );
 
     // Resolve an optional Bearer token — same source as OllamaProvider uses at
     // runtime, so the health probe authenticates consistently with the provider.
@@ -1012,4 +896,9 @@ mod tests {
             .await
         {
             Ok(response) => response,
-            Err(error) => panic!("request shoul
+            Err(error) => panic!("request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+}

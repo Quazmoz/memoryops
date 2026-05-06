@@ -9,6 +9,13 @@ use crate::{
     providers::{EmbeddingProvider, LlmProvider},
 };
 
+fn client_with_timeout(timeout_secs: u64) -> Client {
+    Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .unwrap_or_default()
+}
+
 pub struct OllamaProvider {
     client: Client,
     base_url: String,
@@ -26,10 +33,7 @@ impl OllamaProvider {
         api_key: Option<String>,
     ) -> Self {
         Self {
-            client: Client::builder()
-                .timeout(Duration::from_secs(timeout_secs))
-                .build()
-                .unwrap_or_else(|_| Client::new()),
+            client: client_with_timeout(timeout_secs),
             base_url: base_url.into().trim_end_matches('/').to_owned(),
             model: model.into(),
             api_key,
@@ -100,9 +104,9 @@ pub struct OpenAIEmbedProvider {
 }
 
 impl OpenAIEmbedProvider {
-    pub fn new(model: impl Into<String>, api_key: Option<String>) -> Self {
+    pub fn new(model: impl Into<String>, api_key: Option<String>, timeout_secs: u64) -> Self {
         Self {
-            client: Client::new(),
+            client: client_with_timeout(timeout_secs),
             api_key,
             model: model.into(),
         }
@@ -151,7 +155,11 @@ impl EmbeddingProvider for OpenAIEmbedProvider {
     }
 
     fn dimensions(&self) -> usize {
-        1536
+        if self.model.contains("3-large") {
+            3072
+        } else {
+            1536
+        }
     }
 
     fn model_name(&self) -> &str {
@@ -166,9 +174,9 @@ pub struct OpenAIProvider {
 }
 
 impl OpenAIProvider {
-    pub fn new(model: impl Into<String>, api_key: Option<String>) -> Self {
+    pub fn new(model: impl Into<String>, api_key: Option<String>, timeout_secs: u64) -> Self {
         Self {
-            client: Client::new(),
+            client: client_with_timeout(timeout_secs),
             api_key,
             model: model.into(),
         }
@@ -325,9 +333,9 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
-    pub fn new(model: impl Into<String>, api_key: Option<String>) -> Self {
+    pub fn new(model: impl Into<String>, api_key: Option<String>, timeout_secs: u64) -> Self {
         Self {
-            client: Client::new(),
+            client: client_with_timeout(timeout_secs),
             api_key,
             model: model.into(),
         }
@@ -395,9 +403,9 @@ pub struct GeminiProvider {
 }
 
 impl GeminiProvider {
-    pub fn new(model: impl Into<String>, api_key: Option<String>) -> Self {
+    pub fn new(model: impl Into<String>, api_key: Option<String>, timeout_secs: u64) -> Self {
         Self {
-            client: Client::new(),
+            client: client_with_timeout(timeout_secs),
             api_key,
             model: model.into(),
         }
@@ -410,7 +418,11 @@ impl GeminiProvider {
         )
     }
 
-    async fn generate(&self, prompt: &str, max_tokens: Option<usize>) -> Result<String, ProviderError> {
+    async fn generate(
+        &self,
+        prompt: &str,
+        max_tokens: Option<usize>,
+    ) -> Result<String, ProviderError> {
         let Some(api_key) = self.api_key.as_ref() else {
             return Err(ProviderError::NotConfigured);
         };
@@ -471,9 +483,10 @@ async fn response_json(response: reqwest::Response) -> Result<Value, ProviderErr
         return Err(ProviderError::RateLimited { retry_after_secs });
     }
     if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
         return Err(ProviderError::Request(format!(
-            "provider returned HTTP {}",
-            response.status()
+            "provider returned HTTP {status}: {body}"
         )));
     }
 

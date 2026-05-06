@@ -74,10 +74,17 @@ pub async fn ingest_observation(
     .await?;
     INGEST_EVENTS.add(1, &[]);
 
-    let mut redis = state.redis.clone();
+    let redis = state.redis.clone();
     let queued_event = event.clone();
     tokio::spawn(async move {
-        let _ = publish_raw_event(&mut redis, &queued_event).await;
+        let mut redis = match redis.get().await {
+            Ok(redis) => redis,
+            Err(error) => {
+                tracing::error!(error = ?error, event_id = %queued_event.id, "failed to get Redis connection for raw event publish");
+                return;
+            }
+        };
+        let _ = publish_raw_event(&mut *redis, &queued_event).await;
     });
 
     spawn_audit_log(

@@ -1246,7 +1246,6 @@ mod tests {
         providers::{FastEmbedProvider, OllamaProvider},
     };
     use qdrant_client::Qdrant;
-    use redis::aio::ConnectionManager;
     use serde_json::Value;
     use sqlx::{types::Json, PgPool};
     use tokio::sync::Semaphore;
@@ -1257,13 +1256,12 @@ mod tests {
     async fn test_state(pool: PgPool) -> AppState {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:16379".to_owned());
-        let redis_client = match redis::Client::open(redis_url) {
-            Ok(client) => client,
-            Err(error) => panic!("test Redis URL should be valid: {error}"),
-        };
-        let redis = match ConnectionManager::new(redis_client.clone()).await {
-            Ok(connection) => connection,
-            Err(error) => panic!("test Redis should be reachable: {error}"),
+        let redis = {
+            let cfg = deadpool_redis::Config::from_url(&redis_url);
+            match cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1)) {
+                Ok(pool) => pool,
+                Err(error) => panic!("test Redis pool should be created: {error}"),
+            }
         };
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:16333".to_owned());
@@ -1278,14 +1276,18 @@ mod tests {
 
         AppState {
             db: pool,
-            redis_client,
             redis,
             qdrant,
             processor_semaphore: Arc::new(Semaphore::new(
                 usize::try_from(config.database.max_connections).unwrap_or(10),
             )),
             embedding_provider: Arc::new(FastEmbedProvider::new("test-embedding")),
-            llm_provider: Arc::new(OllamaProvider::new("http://127.0.0.1:9", "test-llm", 1)),
+            llm_provider: Arc::new(OllamaProvider::new(
+                "http://127.0.0.1:9",
+                "test-llm",
+                1,
+                None,
+            )),
             config: Arc::new(config),
             github_webhook_secret: "test-secret".to_owned(),
         }

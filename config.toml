@@ -55,13 +55,12 @@ timeout_secs = 3
 # ── OpenAI-Compatible Providers ───────────────────────────────────────────────
 # These providers share the /chat/completions request/response format.
 # Set provider = "openrouter", "huggingface", or "openai_compatible".
-# base_url is optional for openrouter/huggingface (defaults are injected automatically).
+# Omit base_url for openrouter/huggingface to use the defaults injected automatically.
 #
 # OpenRouter example:
 # [llm]
 # provider = "openrouter"
 # model = "openai/gpt-4o-mini"
-# base_url = ""           # leave blank to use https://openrouter.ai/api/v1
 # timeout_secs = 30
 #
 # [llm.openai_compatible]
@@ -72,7 +71,6 @@ timeout_secs = 3
 # [llm]
 # provider = "huggingface"
 # model = "meta-llama/Llama-3.1-8B-Instruct"
-# base_url = ""           # leave blank to use https://router.huggingface.co/v1
 # timeout_secs = 30
 #
 # [llm.openai_compatible]

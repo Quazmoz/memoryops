@@ -101,7 +101,8 @@ pub struct OpenAiEmbeddingConfig {
 pub struct LlmConfig {
     pub provider: LlmProviderKind,
     pub model: String,
-    pub base_url: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
     pub timeout_secs: u64,
     /// Optional Ollama-specific config (e.g. for Ollama Cloud which requires an API key).
     pub ollama: Option<OllamaConfig>,
@@ -199,7 +200,6 @@ pub struct AnthropicConfig {
 /// [llm]
 /// provider = "gemini"
 /// model    = "gemini-2.0-flash"
-/// base_url = ""   # unused for Gemini; left blank
 ///
 /// [llm.gemini]
 /// api_key_env = "GEMINI_API_KEY"
@@ -365,7 +365,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scoring_weights_must_sum_to_one() {
+    fn scoring_weights_not_summing_to_one_fails_validation() {
         let weights = ScoringWeights {
             semantic_similarity: 0.40,
             importance: 0.25,
@@ -375,6 +375,19 @@ mod tests {
         };
 
         assert!(weights.validate().is_err());
+    }
+
+    #[test]
+    fn scoring_weights_summing_to_one_passes_validation() {
+        let weights = ScoringWeights {
+            semantic_similarity: 0.40,
+            importance: 0.25,
+            recency: 0.20,
+            source_authority: 0.10,
+            memory_type: 0.05,
+        };
+
+        assert!(weights.validate().is_ok());
     }
 
     #[test]

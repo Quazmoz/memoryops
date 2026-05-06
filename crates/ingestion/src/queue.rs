@@ -2,11 +2,14 @@ use common::{
     error::AppResult,
     models::{EventType, RawEvent, Source},
 };
-use redis::aio::ConnectionManager;
+use redis::aio::ConnectionLike;
 
 pub const STREAM_KEY: &str = "memoryops:raw_events";
 
-pub async fn publish_raw_event(redis: &mut ConnectionManager, event: &RawEvent) -> AppResult<()> {
+pub async fn publish_raw_event<C>(redis: &mut C, event: &RawEvent) -> AppResult<()>
+where
+    C: ConnectionLike + Send,
+{
     let result = redis::cmd("XADD")
         .arg(STREAM_KEY)
         .arg("*")

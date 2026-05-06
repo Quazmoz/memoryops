@@ -10,4 +10,4 @@ pub mod telemetry;
 
 pub use config::AppConfig;
 pub use error::{AppError, ConfigError, ProviderError};
-pub use state::AppState;
+pub use state::{build_embedding_provider, build_llm_provider, AppState};
