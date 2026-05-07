@@ -23,6 +23,9 @@ mod handlers;
 mod middleware;
 mod security;
 
+/// The dev-only placeholder value that must never reach production.
+const DEV_PLACEHOLDER: &str = "dev-placeholder";
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_owned());
@@ -31,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
     crate::security::validate_secret_key_at_startup()
         .map_err(|_| anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
     workspace_creation_secret_from_env()?;
+    validate_production_secrets()?;
     let state = build_state(config.clone()).await?;
     processor::start_workers(state.clone()).await?;
     tokio::spawn(processor::scheduler::run_scheduler(state.clone()));
@@ -99,6 +103,7 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
     let qdrant_url =
         std::env::var("QDRANT_URL").map_err(|_| anyhow::anyhow!("QDRANT_URL not set"))?;
     let github_webhook_secret = webhook_secret_from_env("GITHUB_WEBHOOK_SECRET")?;
+    let trusted_proxy_cidrs = Arc::new(parse_trusted_proxy_cidrs());
 
     let db = PgPoolOptions::new()
         .max_connections(config.database.max_connections)
@@ -129,6 +134,7 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         llm_provider,
         config: Arc::new(config),
         github_webhook_secret,
+        trusted_proxy_cidrs,
     })
 }
 
@@ -165,6 +171,78 @@ fn webhook_secret_from_env(name: &'static str) -> anyhow::Result<String> {
         Ok(value) if !value.trim().is_empty() => Ok(value),
         _ => Err(anyhow::anyhow!(format!("{name} must be set"))),
     }
+}
+
+/// When `APP_ENV=production`, reject secrets that are empty or still set to
+/// the dev-only placeholder value.  This prevents accidental production
+/// deployments with insecure defaults.
+fn validate_production_secrets() -> anyhow::Result<()> {
+    let is_production = std::env::var("APP_ENV")
+        .map(|v| v.trim().eq_ignore_ascii_case("production"))
+        .unwrap_or(false);
+
+    if !is_production {
+        return Ok(());
+    }
+
+    const WEBHOOK_SECRETS: &[&str] = &[
+        "GITHUB_WEBHOOK_SECRET",
+        "SLACK_SIGNING_SECRET",
+        "LINEAR_WEBHOOK_SECRET",
+        "JIRA_WEBHOOK_SECRET",
+    ];
+
+    let mut errors: Vec<String> = Vec::new();
+
+    for name in WEBHOOK_SECRETS {
+        match std::env::var(name) {
+            Ok(value) if !value.trim().is_empty() && value.trim() != DEV_PLACEHOLDER => {}
+            Ok(value) if value.trim() == DEV_PLACEHOLDER => {
+                errors.push(format!(
+                    "{name} is set to the dev-placeholder value — set a real secret for production"
+                ));
+            }
+            _ => {
+                errors.push(format!("{name} must be set in production"));
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Production secret validation failed:\n  {}",
+            errors.join("\n  ")
+        ));
+    }
+
+    tracing::info!("production secret validation passed");
+    Ok(())
+}
+
+/// Parse `TRUSTED_PROXY_CIDRS` env var (comma-separated CIDR strings) into
+/// `(network_address, prefix_len)` pairs used by the client-IP helper.
+/// Malformed entries are logged and skipped.
+fn parse_trusted_proxy_cidrs() -> Vec<(std::net::IpAddr, u8)> {
+    let raw = match std::env::var("TRUSTED_PROXY_CIDRS") {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    raw.split(',')
+        .filter_map(|entry| {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                return None;
+            }
+            match entry.parse::<ipnet::IpNet>() {
+                Ok(net) => Some((net.network(), net.prefix_len())),
+                Err(_) => {
+                    tracing::warn!(entry, "TRUSTED_PROXY_CIDRS: ignoring invalid CIDR");
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 fn workspace_creation_secret_from_env() -> anyhow::Result<String> {
@@ -391,20 +469,19 @@ async fn probe_ollama(config: Arc<common::config::AppConfig>) -> HealthCheck {
     if config.llm.provider != LlmProviderKind::Ollama {
         return HealthCheck {
             name: "ollama".to_owned(),
+            // Not configured: LLM summarisation uses a different provider.
+            // This is healthy — the API continues to function normally.
             status: "ok".to_owned(),
             latency_ms: None,
-            message: Some("not configured".to_owned()),
+            message: Some("not_configured".to_owned()),
         };
     }
-    let url = format!(
-        "{}/api/tags",
-        config
-            .llm
-            .base_url
-            .as_deref()
-            .unwrap_or("")
-            .trim_end_matches('/')
-    );
+    let base = config
+        .llm
+        .base_url
+        .as_deref()
+        .unwrap_or("http://localhost:11434");
+    let url = format!("{}/api/tags", base.trim_end_matches('/'));
 
     // Resolve an optional Bearer token — same source as OllamaProvider uses at
     // runtime, so the health probe authenticates consistently with the provider.
@@ -435,21 +512,27 @@ async fn probe_ollama(config: Arc<common::config::AppConfig>) -> HealthCheck {
         },
         Ok(Ok(resp)) => HealthCheck {
             name: "ollama".to_owned(),
+            // Configured and reachable but returning an unexpected status.
+            // Downgrade to "warn" so optional LLM unavailability does not
+            // mark the entire API as unhealthy.
             status: "warn".to_owned(),
             latency_ms: Some(latency_ms),
             message: Some(format!("HTTP {}", resp.status())),
         },
         Ok(Err(error)) => HealthCheck {
             name: "ollama".to_owned(),
-            status: "error".to_owned(),
+            // Configured but unreachable — "warn" keeps the API operational.
+            // Check that the base_url is correct; inside Docker use
+            // http://host.docker.internal:11434 instead of localhost.
+            status: "warn".to_owned(),
             latency_ms: Some(latency_ms),
-            message: Some(error.to_string()),
+            message: Some(format!("unreachable: {error}")),
         },
         Err(_) => HealthCheck {
             name: "ollama".to_owned(),
-            status: "error".to_owned(),
+            status: "warn".to_owned(),
             latency_ms: Some(2000),
-            message: Some("timeout".to_owned()),
+            message: Some("unreachable: timeout".to_owned()),
         },
     }
 }
@@ -503,13 +586,16 @@ async fn check_qdrant() -> DependencyStatus {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, dead_code, unused_imports)]
     use std::{
+        net::SocketAddr,
         sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use axum::{
         body::{to_bytes, Body},
+        extract::connect_info::ConnectInfo,
         http::{Method, Request, StatusCode},
     };
     use chrono::{DateTime, Duration, SecondsFormat, Utc};
@@ -559,6 +645,7 @@ mod tests {
             )),
             config: Arc::new(config),
             github_webhook_secret: "test-secret".to_owned(),
+            trusted_proxy_cidrs: Arc::new(Vec::new()),
         }
     }
 
@@ -820,7 +907,14 @@ mod tests {
         }
 
         match builder.body(Body::from(body.to_string())) {
-            Ok(request) => request,
+            Ok(mut request) => {
+                if is_workspace_create {
+                    request
+                        .extensions_mut()
+                        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
+                }
+                request
+            }
             Err(error) => panic!("test request should build: {error}"),
         }
     }

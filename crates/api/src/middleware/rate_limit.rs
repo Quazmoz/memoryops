@@ -6,13 +6,9 @@ use std::{
 use anyhow::anyhow;
 use axum::extract::connect_info::ConnectInfo;
 use axum::{body::Body, extract::State, http::Request, middleware::Next, response::Response};
-use common::{auth::AuthContext, error::AppResult, AppError, AppState};
+use common::{auth::AuthContext, config::RateLimitConfig, error::AppResult, AppError, AppState};
 use tokio::time::{timeout, Duration};
 
-const INGEST_RPM: i64 = 300;
-pub const MEMORY_RPM: i64 = 120;
-const API_RPM: i64 = 120;
-const DASHBOARD_RPM: i64 = 600;
 const RATE_LIMIT_REDIS_TIMEOUT_MS: u64 = 2000;
 const RATE_LIMIT_SCRIPT: &str = r#"
 local count = redis.call('INCR', KEYS[1])
@@ -40,12 +36,13 @@ impl RateLimitGroup {
         }
     }
 
-    fn limit(self) -> i64 {
+    /// Look up the RPM limit from the live config rather than hardcoded constants.
+    fn limit(self, cfg: &RateLimitConfig) -> i64 {
         match self {
-            RateLimitGroup::Ingest => INGEST_RPM,
-            RateLimitGroup::Memory => MEMORY_RPM,
-            RateLimitGroup::Api => API_RPM,
-            RateLimitGroup::Dashboard => DASHBOARD_RPM,
+            RateLimitGroup::Ingest => i64::from(cfg.ingest_rpm),
+            RateLimitGroup::Memory => i64::from(cfg.retrieve_rpm),
+            RateLimitGroup::Api => i64::from(cfg.api_rpm),
+            RateLimitGroup::Dashboard => i64::from(cfg.dashboard_rpm),
         }
     }
 }
@@ -59,11 +56,12 @@ pub async fn rate_limit(
     let Some(group) = endpoint_group(path) else {
         return Ok(next.run(request).await);
     };
-    let Some(subject) = rate_limit_subject(&request) else {
+    let Some(subject) = rate_limit_subject(&request, &state) else {
         return Ok(next.run(request).await);
     };
 
-    enforce_limit(&state, subject, group).await?;
+    let limit = group.limit(&state.config.rate_limit);
+    enforce_limit(&state, subject, group, limit).await?;
     Ok(next.run(request).await)
 }
 
@@ -90,6 +88,7 @@ async fn enforce_limit(
     state: &AppState,
     subject: RateLimitSubject,
     group: RateLimitGroup,
+    limit: i64,
 ) -> AppResult<()> {
     let now = unix_timestamp_secs()?;
     let window_start = now - (now % 60);
@@ -144,7 +143,7 @@ async fn enforce_limit(
         }
     };
 
-    if count > group.limit() {
+    if count > limit {
         let retry_after_secs = u64::try_from((expires_at - now).max(1)).unwrap_or(60);
         return Err(AppError::RateLimited { retry_after_secs });
     }
@@ -164,8 +163,8 @@ fn endpoint_group(path: &str) -> Option<RateLimitGroup> {
         return Some(RateLimitGroup::Memory);
     }
 
-    // Dashboard read-only routes - separated from the general Api bucket
-    // so that continuous polling from the UI doesn't exhaust workspace quota
+    // Dashboard read-only routes — separate bucket so continuous UI polling
+    // cannot exhaust the workspace's general API quota.
     if path.starts_with("/v1/workspaces/") {
         let after_id = path
             .trim_start_matches("/v1/workspaces/")
@@ -187,12 +186,12 @@ fn endpoint_group(path: &str) -> Option<RateLimitGroup> {
     None
 }
 
-fn rate_limit_subject(request: &Request<Body>) -> Option<RateLimitSubject> {
+fn rate_limit_subject(request: &Request<Body>, state: &AppState) -> Option<RateLimitSubject> {
     if let Some(workspace_id) = workspace_id_from_auth_context(request) {
         return Some(RateLimitSubject::Workspace(workspace_id));
     }
 
-    match client_ip_from_request(request) {
+    match resolve_client_ip(request, &state.trusted_proxy_cidrs) {
         Some(ip) => Some(RateLimitSubject::Ip(ip)),
         None => {
             tracing::warn!("rate limit skipped because client IP was unavailable");
@@ -202,19 +201,80 @@ fn rate_limit_subject(request: &Request<Body>) -> Option<RateLimitSubject> {
 }
 
 fn workspace_id_from_auth_context(request: &Request<Body>) -> Option<uuid::Uuid> {
-    if let Some(context) = request.extensions().get::<AuthContext>() {
-        return Some(context.workspace_id);
-    }
-
-    None
+    request
+        .extensions()
+        .get::<AuthContext>()
+        .map(|ctx| ctx.workspace_id)
 }
 
-fn client_ip_from_request(request: &Request<Body>) -> Option<IpAddr> {
-    request
+/// Resolve the real client IP, honoring `X-Forwarded-For` only when the
+/// direct peer is in the trusted-proxy CIDR list.
+pub fn resolve_client_ip(
+    request: &Request<Body>,
+    trusted_proxy_cidrs: &[(IpAddr, u8)],
+) -> Option<IpAddr> {
+    let peer_ip = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0.ip())
-        .or_else(|| request.extensions().get::<SocketAddr>().map(SocketAddr::ip))
+        .or_else(|| request.extensions().get::<SocketAddr>().map(SocketAddr::ip))?;
+
+    if is_trusted_proxy(peer_ip, trusted_proxy_cidrs) {
+        // Honor the leftmost (client) address in X-Forwarded-For
+        if let Some(xff) = request.headers().get("x-forwarded-for") {
+            if let Ok(raw) = xff.to_str() {
+                if let Some(first) = raw.split(',').next() {
+                    if let Ok(ip) = first.trim().parse::<IpAddr>() {
+                        return Some(ip);
+                    }
+                }
+            }
+        }
+        // Fall back to X-Real-IP
+        if let Some(xri) = request.headers().get("x-real-ip") {
+            if let Ok(raw) = xri.to_str() {
+                if let Ok(ip) = raw.trim().parse::<IpAddr>() {
+                    return Some(ip);
+                }
+            }
+        }
+    }
+
+    // Untrusted peer: use the direct connection IP, ignoring any XFF header.
+    Some(peer_ip)
+}
+
+/// Returns true if `peer` falls within any of the trusted CIDR ranges.
+fn is_trusted_proxy(peer: IpAddr, cidrs: &[(IpAddr, u8)]) -> bool {
+    cidrs
+        .iter()
+        .any(|(net_addr, prefix_len)| ip_in_cidr(peer, *net_addr, *prefix_len))
+}
+
+/// Constant-time CIDR membership check without external crates in this module.
+/// Parsing is done in `main.rs` using `ipnet`.
+fn ip_in_cidr(ip: IpAddr, network: IpAddr, prefix_len: u8) -> bool {
+    match (ip, network) {
+        (IpAddr::V4(ip), IpAddr::V4(net)) => {
+            let shift = 32u32.saturating_sub(u32::from(prefix_len));
+            let mask = if prefix_len == 0 {
+                0u32
+            } else {
+                u32::MAX << shift
+            };
+            u32::from(ip) & mask == u32::from(net) & mask
+        }
+        (IpAddr::V6(ip), IpAddr::V6(net)) => {
+            let shift = 128u32.saturating_sub(u32::from(prefix_len));
+            let mask = if prefix_len == 0 {
+                0u128
+            } else {
+                u128::MAX << shift
+            };
+            u128::from(ip) & mask == u128::from(net) & mask
+        }
+        _ => false,
+    }
 }
 
 fn unix_timestamp_secs() -> AppResult<i64> {
@@ -226,7 +286,18 @@ fn unix_timestamp_secs() -> AppResult<i64> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use common::config::RateLimitConfig;
+
+    fn test_cfg(ingest: u32, retrieve: u32, api: u32, dashboard: u32) -> RateLimitConfig {
+        RateLimitConfig {
+            ingest_rpm: ingest,
+            retrieve_rpm: retrieve,
+            api_rpm: api,
+            dashboard_rpm: dashboard,
+        }
+    }
 
     #[test]
     fn endpoint_groups_follow_m6_defaults() {
@@ -279,5 +350,53 @@ mod tests {
             endpoint_group("/v1/workspaces"),
             Some(RateLimitGroup::Api)
         ));
+    }
+
+    // ── Config-driven limits ──────────────────────────────────────────────────
+
+    #[test]
+    fn rate_limit_group_uses_config_values() {
+        let cfg = test_cfg(500, 75, 200, 800);
+        assert_eq!(RateLimitGroup::Ingest.limit(&cfg), 500);
+        assert_eq!(RateLimitGroup::Memory.limit(&cfg), 75);
+        assert_eq!(RateLimitGroup::Api.limit(&cfg), 200);
+        assert_eq!(RateLimitGroup::Dashboard.limit(&cfg), 800);
+    }
+
+    #[test]
+    fn rate_limit_group_defaults_match_config_toml() {
+        // Values mirror the defaults in config.toml so a regression is caught here.
+        let cfg = test_cfg(300, 60, 120, 600);
+        assert_eq!(RateLimitGroup::Ingest.limit(&cfg), 300);
+        assert_eq!(RateLimitGroup::Memory.limit(&cfg), 60);
+        assert_eq!(RateLimitGroup::Api.limit(&cfg), 120);
+        assert_eq!(RateLimitGroup::Dashboard.limit(&cfg), 600);
+    }
+
+    // ── Trusted proxy / client IP ─────────────────────────────────────────────
+
+    #[test]
+    fn ip_in_cidr_matches_exact_host() {
+        let network: IpAddr = "10.0.0.0".parse().unwrap();
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(ip_in_cidr(ip, network, 8));
+    }
+
+    #[test]
+    fn ip_in_cidr_rejects_outside_range() {
+        let network: IpAddr = "10.0.0.0".parse().unwrap();
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!ip_in_cidr(ip, network, 8));
+    }
+
+    #[test]
+    fn is_trusted_proxy_true_for_loopback_cidr() {
+        let cidrs: Vec<(IpAddr, u8)> = vec![("127.0.0.1".parse().unwrap(), 32)];
+        assert!(is_trusted_proxy("127.0.0.1".parse().unwrap(), &cidrs));
+    }
+
+    #[test]
+    fn is_trusted_proxy_false_for_empty_list() {
+        assert!(!is_trusted_proxy("10.0.0.1".parse().unwrap(), &[]));
     }
 }

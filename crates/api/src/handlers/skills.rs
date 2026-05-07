@@ -368,11 +368,108 @@ fn validate_description(value: &str) -> AppResult<()> {
 }
 
 fn validate_endpoint_url(value: &str) -> AppResult<()> {
-    if !value.trim().starts_with("https://") {
+    let url = reqwest::Url::parse(value.trim())
+        .map_err(|_| AppError::Validation("skill endpoint_url is not a valid URL".to_owned()))?;
+
+    if url.scheme() != "https" {
         return Err(AppError::Validation(
-            "skill endpoint_url must start with https://".to_owned(),
+            "skill endpoint_url must use the https scheme".to_owned(),
         ));
     }
+
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(AppError::Validation(
+            "skill endpoint_url must not contain credentials".to_owned(),
+        ));
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| AppError::Validation("skill endpoint_url must have a host".to_owned()))?;
+
+    reject_forbidden_host(host)?;
+
+    Ok(())
+}
+
+/// Reject hostnames / IP literals that would cause SSRF.
+/// This is a syntax-level check; DNS-resolved IPs are validated separately in
+/// [`validate_endpoint_url_dns`] at request time.
+fn reject_forbidden_host(host: &str) -> AppResult<()> {
+    let lower = host.to_ascii_lowercase();
+
+    if lower == "localhost" || lower.ends_with(".localhost") {
+        return Err(AppError::Validation(
+            "skill endpoint_url host is not permitted".to_owned(),
+        ));
+    }
+
+    // Parse as an IP literal (IPv4 or bracket-stripped IPv6)
+    if let Ok(ip) = lower.parse::<std::net::IpAddr>() {
+        reject_forbidden_ip(ip)?;
+    }
+
+    Ok(())
+}
+
+/// Reject loopback, RFC-1918 private, link-local, documentation, unspecified,
+/// broadcast, multicast, and IPv4-mapped-in-IPv6 addresses.
+fn reject_forbidden_ip(ip: std::net::IpAddr) -> AppResult<()> {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            if v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+            {
+                return Err(AppError::Validation(
+                    "skill endpoint_url resolves to a forbidden address".to_owned(),
+                ));
+            }
+        }
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_multicast() || v6.is_unspecified() {
+                return Err(AppError::Validation(
+                    "skill endpoint_url resolves to a forbidden address".to_owned(),
+                ));
+            }
+            // Reject IPv4-mapped / IPv4-compatible addresses (e.g. ::ffff:10.0.0.1)
+            if let Some(v4) = v6.to_ipv4() {
+                reject_forbidden_ip(std::net::IpAddr::V4(v4))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve the hostname of `url` via DNS and reject any address in a forbidden
+/// range.  This prevents SSRF via DNS rebinding (the URL passes the syntax
+/// check but resolves to an internal address at call time).
+async fn validate_endpoint_url_dns(url: &str) -> AppResult<()> {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| AppError::Validation("invalid endpoint URL".to_owned()))?;
+
+    let host = parsed.host_str().unwrap_or("");
+
+    // IP literals are already validated by the syntax check; skip DNS.
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return Ok(());
+    }
+
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let addr_str = format!("{host}:{port}");
+
+    let addrs = tokio::net::lookup_host(&*addr_str)
+        .await
+        .map_err(|_| AppError::Validation("skill endpoint_url could not be resolved".to_owned()))?;
+
+    for sock_addr in addrs {
+        reject_forbidden_ip(sock_addr.ip())?;
+    }
+
     Ok(())
 }
 
@@ -478,8 +575,12 @@ pub async fn test_skill(
         resource: format!("workspace_skill:{name}"),
     })?;
 
+    // Validate the stored endpoint URL at call time (DNS rebinding defence)
+    validate_endpoint_url_dns(&skill.endpoint_url).await?;
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| AppError::Internal(anyhow::anyhow!(error)))?;
 
@@ -498,9 +599,39 @@ pub async fn test_skill(
         req_builder = req_builder.header(header_name, decrypted.plaintext);
     }
 
-    // Forward caller-supplied headers (cannot override the auth header)
-    if let Some(headers) = &request.headers {
-        for (k, v) in headers {
+    // Forward a safe subset of caller-supplied headers.
+    // Headers that could override auth, change routing, or affect connection
+    // management are blocked regardless of what the caller sends.
+    const BLOCKED_REQUEST_HEADERS: &[&str] = &[
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "upgrade",
+        "te",
+        "expect",
+        "x-forwarded-for",
+        "x-real-ip",
+    ];
+    if let Some(caller_headers) = &request.headers {
+        let auth_header_lower = skill
+            .auth_header
+            .as_deref()
+            .map(|h| h.to_ascii_lowercase())
+            .unwrap_or_default();
+        for (k, v) in caller_headers {
+            let normalized = k.to_ascii_lowercase();
+            if BLOCKED_REQUEST_HEADERS.contains(&normalized.as_str()) {
+                continue;
+            }
+            // Also block whatever header name the skill uses for auth
+            if !auth_header_lower.is_empty() && normalized == auth_header_lower {
+                continue;
+            }
             req_builder = req_builder.header(k.as_str(), v.as_str());
         }
     }
@@ -572,5 +703,81 @@ mod tests {
         assert!(encoded["body"]["error"]
             .as_str()
             .is_some_and(|s| s.contains("connection refused")));
+    }
+
+    // ── SSRF validation tests ────────────────────────────────────────────────
+
+    #[test]
+    fn validate_url_rejects_http_scheme() {
+        assert!(validate_endpoint_url("http://example.com/api").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_non_url() {
+        assert!(validate_endpoint_url("not-a-url").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_credentials() {
+        assert!(validate_endpoint_url("https://user:pass@example.com/api").is_err());
+        assert!(validate_endpoint_url("https://user@example.com/api").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_localhost() {
+        assert!(validate_endpoint_url("https://localhost/api").is_err());
+        assert!(validate_endpoint_url("https://localhost:8080/api").is_err());
+        assert!(validate_endpoint_url("https://foo.localhost/api").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_loopback_ipv4() {
+        assert!(validate_endpoint_url("https://127.0.0.1/api").is_err());
+        assert!(validate_endpoint_url("https://127.1.2.3/api").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_loopback_ipv6() {
+        assert!(validate_endpoint_url("https://[::1]/api").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_private_ipv4_10_block() {
+        assert!(validate_endpoint_url("https://10.0.0.1/api").is_err());
+        assert!(validate_endpoint_url("https://10.255.255.255/api").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_private_ipv4_172_block() {
+        assert!(validate_endpoint_url("https://172.16.0.1/api").is_err());
+        assert!(validate_endpoint_url("https://172.31.255.255/api").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_private_ipv4_192_168_block() {
+        assert!(validate_endpoint_url("https://192.168.1.1/api").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_link_local_metadata() {
+        // AWS/GCP/Azure instance metadata endpoint
+        assert!(validate_endpoint_url("https://169.254.169.254/latest/meta-data/").is_err());
+        // Generic link-local
+        assert!(validate_endpoint_url("https://169.254.0.1/").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_ipv4_mapped_ipv6_private() {
+        // ::ffff:10.0.0.1 — IPv4-mapped private
+        assert!(validate_endpoint_url("https://[::ffff:10.0.0.1]/api").is_err());
+        // ::ffff:127.0.0.1 — IPv4-mapped loopback
+        assert!(validate_endpoint_url("https://[::ffff:127.0.0.1]/api").is_err());
+    }
+
+    #[test]
+    fn validate_url_accepts_public_https() {
+        // No real network call — just validates the syntax and IP-range checks pass.
+        assert!(validate_endpoint_url("https://api.example.com/v1/hook").is_ok());
+        assert!(validate_endpoint_url("https://hooks.example.org/callback").is_ok());
     }
 }
