@@ -92,6 +92,7 @@ dependencies = [
  "futures-util",
  "hkdf",
  "ingestion",
+ "ipnet",
  "processor",
  "qdrant-client",
  "rand 0.9.4",

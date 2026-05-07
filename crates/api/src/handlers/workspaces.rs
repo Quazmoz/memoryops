@@ -7,8 +7,8 @@ use std::{
 use anyhow::anyhow;
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
-    http::{header::HeaderName, HeaderMap, StatusCode},
+    extract::{connect_info::ConnectInfo, Path, Query, State},
+    http::{header::HeaderName, HeaderMap, Request, StatusCode},
     response::IntoResponse,
     Extension, Json,
 };
@@ -39,7 +39,6 @@ pub const MAX_IMPORT_BODY_BYTES: usize = 50 * 1024 * 1024;
 const WORKSPACE_CREATE_RATE_LIMIT_CAPACITY: i64 = 5;
 const WORKSPACE_CREATE_REFILL_TOKENS_PER_SEC: f64 = 5.0 / 3600.0;
 const X_ADMIN_TOKEN_HEADER: HeaderName = HeaderName::from_static("x-admin-token");
-const X_FORWARDED_FOR_HEADER: HeaderName = HeaderName::from_static("x-forwarded-for");
 const KNOWN_CONFIG_KEYS: &[&str] = &[
     "promotion_threshold",
     "dedup_cosine_threshold",
@@ -152,11 +151,29 @@ struct WorkspaceStatsRow {
 
 pub async fn create_workspace(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<CreateWorkspaceRequest>,
 ) -> AppResult<Json<CreateWorkspaceResponse>> {
     authorize_workspace_creation(&headers)?;
-    let created_from_ip = resolve_client_ip(&headers);
+    // Build a minimal Request so we can reuse the shared IP resolver.
+    let created_from_ip = {
+        let mut builder = Request::builder();
+        if let Some(xff) = headers.get("x-forwarded-for") {
+            builder = builder.header("x-forwarded-for", xff);
+        }
+        if let Some(xri) = headers.get("x-real-ip") {
+            builder = builder.header("x-real-ip", xri);
+        }
+        let mut dummy_req: Request<Body> = builder
+            .body(Body::empty())
+            .unwrap_or_else(|_| Request::new(Body::empty()));
+        dummy_req
+            .extensions_mut()
+            .insert(ConnectInfo(peer_addr));
+        crate::middleware::rate_limit::resolve_client_ip(&dummy_req, &state.trusted_proxy_cidrs)
+            .unwrap_or_else(|| IpAddr::from([127, 0, 0, 1]))
+    };
     enforce_workspace_creation_rate_limit(&state, created_from_ip).await?;
 
     if request.name.trim().is_empty() {
@@ -578,11 +595,15 @@ async fn process_import_line(
             response.imported = response.imported.saturating_add(1);
             match state.redis.get().await {
                 Ok(mut conn) => {
-                    if let Err(error) = enqueue_slow_job(&mut *conn, memory_id, workspace_id, 0).await {
+                    if let Err(error) =
+                        enqueue_slow_job(&mut *conn, memory_id, workspace_id, 0).await
+                    {
                         tracing::warn!(error = ?error, memory_id = %memory_id, "failed to enqueue imported memory for embedding");
                     }
                 }
-                Err(error) => tracing::warn!(error = ?error, memory_id = %memory_id, "failed to get Redis connection for import enqueue"),
+                Err(error) => {
+                    tracing::warn!(error = ?error, memory_id = %memory_id, "failed to get Redis connection for import enqueue")
+                }
             }
         }
         Err(error) => {
@@ -905,36 +926,6 @@ fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
     }
 }
 
-fn resolve_client_ip(headers: &HeaderMap) -> IpAddr {
-    // 1. X-Forwarded-For (set by nginx and most CDNs)
-    if let Some(value) = headers.get(&X_FORWARDED_FOR_HEADER) {
-        if let Ok(raw) = value.to_str() {
-            if let Some(first) = raw.split(',').next() {
-                let candidate = first.trim();
-                if let Ok(ip) = candidate.parse::<IpAddr>() {
-                    return ip;
-                }
-                if let Ok(addr) = candidate.parse::<SocketAddr>() {
-                    return addr.ip();
-                }
-            }
-        }
-    }
-
-    // 2. X-Real-IP (set by some reverse proxies)
-    if let Some(value) = headers.get("x-real-ip") {
-        if let Ok(raw) = value.to_str() {
-            if let Ok(ip) = raw.trim().parse::<IpAddr>() {
-                return ip;
-            }
-        }
-    }
-
-    // 3. Local dev fallback — rate-limiting still applies but all local
-    //    requests share the same bucket, which is fine for development.
-    IpAddr::from([127, 0, 0, 1])
-}
-
 async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> AppResult<()> {
     let key = format!("workspace:create:ratelimit:{ip}");
     let now = unix_timestamp_secs()?;
@@ -1250,12 +1241,15 @@ pub async fn reindex_workspace(
     match state.redis.get().await {
         Ok(mut conn) => {
             for row in &rows {
-                if let Err(error) = enqueue_slow_job(&mut *conn, row.id, row.workspace_id, 0).await {
+                if let Err(error) = enqueue_slow_job(&mut *conn, row.id, row.workspace_id, 0).await
+                {
                     tracing::warn!(error = ?error, memory_id = %row.id, "failed to enqueue memory for reindex");
                 }
             }
         }
-        Err(error) => tracing::warn!(error = ?error, "failed to get Redis connection for reindex enqueue"),
+        Err(error) => {
+            tracing::warn!(error = ?error, "failed to get Redis connection for reindex enqueue")
+        }
     }
 
     // FIX: was `format!("user:{}", auth.key_id)` — use auth.actor() for
@@ -1278,6 +1272,7 @@ pub async fn reindex_workspace(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use std::sync::Arc;
 
     use axum::{
@@ -1334,6 +1329,7 @@ mod tests {
             )),
             config: Arc::new(config),
             github_webhook_secret: "test-secret".to_owned(),
+            trusted_proxy_cidrs: Arc::new(Vec::new()),
         }
     }
 
@@ -1657,10 +1653,7 @@ mod tests {
 
         assert_eq!(target["llm_provider"], serde_json::json!("openai"));
         assert_eq!(target["llm_model"], serde_json::json!("gpt-4.1"));
-        assert_eq!(
-            target["embedding_provider"],
-            serde_json::json!("openai")
-        );
+        assert_eq!(target["embedding_provider"], serde_json::json!("openai"));
         assert_eq!(
             target["embedding_model"],
             serde_json::json!("text-embedding-3-large")

@@ -53,7 +53,7 @@ MemoryOps provides a complete control plane for memory, surpassing traditional R
 </p>
 
 ### Self-Hosting & Data Control
-For sensitive engineering contexts, data residency is critical. MemoryOps is designed to run fully air-gapped and self-hosted with its embedded vector database, requiring zero external cloud APIs.
+For sensitive engineering contexts, data residency is critical. MemoryOps is designed to run fully air-gapped and self-hosted with its **self-hosted vector database** (Qdrant), requiring zero external cloud APIs.
 
 <p align="center">
   <img src="docs/assets/chart2-bar.png" alt="Self-Hosting and Data Control" width="80%">
@@ -225,6 +225,7 @@ Copy `.env.example` to `.env`. All required variables must be set before startin
 | `GEMINI_API_KEY` | ❌ | — | Required if `llm.provider = "gemini"` |
 | `RUST_LOG` | ❌ | `info` | Log level (`trace`/`debug`/`info`/`warn`/`error`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | ❌ | — | OTLP endpoint, e.g. `http://localhost:4317` |
+| `WORKSPACE_CREATION_SECRET` | ✅ | — | Required bearer secret for `POST /v1/workspaces`.  Pass as `x-admin-token` header. |
 | `GITHUB_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | HMAC-SHA256 secret for GitHub webhooks. **Required in production.** |
 | `SLACK_SIGNING_SECRET` | ❌ | `dev-placeholder` | Slack signing secret. **Required in production.** |
 | `LINEAR_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Linear webhook secret. **Required in production.** |
@@ -244,9 +245,12 @@ See [docs/PROVIDERS.md](docs/PROVIDERS.md) for the full LLM and embedding provid
 
 ### Create a workspace
 
+Workspace creation requires the `x-admin-token` header set to `WORKSPACE_CREATION_SECRET` (see `.env.example`).
+
 ```bash
 curl -X POST http://localhost:8080/v1/workspaces \
   -H 'Content-Type: application/json' \
+  -H 'x-admin-token: <your-WORKSPACE_CREATION_SECRET>' \
   -d '{"name": "acme-engineering"}'
 # {"workspace_id": "018f...", "api_key": "mops_018f..._..."}
 ```
@@ -383,7 +387,8 @@ memoryops/
 │   ├── openapi.yaml  # OpenAPI contract (source of truth)
 │   └── local-development.md
 ├── .env.example
-├── docker-compose.yml
+├── docker-compose.yml        # Local dev (binds ports to 127.0.0.1)
+├── docker-compose.prod.yml   # Production overlay (no host-exposed infra ports)
 ├── docker-compose.test.yml
 ├── rust-toolchain.toml
 ├── Cargo.toml        # Workspace root
@@ -397,6 +402,18 @@ memoryops/
 MemoryOps is in **alpha**. Core ingestion, processing, retrieval, and MCP transport are functional. The API surface may change before v1.0. Not recommended for production use without review of the security considerations in [SECURITY.md](SECURITY.md).
 
 See [docs/FEATURES.md](docs/FEATURES.md) for the full milestone tracker.
+
+---
+
+## Branch Strategy & CI
+
+| Branch | Purpose | CI |
+|--------|---------|-----|
+| `main` | Production-ready code | Full CI: fmt, clippy, audit, tests, coverage |
+| `development` / `staging` | Active work, staging validation | Lightweight: fmt + frontend build only |
+| `feat/**`, `dev/**` | Feature branches | Lightweight: fmt + frontend build only |
+
+Full CI runs only on pushes to `main` and pull requests targeting `main`. The lightweight `dev-lint` workflow runs on all other branches to catch formatting regressions quickly without consuming CI minutes for integration tests.
 
 ---
 

@@ -281,6 +281,9 @@ pub struct RateLimitConfig {
     pub retrieve_rpm: u32,
     pub ingest_rpm: u32,
     pub api_rpm: u32,
+    /// Separate bucket for high-frequency dashboard polling routes so they
+    /// cannot exhaust the workspace's general API quota.
+    pub dashboard_rpm: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]

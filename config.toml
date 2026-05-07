@@ -33,6 +33,13 @@ model = "BAAI/bge-small-en-v1.5"
 # Options: "ollama" (local, default) | "openai" | "anthropic"
 provider = "ollama"
 model = "llama3"
+# ⚠️  Docker users: "localhost" does NOT reach the host machine from inside a
+#     container.  Use "host.docker.internal" instead (works on Docker Desktop
+#     for Mac/Windows; on Linux add --add-host=host.docker.internal:host-gateway
+#     to your docker run / compose service, or use the host network mode).
+#
+#     Local dev (bare metal / WSL):  base_url = "http://localhost:11434"
+#     Docker Desktop (Mac / Windows): base_url = "http://host.docker.internal:11434"
 base_url = "http://localhost:11434"
 timeout_secs = 3
 
@@ -142,6 +149,9 @@ prune_threshold = 0.10
 retrieve_rpm = 60
 ingest_rpm = 300
 api_rpm = 120
+# High-frequency dashboard polling routes get their own bucket so they cannot
+# exhaust the workspace's general API quota.
+dashboard_rpm = 600
 
 # ── Retrieval Engine ─────────────────────────────────────────────────────────
 [retrieval]

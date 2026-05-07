@@ -91,6 +91,7 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         llm_provider: build_llm_provider(&config),
         config: Arc::new(config),
         github_webhook_secret,
+        trusted_proxy_cidrs: Arc::new(Vec::new()),
     })
 }
 

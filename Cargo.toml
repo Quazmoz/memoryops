@@ -26,6 +26,9 @@ unwrap_used = "deny"
 expect_used = "deny"
 
 [workspace.dependencies]
+# CIDR matching for trusted-proxy IP validation
+ipnet = "2"
+
 # General error context and typed errors keep failures explicit across crate boundaries.
 anyhow = "1.0"
 thiserror = "2.0"

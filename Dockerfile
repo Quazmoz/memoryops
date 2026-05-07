@@ -8,11 +8,16 @@ FROM debian:bookworm-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r -g 1001 memoryops \
+    && useradd -r -u 1001 -g memoryops -d /app -s /sbin/nologin memoryops
 
 WORKDIR /app
 COPY --from=builder /app/target/release/api /usr/local/bin/api
 COPY --from=builder /app/target/release/mcp /usr/local/bin/mcp
 COPY config.toml /app/config.toml
+RUN chown -R memoryops:memoryops /app
+
+USER memoryops
 
 CMD ["mcp"]

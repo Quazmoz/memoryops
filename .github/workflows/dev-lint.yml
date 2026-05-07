@@ -1,0 +1,55 @@
+name: Dev Lint
+
+# Lightweight validation for development and staging branches.
+# Runs only format + frontend build – no integration tests or coverage.
+# Full CI (Rust tests, coverage, audit) is reserved for the main branch via ci.yml.
+
+on:
+  push:
+    branches:
+      - development
+      - staging
+      - "dev/**"
+      - "feat/**"
+  pull_request:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  rustfmt:
+    name: Rust format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+  frontend-build:
+    name: Frontend lint and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run build

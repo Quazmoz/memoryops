@@ -106,16 +106,11 @@ impl RuntimeBackend {
 #[async_trait]
 impl McpBackend for RuntimeBackend {
     async fn authenticate(&self, token: &str) -> Result<AuthContext, JsonRpcError> {
-        let mut redis = self
-            .state
-            .redis
-            .get()
-            .await
-            .map_err(|_| JsonRpcError {
-                code: INTERNAL_ERROR,
-                message: "redis pool unavailable".to_owned(),
-                data: None,
-            })?;
+        let mut redis = self.state.redis.get().await.map_err(|_| JsonRpcError {
+            code: INTERNAL_ERROR,
+            message: "redis pool unavailable".to_owned(),
+            data: None,
+        })?;
         let context = common::auth::validate_api_key_cached(&self.state.db, &mut *redis, token)
             .await
             .map_err(auth_error_to_rpc)?;
@@ -656,6 +651,7 @@ fn app_error_to_rpc(error: AppError) -> JsonRpcError {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
