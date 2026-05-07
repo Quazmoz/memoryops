@@ -17,13 +17,17 @@ RUN npm run build
 # inside the container and remap at compose/k8s level.
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 
+LABEL com.memoryops.nginx="8080-unprivileged"
+
 # Allow the entrypoint script to write config.json into the served directory.
 USER root
 COPY --from=builder /app/dist /usr/share/nginx/html
+RUN rm -f /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY entrypoint.sh /docker-entrypoint.d/10-runtime-config.sh
 RUN chmod +x /docker-entrypoint.d/10-runtime-config.sh \
-    && chown -R nginx:nginx /usr/share/nginx/html
+    && chown -R nginx:nginx /usr/share/nginx/html \
+    && echo "MemoryOps frontend image configured for port 8080"
 USER nginx
 
 # nginxinc/nginx-unprivileged default port is 8080

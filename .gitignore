@@ -7,3 +7,4 @@
 /lcov.info
 /frontend/node_modules/
 /frontend/dist/
+/.memoryops.local.json

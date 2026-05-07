@@ -159,20 +159,21 @@ docker compose up -d api
 # First build compiles all Rust crates (~2-5 min). Subsequent starts are instant.
 
 # 6. Bootstrap your first workspace
+# Use the Node.js helper to automatically create a workspace and save credentials.
 # Replace <your-creation-secret> with WORKSPACE_CREATION_SECRET from your .env
-curl -X POST http://localhost:8080/v1/workspaces \
-  -H "Content-Type: application/json" \
-  -H "x-admin-token: <your-creation-secret>" \
-  -d '{"name": "my-workspace"}'
-# Response: {"workspace_id": "...", "api_key": "mops_..."}
-# SAVE both values — the api_key is returned only once!
+WORKSPACE_CREATION_SECRET=<your-creation-secret> node scripts/bootstrap.mjs
 
 # 7. Build and start the frontend container
-# Pass the workspace_id from Step 6 so it is baked into the static build:
-VITE_MEMORYOPS_WORKSPACE_ID=<workspace_id> docker compose up -d frontend
+# Pass the workspace_id from Step 6 so it is used at runtime:
+MEMORYOPS_WORKSPACE_ID=<workspace_id> docker compose up -d --build frontend
 
-# 8. (Optional) Seed development data
-API_KEY=<api_key> bash scripts/seed.sh
+# 8. (Optional) Start MCP server
+docker compose up -d mcp
+
+# 9. (Optional) Seed development data
+# We recommend using the cross-platform Node script:
+API_KEY=<api_key> node scripts/seed.mjs
+# (Unix users can still use: API_KEY=<api_key> bash scripts/seed.sh)
 ```
 
 | Service | URL |
@@ -188,6 +189,30 @@ curl http://localhost:8080/health/ready
 ```
 
 See [docs/local-development.md](docs/local-development.md) for the full local setup guide including Ollama, port reference, and the test stack.
+
+Note: You may see a Qdrant client/server version mismatch warning in the API logs (e.g., client 1.17 vs server 1.13). This is harmless for local development and API compatibility is maintained.
+
+---
+
+## Resetting Local Environment
+
+If you experience issues like a stale frontend image (e.g. ERR_EMPTY_RESPONSE on port 5173), you can reset the non-persistent containers:
+
+```bash
+docker compose down
+docker compose build --no-cache api frontend mcp
+docker compose up -d postgres redis qdrant
+sqlx migrate run
+docker compose up -d api
+```
+
+### Full Data Wipe
+> **WARNING: Destructive Operation**
+
+```bash
+docker compose down -v
+```
+Using `-v` will delete the Postgres, Redis, and Qdrant volumes. Use this **only** if you want to permanently delete all local workspaces, memories, and start completely fresh.
 
 ---
 
