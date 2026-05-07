@@ -588,12 +588,14 @@ async fn check_qdrant() -> DependencyStatus {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, dead_code, unused_imports)]
     use std::{
+        net::SocketAddr,
         sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use axum::{
         body::{to_bytes, Body},
+        extract::connect_info::ConnectInfo,
         http::{Method, Request, StatusCode},
     };
     use chrono::{DateTime, Duration, SecondsFormat, Utc};
@@ -905,7 +907,14 @@ mod tests {
         }
 
         match builder.body(Body::from(body.to_string())) {
-            Ok(request) => request,
+            Ok(mut request) => {
+                if is_workspace_create {
+                    request
+                        .extensions_mut()
+                        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
+                }
+                request
+            }
             Err(error) => panic!("test request should build: {error}"),
         }
     }

@@ -6,7 +6,8 @@
 # What this file changes vs. docker-compose.yml:
 #  - Removes ALL host-port bindings for postgres, redis, and qdrant so they
 #    are only reachable inside the Docker network (not exposed to the host).
-#  - Keeps the api (8080) and frontend (80/443) accessible via a reverse proxy.
+#  - Keeps the api (8080) and frontend (5173 -> container 8080) accessible via
+#    a reverse proxy.
 #  - Expects real secrets in the environment (APP_ENV=production enforced by
 #    the API startup validator).
 #
@@ -14,7 +15,8 @@
 #  - Set APP_ENV=production in your .env or shell.
 #  - All webhook secrets must be real values (not dev-placeholder).
 #  - Place a reverse proxy (e.g. nginx/Caddy/Traefik) in front of port 8080
-#    and 5173 before exposing them to the internet.
+#    and 5173 (mapped to frontend container port 8080) before exposing them to
+#    the internet.
 
 services:
   postgres:
@@ -40,4 +42,4 @@ services:
 
   frontend:
     ports:
-      - "127.0.0.1:5173:80"
+      - "127.0.0.1:5173:8080"

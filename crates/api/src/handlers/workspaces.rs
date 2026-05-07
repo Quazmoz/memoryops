@@ -168,9 +168,7 @@ pub async fn create_workspace(
         let mut dummy_req: Request<Body> = builder
             .body(Body::empty())
             .unwrap_or_else(|_| Request::new(Body::empty()));
-        dummy_req
-            .extensions_mut()
-            .insert(ConnectInfo(peer_addr));
+        dummy_req.extensions_mut().insert(ConnectInfo(peer_addr));
         crate::middleware::rate_limit::resolve_client_ip(&dummy_req, &state.trusted_proxy_cidrs)
             .unwrap_or_else(|| IpAddr::from([127, 0, 0, 1]))
     };
@@ -1273,10 +1271,11 @@ pub async fn reindex_workspace(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use std::sync::Arc;
+    use std::{net::SocketAddr, sync::Arc};
 
     use axum::{
         body::{to_bytes, Body},
+        extract::connect_info::ConnectInfo,
         http::{Method, Request, StatusCode},
     };
     use common::{
@@ -1293,6 +1292,7 @@ mod tests {
     use super::*;
 
     async fn test_state(pool: PgPool) -> AppState {
+        std::env::set_var("WORKSPACE_CREATION_SECRET", "test-workspace-create-secret");
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:16379".to_owned());
         let redis = {
@@ -1448,6 +1448,32 @@ mod tests {
             Ok(request) => request,
             Err(error) => panic!("test request should build: {error}"),
         }
+    }
+
+    fn workspace_create_request(
+        name: &str,
+        peer_addr: SocketAddr,
+        x_forwarded_for: Option<&str>,
+    ) -> Request<Body> {
+        let secret = std::env::var("WORKSPACE_CREATION_SECRET")
+            .unwrap_or_else(|_| "test-workspace-create-secret".to_owned());
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/workspaces")
+            .header("content-type", "application/json")
+            .header("x-admin-token", secret);
+
+        if let Some(xff) = x_forwarded_for {
+            builder = builder.header("x-forwarded-for", xff);
+        }
+
+        let mut request =
+            match builder.body(Body::from(serde_json::json!({ "name": name }).to_string())) {
+                Ok(request) => request,
+                Err(error) => panic!("workspace create request should build: {error}"),
+            };
+        request.extensions_mut().insert(ConnectInfo(peer_addr));
+        request
     }
 
     async fn response_json(response: axum::response::Response) -> Value {
@@ -1860,5 +1886,114 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         let body = response_json(response).await;
         assert!(body.get("errors").is_some());
+    }
+
+    async fn created_from_ip_for_workspace(pool: &PgPool, workspace_id: Uuid) -> String {
+        match sqlx::query_scalar::<_, Option<String>>(
+            "SELECT created_from_ip::TEXT FROM workspaces WHERE id = $1",
+        )
+        .bind(workspace_id)
+        .fetch_one(pool)
+        .await
+        {
+            Ok(Some(ip)) => ip,
+            Ok(None) => panic!("created_from_ip should be stored for workspace"),
+            Err(error) => panic!("created_from_ip query should succeed: {error}"),
+        }
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn workspace_create_uses_direct_peer_ip_without_xff(pool: PgPool) {
+        let app = crate::router(test_state(pool.clone()).await);
+        let response = match app
+            .oneshot(workspace_create_request(
+                &format!("workspace-{}", Uuid::now_v7()),
+                SocketAddr::from(([198, 51, 100, 7], 12345)),
+                None,
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("workspace request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let workspace_id = match body.get("workspace_id").and_then(Value::as_str) {
+            Some(raw) => match Uuid::parse_str(raw) {
+                Ok(workspace_id) => workspace_id,
+                Err(error) => panic!("workspace_id should be UUID: {error}"),
+            },
+            None => panic!("workspace response should include workspace_id"),
+        };
+
+        let created_from_ip = created_from_ip_for_workspace(&pool, workspace_id).await;
+        assert_eq!(created_from_ip, "198.51.100.7");
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn workspace_create_uses_xff_when_peer_is_trusted_proxy(pool: PgPool) {
+        let mut state = test_state(pool.clone()).await;
+        state.trusted_proxy_cidrs = Arc::new(vec![(
+            "127.0.0.1"
+                .parse()
+                .expect("loopback CIDR address should parse"),
+            32,
+        )]);
+        let app = crate::router(state);
+
+        let response = match app
+            .oneshot(workspace_create_request(
+                &format!("workspace-{}", Uuid::now_v7()),
+                SocketAddr::from(([127, 0, 0, 1], 12345)),
+                Some("203.0.113.9, 127.0.0.1"),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("workspace request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let workspace_id = match body.get("workspace_id").and_then(Value::as_str) {
+            Some(raw) => match Uuid::parse_str(raw) {
+                Ok(workspace_id) => workspace_id,
+                Err(error) => panic!("workspace_id should be UUID: {error}"),
+            },
+            None => panic!("workspace response should include workspace_id"),
+        };
+
+        let created_from_ip = created_from_ip_for_workspace(&pool, workspace_id).await;
+        assert_eq!(created_from_ip, "203.0.113.9");
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn workspace_create_ignores_xff_for_untrusted_peer(pool: PgPool) {
+        let app = crate::router(test_state(pool.clone()).await);
+        let response = match app
+            .oneshot(workspace_create_request(
+                &format!("workspace-{}", Uuid::now_v7()),
+                SocketAddr::from(([198, 51, 100, 20], 12345)),
+                Some("203.0.113.40"),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("workspace request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let workspace_id = match body.get("workspace_id").and_then(Value::as_str) {
+            Some(raw) => match Uuid::parse_str(raw) {
+                Ok(workspace_id) => workspace_id,
+                Err(error) => panic!("workspace_id should be UUID: {error}"),
+            },
+            None => panic!("workspace response should include workspace_id"),
+        };
+
+        let created_from_ip = created_from_ip_for_workspace(&pool, workspace_id).await;
+        assert_eq!(created_from_ip, "198.51.100.20");
     }
 }
