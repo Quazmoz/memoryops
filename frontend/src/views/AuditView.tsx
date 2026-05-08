@@ -11,6 +11,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Skeleton } from "../components/ui/skeleton";
+import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { useAppStore } from "../store/app-store";
 
 const PAGE_SIZE = 50;
@@ -32,26 +33,26 @@ export function AuditView() {
     () => [
       {
         accessorKey: "occurred_at",
-        header: "Time",
+        header: () => <InfoLabel label="Time" tooltip="When the audited operation happened." />,
         cell: ({ row }) => <TimeCell value={row.original.occurred_at} />,
       },
       {
         accessorKey: "actor",
-        header: "Actor",
+        header: () => <InfoLabel label="Actor" tooltip="User, API key, system process, or automation that performed the action." />,
         cell: ({ row }) => <span className="font-mono text-xs text-ink/75">{row.original.actor}</span>,
       },
       {
         accessorKey: "action",
-        header: "Action",
+        header: () => <InfoLabel label="Action" tooltip="Audited operation, such as memory update, export, import, promotion, or settings change." />,
         cell: ({ row }) => <Badge variant="accent">{row.original.action}</Badge>,
       },
       {
         accessorKey: "target_type",
-        header: "Target Type",
+        header: () => <InfoLabel label="Target Type" tooltip="Category of object affected by the audited action." />,
       },
       {
         accessorKey: "target_id",
-        header: "Target ID",
+        header: () => <InfoLabel label="Target ID" tooltip="Identifier of the affected object. Copy it when debugging or correlating backend logs." />,
         cell: ({ row }) => <CopyIdButton value={row.original.target_id} />,
       },
     ],
@@ -70,14 +71,20 @@ export function AuditView() {
           <p className="text-sm font-medium text-accent-strong">Operations</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Audit Log</h1>
         </div>
-        <Badge variant="muted">{items.length} rows</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="muted">{items.length} rows</Badge>
+          <HelpTooltip label="Rows badge">Number of audit events currently loaded into this page of the log.</HelpTooltip>
+        </div>
       </header>
 
       {audit.isError ? <InlineError message={audit.error.message} /> : null}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Activity</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Activity</span>
+            <HelpTooltip label="Activity">Audited operations performed in this workspace, including system and operator actions.</HelpTooltip>
+          </CardTitle>
           <ScrollText className="h-4 w-4 text-accent-strong" aria-hidden="true" />
         </CardHeader>
         <CardContent>
@@ -115,14 +122,24 @@ export function AuditView() {
           ) : null}
 
           <div className="mt-4 flex items-center justify-end gap-2">
-            <Button type="button" variant="secondary" size="sm" onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0 || audit.isFetching}>
-              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-              Prev
-            </Button>
-            <Button type="button" variant="secondary" size="sm" onClick={() => setOffset(offset + PAGE_SIZE)} disabled={items.length < PAGE_SIZE || audit.isFetching}>
-              Next
-              <ChevronRight className="h-4 w-4" aria-hidden="true" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" variant="secondary" size="sm" onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0 || audit.isFetching}>
+                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                  Prev
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Load the previous page of audit events.</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" variant="secondary" size="sm" onClick={() => setOffset(offset + PAGE_SIZE)} disabled={items.length < PAGE_SIZE || audit.isFetching}>
+                  Next
+                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Load the next page of audit events.</TooltipContent>
+            </Tooltip>
           </div>
         </CardContent>
       </Card>
@@ -134,9 +151,14 @@ function TimeCell({ value }: { value: string }) {
   const date = new Date(value);
   const absolute = Number.isNaN(date.getTime()) ? value : date.toLocaleString();
   return (
-    <time dateTime={value} title={absolute} className="whitespace-nowrap text-ink/70">
-      {formatRelativeTime(value)}
-    </time>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <time dateTime={value} tabIndex={0} className="whitespace-nowrap rounded-sm text-ink/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          {formatRelativeTime(value)}
+        </time>
+      </TooltipTrigger>
+      <TooltipContent>{absolute}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -148,9 +170,14 @@ function CopyIdButton({ value }: { value: string }) {
   return (
     <div className="flex items-center gap-2">
       <span className="font-mono text-xs text-ink/70">{truncateUuid(value)}</span>
-      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={copy} aria-label="Copy target id">
-        <Clipboard className="h-3.5 w-3.5" aria-hidden="true" />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={copy} aria-label="Copy target id">
+            <Clipboard className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Copy the full target identifier for debugging or log correlation.</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

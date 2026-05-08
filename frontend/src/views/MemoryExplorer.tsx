@@ -10,6 +10,7 @@ import { MemoryResultsTable, type MemoryRow } from "../components/MemoryResultsT
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { useMemoryList, useMemorySearch, useUpdateMemory } from "../hooks/use-memory";
 import { useTags } from "../hooks/useTags";
 import { cn } from "../lib/utils";
@@ -216,10 +217,14 @@ export function MemoryExplorer() {
         </div>
 
         <form className="flex w-full max-w-2xl gap-2" onSubmit={handleSubmit}>
+          <HelpTooltip label="Search memory" className="self-center">
+            Search stored memories by meaning or keywords across the current workspace and filter set.
+          </HelpTooltip>
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" aria-hidden="true" />
             <Input
               data-testid="memory-search-input"
+              aria-label="Search memory"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               className="pl-9"
@@ -243,31 +248,45 @@ export function MemoryExplorer() {
           <div className="grid gap-4 lg:grid-cols-[auto_auto_auto_1fr] lg:items-center">
             <div className="flex flex-wrap gap-2" aria-label="Memory type filters">
               {(["all", "episodic", "semantic"] as MemoryTypeFilter[]).map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  data-testid={`filter-type-${type}`}
-                  onClick={() => selectMemoryType(type)}
-                  className={filterButtonClass(memoryType === type)}
-                >
-                  {type}
-                </button>
+                <Tooltip key={type}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid={`filter-type-${type}`}
+                      onClick={() => selectMemoryType(type)}
+                      className={filterButtonClass(memoryType === type)}
+                    >
+                      {type}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{memoryTypeTooltip(type)}</TooltipContent>
+                </Tooltip>
               ))}
             </div>
 
-            <button type="button" data-testid="filter-pinned" onClick={togglePinnedFilter} className={filterButtonClass(pinned)}>
-              <Filter className="h-3.5 w-3.5" aria-hidden="true" />
-              Pinned
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" data-testid="filter-pinned" onClick={togglePinnedFilter} className={filterButtonClass(pinned)}>
+                  <Filter className="h-3.5 w-3.5" aria-hidden="true" />
+                  Pinned
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Only show memories protected from normal decay and pruning.</TooltipContent>
+            </Tooltip>
 
-            <button type="button" data-testid="filter-workspace-pool" onClick={toggleWorkspacePool} className={filterButtonClass(includeWorkspacePool)}>
-              <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
-              Workspace Pool
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" data-testid="filter-workspace-pool" onClick={toggleWorkspacePool} className={filterButtonClass(includeWorkspacePool)}>
+                  <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  Workspace Pool
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Workspace-visible memories are available across agents and users in this workspace, not just the original private scope.</TooltipContent>
+            </Tooltip>
 
             <label className="grid min-w-[16rem] gap-2 text-sm text-ink/70">
               <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
-                <span>Min importance</span>
+                <InfoLabel label="Min importance" tooltip="Hide low-priority memories below this importance threshold." />
                 <span>{minImportance.toFixed(2)}</span>
               </span>
               <input
@@ -284,11 +303,11 @@ export function MemoryExplorer() {
           </div>
 
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <ScopeFilterInput label="Agent ID" testId="filter-agent-id" value={scopeDraft.agentId} onChange={(value) => changeScopeFilter("agentId", value)} />
-            <ScopeFilterInput label="User ID" testId="filter-user-id" value={scopeDraft.userId} onChange={(value) => changeScopeFilter("userId", value)} />
-            <ScopeFilterInput label="Repo" testId="filter-repo" value={scopeDraft.repo} onChange={(value) => changeScopeFilter("repo", value)} placeholder="owner/repo" />
+            <ScopeFilterInput label="Agent ID" helpText="Filter to memories scoped to a specific agent, such as claude-code, deploy-bot, or review-agent." testId="filter-agent-id" value={scopeDraft.agentId} onChange={(value) => changeScopeFilter("agentId", value)} />
+            <ScopeFilterInput label="User ID" helpText="Filter to memories attached to a specific end user or operator scope." testId="filter-user-id" value={scopeDraft.userId} onChange={(value) => changeScopeFilter("userId", value)} />
+            <ScopeFilterInput label="Repo" helpText="Filter to memories tied to a specific repository, usually owner/repo." testId="filter-repo" value={scopeDraft.repo} onChange={(value) => changeScopeFilter("repo", value)} placeholder="owner/repo" />
             <label className="grid gap-1 text-xs font-medium uppercase text-ink/45">
-              As Of
+              <InfoLabel label="As Of" tooltip="Time-travel filter. Shows memories as they would have existed at the selected point in time." />
               <div className="flex gap-2">
                 <Input
                   type="datetime-local"
@@ -306,7 +325,6 @@ export function MemoryExplorer() {
                     variant="ghost"
                     size="icon"
                     aria-label="Clear as of"
-                    title="Clear as of"
                     onClick={() => {
                       setAsOfDateTime("");
                       setOffset(0);
@@ -322,7 +340,7 @@ export function MemoryExplorer() {
 
         <div className="flex flex-wrap gap-2">
           <label className="grid gap-1 text-xs font-medium uppercase text-ink/45">
-            Sort
+            <InfoLabel label="Sort" tooltip="Choose which score or timestamp drives the primary result ordering." />
             <select
               data-testid="sort-field-select"
               value={sortSelectValue(sortField, sortDirection)}
@@ -336,15 +354,21 @@ export function MemoryExplorer() {
               ))}
             </select>
           </label>
-          <Button
-            type="button"
-            variant="secondary"
-            data-testid="sort-direction-toggle"
-            onClick={toggleSortDirection}
-          >
-            {sortDirection === "asc" ? <ArrowUpAZ className="h-4 w-4" aria-hidden="true" /> : <ArrowDownAZ className="h-4 w-4" aria-hidden="true" />}
-            {sortDirection}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="secondary"
+                data-testid="sort-direction-toggle"
+                aria-label="Sort direction"
+                onClick={toggleSortDirection}
+              >
+                {sortDirection === "asc" ? <ArrowUpAZ className="h-4 w-4" aria-hidden="true" /> : <ArrowDownAZ className="h-4 w-4" aria-hidden="true" />}
+                {sortDirection}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Toggle whether the selected sort runs from low-to-high or high-to-low.</TooltipContent>
+          </Tooltip>
         </div>
       </section>
 
@@ -357,7 +381,8 @@ export function MemoryExplorer() {
         >
           <span className="inline-flex items-center gap-2">
             <Tag className="h-4 w-4 text-accent-strong" aria-hidden="true" />
-            Tags
+            <span>Tags</span>
+            <HelpTooltip label="Tags panel">Browse known tags and add them as filters to narrow the explorer to specific topics or labels.</HelpTooltip>
           </span>
           {tagsCollapsed ? <ChevronRight className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
         </button>
@@ -393,7 +418,7 @@ export function MemoryExplorer() {
 
       {selectedTags.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 text-sm text-ink/65" data-testid="active-tag-filters">
-          <span>Tags</span>
+          <InfoLabel label="Active tag filters" tooltip="Current tag filters applied to the explorer query." />
           {selectedTags.map((tag) => (
             <button
               key={tag}
@@ -499,13 +524,37 @@ function tagPillClass(active: boolean): string {
   );
 }
 
-function ScopeFilterInput({ label, testId, value, onChange, placeholder }: { label: string; testId: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+function ScopeFilterInput({
+  label,
+  helpText,
+  testId,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  helpText: string;
+  testId: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
   return (
     <label className="grid gap-1 text-xs font-medium uppercase text-ink/45">
-      {label}
+      <InfoLabel label={label} tooltip={helpText} />
       <Input data-testid={testId} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="normal-case text-ink" />
     </label>
   );
+}
+
+function memoryTypeTooltip(type: MemoryTypeFilter): string {
+  if (type === "episodic") {
+    return "Short-lived event-derived memories from raw activity like commits, PRs, messages, tickets, and agent observations.";
+  }
+  if (type === "semantic") {
+    return "Durable knowledge promoted from recurring or important episodic memories.";
+  }
+  return "Shows both episodic and semantic memories in one result set.";
 }
 
 function errorMessage(error: unknown): string {

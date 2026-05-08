@@ -10,6 +10,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
+import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { previewText } from "../lib/format";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
@@ -202,10 +203,15 @@ export function SkillsView() {
           <p className="text-sm font-medium text-accent-strong">Agent tools</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Skills</h1>
         </div>
-        <Button type="button" data-testid="skill-add-button" onClick={openCreateDrawer} disabled={!hasAuth}>
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          Add Skill
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button type="button" data-testid="skill-add-button" onClick={openCreateDrawer} disabled={!hasAuth}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add Skill
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>HTTP tools agents can call to augment memory retrieval with live external data.</TooltipContent>
+        </Tooltip>
       </header>
 
       {skillsQuery.isError ? <InlineError message={errorMessage(skillsQuery.error)} /> : null}
@@ -225,11 +231,11 @@ export function SkillsView() {
             <table className="w-full min-w-[920px] border-collapse text-left">
               <thead className="border-b border-line bg-soft/80 text-xs font-semibold uppercase text-ink/55">
                 <tr>
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Description</th>
-                  <th className="px-4 py-3">Method</th>
-                  <th className="px-4 py-3">Endpoint</th>
-                  <th className="px-4 py-3">Enabled</th>
+                  <th className="px-4 py-3"><InfoLabel label="Name" tooltip="Machine-safe identifier. Use lowercase letters, numbers, and underscores." /></th>
+                  <th className="px-4 py-3"><InfoLabel label="Description" tooltip="What the skill does so operators and agents understand when to call it." /></th>
+                  <th className="px-4 py-3"><InfoLabel label="Method" tooltip="HTTP method MemoryOps will use when invoking the skill." /></th>
+                  <th className="px-4 py-3"><InfoLabel label="URL" tooltip="HTTPS endpoint MemoryOps will call when this skill is invoked. Local, private, and network metadata URLs should be rejected by the backend." /></th>
+                  <th className="px-4 py-3"><InfoLabel label="Enabled" tooltip="Whether agents may call this skill during retrieval and tool use." /></th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -242,38 +248,61 @@ export function SkillsView() {
                     <td className="px-4 py-4 align-middle">
                       <Badge variant="gray">{skill.http_method}</Badge>
                     </td>
-                    <td className="max-w-[24rem] truncate px-4 py-4 align-middle font-mono text-xs text-ink/60" title={skill.endpoint_url}>{skill.endpoint_url}</td>
+                    <td className="max-w-[24rem] truncate px-4 py-4 align-middle font-mono text-xs text-ink/60">
+                      <TooltipText value={skill.endpoint_url}>{skill.endpoint_url}</TooltipText>
+                    </td>
                     <td className="px-4 py-4 align-middle">
-                      <button
-                        type="button"
-                        data-testid={`skill-enabled-${skill.name}`}
-                        className={toggleClass(skill.enabled)}
-                        onClick={() => toggleEnabled(skill)}
-                        disabled={updateMutation.isPending}
-                        aria-pressed={skill.enabled}
-                      >
-                        <span className={cn("h-4 w-4 rounded-full bg-white shadow transition", skill.enabled ? "translate-x-5" : "translate-x-0")} />
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            data-testid={`skill-enabled-${skill.name}`}
+                            className={toggleClass(skill.enabled)}
+                            onClick={() => toggleEnabled(skill)}
+                            disabled={updateMutation.isPending}
+                            aria-pressed={skill.enabled}
+                            aria-label={skill.enabled ? `Disable ${skill.name}` : `Enable ${skill.name}`}
+                          >
+                            <span className={cn("h-4 w-4 rounded-full bg-white shadow transition", skill.enabled ? "translate-x-5" : "translate-x-0")} />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>{skill.enabled ? "Agents can currently invoke this skill." : "Enable this skill so agents can invoke it."}</TooltipContent>
+                      </Tooltip>
                     </td>
                     <td className="relative px-4 py-4 align-middle">
                       <div className="flex justify-end gap-2">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          data-testid={`skill-test-open-${skill.name}`}
-                          aria-label={`Test ${skill.name}`}
-                          aria-pressed={testingSkillName === skill.name}
-                          onClick={() => openTestPanel(skill)}
-                        >
-                          <FlaskConical className="h-4 w-4" aria-hidden="true" />
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon" data-testid={`skill-edit-${skill.name}`} aria-label={`Edit ${skill.name}`} onClick={() => openEditDrawer(skill)}>
-                          <Edit3 className="h-4 w-4" aria-hidden="true" />
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon" data-testid={`skill-delete-${skill.name}`} aria-label={`Delete ${skill.name}`} onClick={() => setConfirmingDelete(skill.name)}>
-                          <Trash2 className="h-4 w-4" aria-hidden="true" />
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              data-testid={`skill-test-open-${skill.name}`}
+                              aria-label={`Test ${skill.name}`}
+                              aria-pressed={testingSkillName === skill.name}
+                              onClick={() => openTestPanel(skill)}
+                            >
+                              <FlaskConical className="h-4 w-4" aria-hidden="true" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Sends a live request to the skill endpoint using the provided test body.</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button type="button" variant="ghost" size="icon" data-testid={`skill-edit-${skill.name}`} aria-label={`Edit ${skill.name}`} onClick={() => openEditDrawer(skill)}>
+                              <Edit3 className="h-4 w-4" aria-hidden="true" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Edit the saved skill configuration.</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button type="button" variant="ghost" size="icon" data-testid={`skill-delete-${skill.name}`} aria-label={`Delete ${skill.name}`} onClick={() => setConfirmingDelete(skill.name)}>
+                              <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Delete this registered skill.</TooltipContent>
+                        </Tooltip>
                       </div>
                       {confirmingDelete === skill.name ? (
                         <div className="absolute right-4 z-10 mt-2 w-64 rounded-lg border border-line bg-white p-3 text-sm shadow-lg">
@@ -295,16 +324,16 @@ export function SkillsView() {
                         <div className="grid max-w-3xl gap-4">
                           <div className="flex flex-wrap gap-6 text-sm">
                             <div>
-                              <span className="text-xs font-medium uppercase text-ink/45">Method</span>
+                              <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="Method" tooltip="HTTP method MemoryOps will use for this test request." /></span>
                               <p className="mt-0.5 font-mono text-ink">{skill.http_method}</p>
                             </div>
                             <div className="min-w-0 flex-1">
-                              <span className="text-xs font-medium uppercase text-ink/45">Endpoint</span>
+                              <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="URL" tooltip="HTTPS endpoint MemoryOps will call when this skill is invoked." /></span>
                               <p className="mt-0.5 truncate font-mono text-xs text-ink/70">{skill.endpoint_url}</p>
                             </div>
                           </div>
                           <label className="grid gap-1">
-                            <span className="text-xs font-medium uppercase text-ink/45">Request body (JSON)</span>
+                            <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="Request body JSON" tooltip="Live request body sent to the skill endpoint during a test run." /></span>
                             <textarea
                               data-testid={`skill-test-body-${skill.name}`}
                               value={testBody}
@@ -315,18 +344,23 @@ export function SkillsView() {
                           </label>
                           {testError ? <p className="text-sm text-rust">{testError}</p> : null}
                           <div className="flex items-center gap-3">
-                            <Button
-                              type="button"
-                              size="sm"
-                              data-testid={`skill-test-run-${skill.name}`}
-                              onClick={() => runTest(skill.name)}
-                              disabled={testMutation.isPending}
-                            >
-                              {testMutation.isPending
-                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                                : <Play className="h-3.5 w-3.5" aria-hidden="true" />}
-                              Run
-                            </Button>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  data-testid={`skill-test-run-${skill.name}`}
+                                  onClick={() => runTest(skill.name)}
+                                  disabled={testMutation.isPending}
+                                >
+                                  {testMutation.isPending
+                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                                    : <Play className="h-3.5 w-3.5" aria-hidden="true" />}
+                                  Run test
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Sends a live request to the skill endpoint using the provided test body.</TooltipContent>
+                            </Tooltip>
                             {testResult ? (
                               <span className="text-sm text-ink/60">
                                 <span className={statusColor(testResult.status)}>{testResult.status}</span>
@@ -335,12 +369,15 @@ export function SkillsView() {
                             ) : null}
                           </div>
                           {testResult ? (
-                            <pre
-                              data-testid={`skill-test-response-${skill.name}`}
-                              className="max-h-64 overflow-auto rounded-md bg-ink px-4 py-3 font-mono text-xs text-white/90"
-                            >
-                              {JSON.stringify(testResult.body, null, 2)}
-                            </pre>
+                            <div className="grid gap-1">
+                              <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="Response panel" tooltip="Raw response returned by the skill test request." /></span>
+                              <pre
+                                data-testid={`skill-test-response-${skill.name}`}
+                                className="max-h-64 overflow-auto rounded-md bg-ink px-4 py-3 font-mono text-xs text-white/90"
+                              >
+                                {JSON.stringify(testResult.body, null, 2)}
+                              </pre>
+                            </div>
                           ) : null}
                         </div>
                       </td>
@@ -358,23 +395,26 @@ export function SkillsView() {
         <div className="fixed inset-0 z-40 bg-ink/25" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && resetDrawer()}>
           <aside className="ml-auto grid h-full w-full max-w-xl grid-rows-[auto_1fr] border-l border-line bg-white shadow-xl" role="dialog" aria-modal="true">
             <div className="flex items-center justify-between border-b border-line px-5 py-4">
-              <h2 className="text-lg font-semibold text-ink">{editingSkill ? "Edit Skill" : "Add Skill"}</h2>
+              <h2 className="inline-flex items-center gap-1.5 text-lg font-semibold text-ink">
+                <span>{editingSkill ? "Edit Skill" : "Add Skill"}</span>
+                <HelpTooltip label={editingSkill ? "Edit Skill" : "Add Skill"}>Configure an HTTP tool MemoryOps can expose to agents during retrieval workflows.</HelpTooltip>
+              </h2>
               <Button type="button" variant="ghost" size="icon" aria-label="Close" onClick={resetDrawer}>
                 <X className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
             <form className="thin-scrollbar grid content-start gap-4 overflow-y-auto p-5" onSubmit={submitSkill}>
-              <Field label="Name" error={errors.name}>
+              <Field label="Name" helpText="Machine-safe identifier. Use lowercase letters, numbers, and underscores." error={errors.name}>
                 <Input data-testid="skill-form-name" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} disabled={Boolean(editingSkill)} />
               </Field>
-              <Field label="Description" error={errors.description}>
+              <Field label="Description" helpText="What this skill does so agents and operators know when to call it." error={errors.description}>
                 <Input data-testid="skill-form-description" value={draft.description} onChange={(event) => updateDraft("description", event.target.value)} />
               </Field>
-              <Field label="URL" error={errors.endpoint_url}>
+              <Field label="URL" helpText="HTTPS endpoint MemoryOps will call when this skill is invoked. Local, private, and network metadata URLs should be rejected by the backend." error={errors.endpoint_url}>
                 <Input data-testid="skill-form-endpoint_url" value={draft.endpoint_url} onChange={(event) => updateDraft("endpoint_url", event.target.value)} />
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Method" error={errors.http_method}>
+                <Field label="Method" helpText="HTTP method MemoryOps will use when invoking the skill." error={errors.http_method}>
                   <select
                     data-testid="skill-form-http_method"
                     value={draft.http_method}
@@ -386,17 +426,17 @@ export function SkillsView() {
                     <option value="PUT">PUT</option>
                   </select>
                 </Field>
-                <Field label="Auth header" error={errors.auth_header}>
+                <Field label="Auth header" helpText="Header name MemoryOps should send when authenticating to the skill endpoint." error={errors.auth_header}>
                   <Input data-testid="skill-form-auth_header" value={draft.auth_header} onChange={(event) => updateDraft("auth_header", event.target.value)} placeholder="Authorization" />
                 </Field>
               </div>
-              <Field label="Auth secret" error={errors.auth_secret}>
+              <Field label="Auth secret" helpText="Secret value stored encrypted by the backend. It is not re-displayed after save." error={errors.auth_secret}>
                 <Input data-testid="skill-form-auth_secret" type="password" value={draft.auth_secret} onChange={(event) => updateDraft("auth_secret", event.target.value)} />
               </Field>
-              <Field label="Input schema" error={errors.input_schema}>
+              <Field label="Input schema" helpText="JSON Schema describing what the agent should send to this skill." error={errors.input_schema}>
                 <textarea data-testid="skill-form-input_schema" value={draft.input_schema} onChange={(event) => updateDraft("input_schema", event.target.value)} className="min-h-32 rounded-md border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
               </Field>
-              <Field label="Output schema" error={errors.output_schema}>
+              <Field label="Output schema" helpText="JSON Schema describing what the skill returns." error={errors.output_schema}>
                 <textarea data-testid="skill-form-output_schema" value={draft.output_schema} onChange={(event) => updateDraft("output_schema", event.target.value)} className="min-h-32 rounded-md border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
               </Field>
               <div className="flex justify-end gap-2 border-t border-line pt-4">
@@ -414,10 +454,10 @@ export function SkillsView() {
   );
 }
 
-function Field({ label, error, children }: { label: string; error?: string | undefined; children: React.ReactNode }) {
+function Field({ label, helpText, error, children }: { label: string; helpText: string; error?: string | undefined; children: React.ReactNode }) {
   return (
     <label className="grid gap-1 text-sm text-ink/70">
-      <span className="text-xs font-medium uppercase text-ink/45">{label}</span>
+      <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label={label} tooltip={helpText} /></span>
       {children}
       {error ? <span className="text-xs font-medium text-rust">{error}</span> : null}
     </label>
@@ -519,4 +559,17 @@ function statusColor(status: number): string {
   if (status < 300) return "font-semibold text-green-600";
   if (status < 500) return "font-semibold text-yellow-600";
   return "font-semibold text-rust";
+}
+
+function TooltipText({ value, children }: { value: string; children: React.ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} className="inline-block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          {children}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{value}</TooltipContent>
+    </Tooltip>
+  );
 }

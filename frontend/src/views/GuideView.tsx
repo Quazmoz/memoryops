@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { CodeBlock } from "../components/CodeBlock";
 import { getSystemHealth, type SystemHealthResponse } from "../api/health";
+import { HelpTooltip, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
@@ -75,7 +76,7 @@ export function GuideView() {
               ID and API key. All data stays on your infrastructure.
             </p>
             <Callout>
-              You will need a <strong>Workspace ID</strong> and an <strong>API Key</strong>. Set them in{" "}
+              You will need a <strong>Workspace ID</strong> <HelpTooltip label="Workspace ID">Workspace boundary that MemoryOps uses to isolate memories, settings, and retrieval scope.</HelpTooltip> and an <strong>API Key</strong> <HelpTooltip label="API Key">Credential used by clients and tools to authenticate against the selected MemoryOps workspace.</HelpTooltip>. Set them in{" "}
               <a href="/settings" className="text-accent-strong underline underline-offset-2">Settings</a> to have them
               auto-filled in the code examples below.
             </Callout>
@@ -114,7 +115,7 @@ export function GuideView() {
 }`} />
           </Section>
 
-          <Section id="claude-desktop" title="Claude Desktop (MCP)">
+          <Section id="claude-desktop" title="Claude Desktop (MCP)" tooltip="MCP lets MemoryOps expose memory read and write tools directly to compatible agent clients.">
             <p>
               MemoryOps exposes an MCP server so Claude Desktop can read and write memories automatically during
               conversations. Add the server to your Claude Desktop configuration file.
@@ -141,7 +142,7 @@ export function GuideView() {
             </Callout>
           </Section>
 
-          <Section id="agent-observations" title="Agent Observations">
+          <Section id="agent-observations" title="Agent Observations" tooltip="First-party agent-submitted memories sent directly into the MemoryOps ingest pipeline.">
             <p>
               Agent Observations let any process — a CI pipeline, a background agent, a CLI script — push structured
               observations directly into MemoryOps without going through a webhook integration. Use observations when
@@ -265,7 +266,7 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/query \\
   }'`} />
           </Section>
 
-          <Section id="skills" title="Skills">
+          <Section id="skills" title="Skills" tooltip="HTTP tools agents can call to augment memory retrieval with live external data.">
             <p>
               Skills are HTTP endpoints that agents can call at retrieval time to augment answers with live data. Register
               a skill with a name, URL, and JSON schema, then enable it for the workspace.
@@ -293,7 +294,7 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/query \\
             </p>
           </Section>
 
-          <Section id="contradictions" title="Contradictions">
+          <Section id="contradictions" title="Contradictions" tooltip="Review queue for memories that may disagree and need operator resolution.">
             <p>
               When MemoryOps detects that two memories conflict, it creates a contradiction flag. You can review flags
               in the <a href="/contradictions" className="text-accent-strong underline underline-offset-2">Contradictions</a>{" "}
@@ -311,7 +312,7 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/contradictions/<flag_id>
   -d '{"resolution": "keep_a"}'`} />
           </Section>
 
-          <Section id="lifecycle" title="Lifecycle & Decay">
+          <Section id="lifecycle" title="Lifecycle & Decay" tooltip="Rules that age, prune, and promote memories over time.">
             <p>
               Memories decay over time based on a configurable half-life. Memories below the pruning threshold are
               promoted to long-term storage or archived. You can tune both values per workspace.
@@ -347,7 +348,7 @@ curl -X PATCH {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/config \\
   }'`} />
           </Section>
 
-          <Section id="export-import" title="Export & Import">
+          <Section id="export-import" title="Export & Import" tooltip="Workspace backup and restore flows for memory migration or recovery.">
             <p>
               Back up all memories as newline-delimited JSON (NDJSON), or restore them from a previous export. Useful
               for migrating between workspaces or keeping an offline archive.
@@ -395,10 +396,13 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/import \\
   );
 }
 
-function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+function Section({ id, title, tooltip, children }: { id: string; title: string; tooltip?: string; children: React.ReactNode }) {
   return (
     <section id={id} className="scroll-mt-6">
-      <h2 className="mb-4 text-xl font-semibold text-ink">{title}</h2>
+      <h2 className="mb-4 inline-flex items-center gap-1.5 text-xl font-semibold text-ink">
+        <span>{title}</span>
+        {tooltip ? <HelpTooltip label={title}>{tooltip}</HelpTooltip> : null}
+      </h2>
       <div className="prose-like grid gap-3 text-sm leading-relaxed text-ink/80">{children}</div>
     </section>
   );
@@ -448,19 +452,25 @@ function HealthStrip({ health, loading }: { health: SystemHealthResponse | undef
           ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
           : <AlertCircle className="h-4 w-4" aria-hidden="true" />}
         System {overall}
+        <HelpTooltip label="Health strip">Live view of the backend services MemoryOps depends on while you work through setup and troubleshooting.</HelpTooltip>
       </span>
       {health.checks.map((check) => (
-        <span key={check.name} className="flex items-center gap-1 text-xs opacity-80">
-          <span
-            className={cn(
-              "h-2 w-2 rounded-full",
-              check.status === "ok" ? "bg-green-500" : check.status === "warn" ? "bg-amber-400" : "bg-red-500",
-            )}
-            aria-hidden="true"
-          />
-          {check.name}
-          {check.latency_ms !== null ? ` ${check.latency_ms}ms` : ""}
-        </span>
+        <Tooltip key={check.name}>
+          <TooltipTrigger asChild>
+            <span tabIndex={0} className="flex items-center gap-1 rounded-sm text-xs opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+              <span
+                className={cn(
+                  "h-2 w-2 rounded-full",
+                  check.status === "ok" ? "bg-green-500" : check.status === "warn" ? "bg-amber-400" : "bg-red-500",
+                )}
+                aria-hidden="true"
+              />
+              {check.name}
+              {check.latency_ms !== null ? ` ${check.latency_ms}ms` : ""}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{check.message ?? `${check.name} is reporting ${check.status}.`}</TooltipContent>
+        </Tooltip>
       ))}
     </div>
   );
