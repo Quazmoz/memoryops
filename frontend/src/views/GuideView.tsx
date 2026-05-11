@@ -10,7 +10,7 @@ import { useAppStore } from "../store/app-store";
 const SECTIONS = [
   { id: "overview", label: "Overview" },
   { id: "authentication", label: "Authentication" },
-  { id: "vscode", label: "VSCode Extension" },
+  { id: "vscode", label: "VS Code Extension" },
   { id: "claude-desktop", label: "Claude Desktop" },
   { id: "agent-observations", label: "Agent Observations" },
   { id: "openwebui", label: "OpenWebUI" },
@@ -72,7 +72,7 @@ export function GuideView() {
               by language models, giving every agent a persistent and searchable knowledge base.
             </p>
             <p className="mt-3">
-              Connect your AI tools — VSCode Copilot, Claude Desktop, OpenWebUI, or any HTTP client — using a workspace
+              Connect your AI tools — VS Code/Copilot, Claude Desktop, OpenWebUI, or any HTTP client — using a workspace
               ID and API key. All data stays on your infrastructure.
             </p>
             <Callout>
@@ -96,22 +96,30 @@ export function GuideView() {
             </p>
           </Section>
 
-          <Section id="vscode" title="VSCode Extension">
+          <Section id="vscode" title="VS Code Extension — Coming Soon">
             <p>
-              Install the <strong>MemoryOps</strong> extension from the VS Code Marketplace. It surfaces relevant
-              memories inline as you type, and lets you save highlighted text directly to your workspace.
+              A first-party <strong>MemoryOps VS Code extension</strong> is planned. The goal is to bring workspace
+              memory directly into the editor so coding agents and developers can retrieve relevant project context
+              without leaving VS Code.
             </p>
-            <ol className="mt-3 grid gap-2 pl-4 text-ink/80" style={{ listStyleType: "decimal" }}>
-              <li>Open VS Code and go to <strong>Extensions</strong> (<kbd>Ctrl+Shift+X</kbd>).</li>
-              <li>Search for <strong>MemoryOps</strong> and click Install.</li>
-              <li>Open <strong>Settings</strong> and search for <em>memoryops</em>.</li>
-              <li>Set <code className="inline-code">memoryops.apiUrl</code>, <code className="inline-code">memoryops.workspaceId</code>, and <code className="inline-code">memoryops.apiKey</code>.</li>
-            </ol>
-            <CodeBlock code={`// settings.json
+            <Callout>
+              The extension is not published yet. For now, connect editor-based agents through the MCP server or call
+              the REST API directly using the examples in this guide.
+            </Callout>
+            <p className="mt-2 font-medium text-ink">Planned capabilities</p>
+            <ul className="mt-2 grid gap-2 pl-4 text-ink/80" style={{ listStyleType: "disc" }}>
+              <li>Configure <code className="inline-code">memoryops.apiUrl</code>, <code className="inline-code">memoryops.workspaceId</code>, and <code className="inline-code">memoryops.apiKey</code> from VS Code settings.</li>
+              <li>Search and retrieve MemoryOps context from the Command Palette.</li>
+              <li>Save highlighted code, notes, or decisions as agent observations.</li>
+              <li>Surface relevant memories while working in a repository, pull request, or incident/debugging context.</li>
+              <li>Provide a bridge for Copilot-style workflows to use governed MemoryOps context.</li>
+            </ul>
+            <CodeBlock code={`// planned settings.json shape
 {
   "memoryops.apiUrl": "{{API_URL}}",
   "memoryops.workspaceId": "{{WORKSPACE_ID}}",
-  "memoryops.apiKey": "{{API_KEY}}"
+  "memoryops.apiKey": "{{API_KEY}}",
+  "memoryops.defaultTopK": 5
 }`} />
           </Section>
 
