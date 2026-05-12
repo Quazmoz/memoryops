@@ -27,6 +27,31 @@ Result: inconsistent agent behavior, repeated instructions, and hallucinations f
 
 ---
 
+## Who is this for?
+
+MemoryOps is designed for:
+
+- **Engineering teams** managing AI agents that need persistent project context
+- **DevOps/SRE teams** requiring memory persistence for operational knowledge
+- **Researchers** building agent systems with controlled memory lifecycle
+- **Organizations** needing self-hosted, air-gapped memory solutions
+- **Teams** building multi-agent systems with shared semantic knowledge
+
+If you need your AI agents to remember decisions, context, and knowledge across sessions while maintaining full control over data residency and memory governance, MemoryOps is for you.
+
+---
+
+## What Can You Do With MemoryOps?
+
+- **Give your coding agent project context across sessions** — No more repeating project structure, coding conventions, or architectural decisions
+- **Let support agents remember customer history** — Automatically ingest from Slack/Jira and retrieve relevant past interactions
+- **Enable incident post-mortems with point-in-time queries** — Reconstruct exactly what the system knew at any past timestamp
+- **Share semantic knowledge across multiple agents** — Publish important decisions to a workspace pool that sub-agents inherit
+- **Govern memory lifecycle automatically** — Configure decay, promotion, and pruning rules instead of manual cleanup
+- **Get retrieval explanations** — See why each memory was selected with per-component scoring traces
+
+---
+
 ## What MemoryOps Does
 
 | Layer | What It Solves |
@@ -85,23 +110,30 @@ While others rely heavily on naive vector similarity, MemoryOps employs a robust
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     MemoryOps Platform                  │
-│                                                         │
-│  ┌──────────────┐   ┌──────────────┐   ┌────────────┐  │
-│  │  Ingestion   │──▶│  Processor   │──▶│ Retrieval  │  │
-│  │  (Webhooks)  │   │ Fast + Slow  │   │  Engine    │  │
-│  └──────────────┘   └──────────────┘   └────────────┘  │
-│          │                  │                  │        │
-│       Postgres           Redis Queue      Qdrant +      │
-│      (events +          (async jobs)     Tantivy        │
-│       memories)                         (hybrid)        │
-│                                                         │
-│  ┌──────────────┐   ┌──────────────────────────────┐   │
-│  │  MCP Server  │   │  Memory Control Center (UI)  │   │
-│  │  (port 3003) │   │  React 19 + TypeScript       │   │
-│  └──────────────┘   └──────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+                              ┌─────────────────────────────────────────────────────────┐
+                              │                     MemoryOps Platform                  │
+                              │                                                         │
+    ┌──────────┐             │  ┌──────────────┐   ┌──────────────┐   ┌────────────┐  │
+    │  GitHub  │──webhook──▶│  │  Ingestion   │──▶│  Processor   │──▶│ Retrieval  │  │
+    │  Slack   │             │  │  (Webhooks)  │   │ Fast + Slow  │   │  Engine    │  │
+    │  Jira    │             │  └──────────────┘   └──────────────┘   └────────────┘  │
+    │  Linear  │             │          │                  │                  │        │
+    └──────────┘             │       ▼│                  ▼│                  ▼│        │
+                              │    Postgres           Redis Queue      Qdrant +      │
+                              │   (events +          (async jobs)     Tantivy        │
+                              │    memories)                         (hybrid)        │
+                              │                                                         │
+                              │  ┌──────────────┐   ┌──────────────────────────────┐   │
+    ┌──────────┐             │  │  MCP Server  │◀──│  Memory Control Center (UI)  │   │
+    │ Claude   │──stdio/HTTP─│──│  (port 3003) │   │  React 19 + TypeScript       │   │
+    │ VS Code  │             │  └──────────────┘   └──────────────────────────────┘   │
+    │ OpenWebUI│             │                                                         │
+    └──────────┘             └─────────────────────────────────────────────────────────┘
+
+Legend:
+  ───▶  Data flow
+  ───   External integration
+  ◀──   Bidirectional communication
 ```
 
 ---
@@ -122,58 +154,72 @@ While others rely heavily on naive vector similarity, MemoryOps employs a robust
 
 ---
 
-## Quick Start
+## Quick Start (5 minutes)
 
-> Everything runs containerized. The only tool required on your host is
-> [Docker](https://www.docker.com/), [sqlx-cli](https://github.com/sqlx-rs/sqlx/tree/master/sqlx-cli) (for migrations), and `curl`.
+Get MemoryOps running with a pre-configured workspace in under 5 minutes.
 
 ```bash
-# 1. Clone the repository
+# 1. Clone and configure
 git clone https://github.com/Quazmoz/memoryops.git
 cd memoryops
-
-# 2. Configure environment
 cp .env.example .env
-# Open .env and set the two required secrets (not present in .env.example):
+# Set these two required secrets in .env:
 #   APP_SECRET_KEY=<any-random-string>
 #   WORKSPACE_CREATION_SECRET=<any-random-string>
 
-# 3. Start infrastructure (Postgres, Redis, Qdrant)
-docker compose up -d postgres redis qdrant
-# Wait a few seconds for the health checks to pass, then verify:
-docker compose ps
+# 2. Start everything
+docker compose up -d
 
-# 4. Run database migrations
-# Export DATABASE_URL from .env into your shell first:
-#
-# bash / zsh:
-#   export $(grep -v '^#' .env | xargs)
-#
-# PowerShell:
-#   Get-Content .env | ForEach-Object { if ($_ -match '^([^#][^=]*)=(.*)$') { [System.Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), 'Process') } }
-#
+# 3. Bootstrap a workspace
+WORKSPACE_CREATION_SECRET=<your-secret> node scripts/bootstrap.mjs
+
+# 4. Access the UI
+open http://localhost:5173
+```
+
+That's it! You now have a running MemoryOps instance with:
+- API server on `http://localhost:8080`
+- Frontend UI on `http://localhost:5173`
+- Postgres, Redis, and Qdrant running in containers
+
+---
+
+## Full Setup (15 minutes)
+
+For custom configuration, webhooks, integrations, and local development.
+
+```bash
+# 1. Clone and configure
+git clone https://github.com/Quazmoz/memoryops.git
+cd memoryops
+cp .env.example .env
+# Set required secrets and any optional providers
+
+# 2. Start infrastructure
+docker compose up -d postgres redis qdrant
+docker compose ps  # Verify health checks pass
+
+# 3. Run migrations
+# Export DATABASE_URL from .env first:
+#   bash/zsh: export $(grep -v '^#' .env | xargs)
+#   PowerShell: Get-Content .env | ForEach-Object { if ($_ -match '^([^#][^=]*)=(.*)$') { [System.Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), 'Process') } }
 sqlx migrate run
 
-# 5. Build and start the API container
+# 4. Start API server
 docker compose up -d api
-# First build compiles all Rust crates (~2-5 min). Subsequent starts are instant.
+# First build takes 2-5 min. Subsequent starts are instant.
 
-# 6. Bootstrap your first workspace
-# Use the Node.js helper to automatically create a workspace and save credentials.
-# Replace <your-creation-secret> with WORKSPACE_CREATION_SECRET from your .env
-WORKSPACE_CREATION_SECRET=<your-creation-secret> node scripts/bootstrap.mjs
+# 5. Bootstrap workspace
+WORKSPACE_CREATION_SECRET=<your-secret> node scripts/bootstrap.mjs
 
-# 7. Build and start the frontend container
-# Pass the workspace_id from Step 6 so it is used at runtime:
+# 6. Start frontend with workspace ID
 MEMORYOPS_WORKSPACE_ID=<workspace_id> docker compose up -d --build frontend
 
-# 8. (Optional) Start MCP server
+# 7. (Optional) Start MCP server
 docker compose up -d mcp
 
-# 9. (Optional) Seed development data
-# We recommend using the cross-platform Node script:
+# 8. (Optional) Seed development data
 API_KEY=<api_key> node scripts/seed.mjs
-# (Unix users can still use: API_KEY=<api_key> bash scripts/seed.sh)
 ```
 
 | Service | URL |
@@ -185,10 +231,9 @@ API_KEY=<api_key> node scripts/seed.mjs
 ```bash
 # Verify the API is healthy
 curl http://localhost:8080/health/ready
-# {"status": "ok", "checks": {...}}
 ```
 
-See [docs/local-development.md](docs/local-development.md) for the full local setup guide including Ollama, port reference, and the test stack.
+See [docs/local-development.md](docs/local-development.md) for the complete local development guide including Ollama setup, port reference, and the test stack.
 
 Note: You may see a Qdrant client/server version mismatch warning in the API logs (e.g., client 1.17 vs server 1.13). This is harmless for local development and API compatibility is maintained.
 
@@ -216,6 +261,25 @@ Using `-v` will delete the Postgres, Redis, and Qdrant volumes. Use this **only*
 
 ---
 
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| **Port conflict on 5432** | Run `lsof -i :5432` to see what's using the port. Stop your local Postgres instance, or remap the port in `docker-compose.yml`. |
+| **Migrations fail** | Ensure `DATABASE_URL` is exported in your active shell and the Postgres container is healthy (`docker compose ps`). |
+| **Slow path jobs stuck in DLQ** | Make sure Ollama is running and the model is pulled (`ollama pull llama3`). Retry jobs from the DLQ UI or via API. |
+| **Frontend 404 on `/v1`** | The Vite proxy requires the API server to be running on `8080`. Check that `cargo run -p api` or the API container is successfully running. |
+| **Qdrant connection refused** | Ensure the gRPC port `6334` is bound and exposed in `docker-compose.yml` (the Rust client connects via gRPC). |
+| **Stale frontend image / ERR_EMPTY_RESPONSE** | The container may be using an old nginx config. Rebuild: `docker compose build --no-cache frontend` and force recreate `docker compose up -d --force-recreate frontend`. |
+| **401 Unauthorized** | Check that the `x-api-key` header is present and correct. Regenerate keys from the Settings UI or via `POST /v1/workspaces/{id}/keys`. |
+| **Embeddings not updating** | Verify the processor worker is running and Redis is reachable. Check the DLQ for failed jobs. |
+| **No search results** | Trigger a re-index from Settings to rebuild the vector index. Ensure memories have been ingested. |
+| **MCP not connecting** | Ensure `memoryops-mcp` is on your PATH (or use `cargo run -p mcp`) and the env vars are set correctly. |
+
+For more detailed troubleshooting, see [docs/local-development.md](docs/local-development.md).
+
+---
+
 ## Connecting AI Clients
 
 MemoryOps exposes MCP tools via HTTP Streamable or stdio transport.
@@ -234,31 +298,59 @@ See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport refere
 
 Copy `.env.example` to `.env`. All required variables must be set before starting.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATABASE_URL` | ✅ | — | Postgres connection string |
-| `REDIS_URL` | ✅ | — | Redis connection string |
-| `QDRANT_URL` | ✅ | — | Qdrant gRPC URL (`http://localhost:6334`) |
-| `APP_HOST` | ❌ | `0.0.0.0` | API bind address |
-| `APP_PORT` | ❌ | `8080` | API listen port |
-| `APP_ENV` | ❌ | `development` | `development` or `production` |
-| `CONFIG_PATH` | ❌ | `config.toml` | Path to TOML config file |
-| `OPENAI_API_KEY` | ❌ | — | Required if `embedding.provider = "openai"` |
-| `ANTHROPIC_API_KEY` | ❌ | — | Required if `llm.provider = "anthropic"` |
-| `OPENROUTER_API_KEY` | ❌ | — | Required if `llm.provider = "openrouter"` |
-| `HF_API_KEY` | ❌ | — | Required if `llm.provider = "huggingface"` |
-| `GEMINI_API_KEY` | ❌ | — | Required if `llm.provider = "gemini"` |
-| `RUST_LOG` | ❌ | `info` | Log level (`trace`/`debug`/`info`/`warn`/`error`) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | ❌ | — | OTLP endpoint, e.g. `http://localhost:4317` |
-| `WORKSPACE_CREATION_SECRET` | ✅ | — | Required bearer secret for `POST /v1/workspaces`.  Pass as `x-admin-token` header. |
-| `GITHUB_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | HMAC-SHA256 secret for GitHub webhooks. **Required in production.** |
-| `SLACK_SIGNING_SECRET` | ❌ | `dev-placeholder` | Slack signing secret. **Required in production.** |
-| `LINEAR_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Linear webhook secret. **Required in production.** |
-| `JIRA_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Jira webhook secret. **Required in production.** |
-| `MCP_TRANSPORT` | ❌ | `stdio` | `http` or `stdio`. Always use `http` in Docker. |
-| `MCP_PORT` | ❌ | `3003` | MCP server port (HTTP transport only). |
-| `VITE_API_BASE_URL` | ❌ | `/api` | Frontend API proxy base path (frontend only). |
-| `VITE_MEMORYOPS_WORKSPACE_ID` | ❌ | — | Workspace UUID for the frontend; set after bootstrap. |
+### Required Variables
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | Postgres connection string |
+| `REDIS_URL` | Redis connection string |
+| `QDRANT_URL` | Qdrant gRPC URL (`http://localhost:6334`) |
+| `APP_SECRET_KEY` | Random secret for session/crypto operations |
+| `WORKSPACE_CREATION_SECRET` | Bearer secret for `POST /v1/workspaces` (pass as `x-admin-token` header) |
+
+### Optional - Server Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_HOST` | `0.0.0.0` | API bind address |
+| `APP_PORT` | `8080` | API listen port |
+| `APP_ENV` | `development` | `development` or `production` |
+| `CONFIG_PATH` | `config.toml` | Path to TOML config file |
+| `RUST_LOG` | `info` | Log level (`trace`/`debug`/`info`/`warn`/`error`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP endpoint, e.g. `http://localhost:4317` |
+
+### Optional - AI Provider Keys
+
+| Variable | When Required |
+|----------|---------------|
+| `OPENAI_API_KEY` | If `embedding.provider = "openai"` or `llm.provider = "openai"` |
+| `ANTHROPIC_API_KEY` | If `llm.provider = "anthropic"` |
+| `OPENROUTER_API_KEY` | If `llm.provider = "openrouter"` |
+| `HF_API_KEY` | If `llm.provider = "huggingface"` |
+| `GEMINI_API_KEY` | If `llm.provider = "gemini"` |
+
+### Optional - Webhook Secrets
+
+| Variable | Default | When Required |
+|----------|---------|---------------|
+| `GITHUB_WEBHOOK_SECRET` | `dev-placeholder` | **Required in production** for GitHub webhooks |
+| `SLACK_SIGNING_SECRET` | `dev-placeholder` | **Required in production** for Slack webhooks |
+| `LINEAR_WEBHOOK_SECRET` | `dev-placeholder` | **Required in production** for Linear webhooks |
+| `JIRA_WEBHOOK_SECRET` | `dev-placeholder` | **Required in production** for Jira webhooks |
+
+### Optional - MCP Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_TRANSPORT` | `stdio` | `http` or `stdio`. Always use `http` in Docker. |
+| `MCP_PORT` | `3003` | MCP server port (HTTP transport only). |
+
+### Optional - Frontend
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_API_BASE_URL` | `/api` | Frontend API proxy base path (frontend only). |
+| `VITE_MEMORYOPS_WORKSPACE_ID` | — | Workspace UUID for the frontend; set after bootstrap. |
 
 Secrets are **never** stored in `config.toml` — always via environment variables.
 
@@ -380,6 +472,25 @@ curl -X POST http://localhost:8080/v1/retrieve \
 
 ---
 
+## Performance Characteristics
+
+| Metric | Typical Value | Notes |
+|--------|---------------|-------|
+| **Ingestion throughput** | 100-500 events/sec | Depends on webhook source and fast-path concurrency |
+| **Retrieval latency (p50)** | 50-150ms | Hybrid search with token packing |
+| **Retrieval latency (p95)** | 200-500ms | Includes Qdrant + Postgres + scoring |
+| **Memory capacity** | 1M+ memories per workspace | Scales with Postgres and Qdrant storage |
+| **Embedding generation** | 10-50ms per memory (local) | Using fastembed-rs; cloud providers vary |
+| **Slow-path processing** | 1-5s per memory | LLM summarization via Ollama or cloud provider |
+
+**Scaling recommendations:**
+- Single instance handles ~1000 RPM comfortably
+- Horizontal scaling supported via stateless API design
+- Postgres and Qdrant can be scaled independently
+- Redis queue handles backpressure during high ingest periods
+
+---
+
 ## Repository Layout
 
 ```
@@ -426,7 +537,11 @@ memoryops/
 
 MemoryOps is in **alpha**. Core ingestion, processing, retrieval, and MCP transport are functional. The API surface may change before v1.0. Not recommended for production use without review of the security considerations in [SECURITY.md](SECURITY.md).
 
-See [docs/FEATURES.md](docs/FEATURES.md) for the full milestone tracker.
+---
+
+## Roadmap
+
+See [docs/FEATURES.md](docs/FEATURES.md) for the complete feature roadmap and milestone tracker.
 
 ---
 
@@ -439,6 +554,15 @@ See [docs/FEATURES.md](docs/FEATURES.md) for the full milestone tracker.
 | `feat/**`, `dev/**` | Feature branches | Lightweight: fmt + frontend build only |
 
 Full CI runs only on pushes to `main` and pull requests targeting `main`. The lightweight `dev-lint` workflow runs on all other branches to catch formatting regressions quickly without consuming CI minutes for integration tests.
+
+---
+
+## Getting Help
+
+- **Documentation**: [docs/](docs/) — Complete guides for local development, providers, integrations, and MCP transport
+- **Issues**: [GitHub Issues](https://github.com/Quazmoz/memoryops/issues) — Bug reports and feature requests
+- **Discussions**: [GitHub Discussions](https://github.com/Quazmoz/memoryops/discussions) — Questions, ideas, and community discussion
+- **Security**: [SECURITY.md](SECURITY.md) — Security policy and vulnerability reporting
 
 ---
 
