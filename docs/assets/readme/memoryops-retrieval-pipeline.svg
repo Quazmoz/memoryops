@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600">
+<defs>
+<style>
+.bg { fill: #0d1117; }
+.box { fill: #161b22; stroke: #30363d; stroke-width: 2; rx: 8; ry: 8; }
+.lane { fill: #0d1117; stroke: #30363d; stroke-width: 1; stroke-dasharray: 5,5; rx: 8; }
+.text-title { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 24px; font-weight: bold; }
+.text-main { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: middle; }
+.text-small { fill: #8b949e; font-family: -apple-system, sans-serif; font-size: 14px; text-anchor: middle; }
+.text-left { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: start; }
+.arrow { stroke: #58a6ff; stroke-width: 2; fill: none; }
+.arrow-head { fill: #58a6ff; }
+.node-cyan { fill: #0d1117; stroke: #00e5ff; stroke-width: 2; rx: 8; }
+.node-purple { fill: #0d1117; stroke: #9d4edd; stroke-width: 2; rx: 8; }
+.node-green { fill: #0d1117; stroke: #00e676; stroke-width: 2; rx: 8; }
+.node-amber { fill: #0d1117; stroke: #ffab00; stroke-width: 2; rx: 8; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" class="arrow-head" />
+</marker>
+</defs>
+<rect width="1200" height="600" class="bg" />
+
+<rect x="50" y="100" width="150" height="400" class="lane" />
+<rect x="70" y="250" width="110" height="60" class="box" />
+<text x="125" y="275" class="text-main">Query</text>
+<text x="125" y="295" class="text-small">Agent asks</text>
+
+<rect x="250" y="100" width="200" height="400" class="lane" />
+<text x="350" y="140" class="text-main" style="fill:#8b949e">Query Scoping</text>
+<rect x="270" y="180" width="160" height="50" class="node-purple" />
+<text x="350" y="210" class="text-main">Scope Filters</text>
+<rect x="270" y="260" width="160" height="50" class="node-purple" />
+<text x="350" y="290" class="text-main">Timestamp As-Of</text>
+
+<rect x="500" y="100" width="200" height="400" class="lane" />
+<text x="600" y="140" class="text-main" style="fill:#8b949e">Engines</text>
+<rect x="520" y="180" width="160" height="50" class="node-amber" />
+<text x="600" y="210" class="text-main">Vector Semantic</text>
+<rect x="520" y="260" width="160" height="50" class="node-amber" />
+<text x="600" y="290" class="text-main">BM25 Keyword</text>
+
+<rect x="750" y="100" width="200" height="400" class="lane" />
+<text x="850" y="140" class="text-main" style="fill:#8b949e">Rank & Pack</text>
+<rect x="770" y="180" width="160" height="50" class="node-cyan" />
+<text x="850" y="210" class="text-main">RRF Hybrid Score</text>
+<rect x="770" y="260" width="160" height="50" class="node-cyan" />
+<text x="850" y="290" class="text-main">Feedback Boost</text>
+<rect x="770" y="340" width="160" height="50" class="node-cyan" />
+<text x="850" y="370" class="text-main">Token Packing</text>
+
+<rect x="1000" y="100" width="150" height="400" class="lane" />
+<rect x="1020" y="210" width="110" height="60" class="node-green" />
+<text x="1075" y="235" class="text-main">Agent Context</text>
+<text x="1075" y="255" class="text-small">Optimized msg</text>
+<rect x="1020" y="300" width="110" height="60" class="box" />
+<text x="1075" y="325" class="text-main">Retrieval Trace</text>
+<text x="1075" y="345" class="text-small">Explainability</text>
+
+<path d="M 180 280 L 250 280 L 250 205 L 270 205" class="arrow" marker-end="url(#arrow)" />
+<path d="M 180 280 L 250 280 L 250 285 L 270 285" class="arrow" marker-end="url(#arrow)" />
+
+<path d="M 430 205 L 470 205 L 470 205 L 520 205" class="arrow" marker-end="url(#arrow)" />
+<path d="M 430 285 L 470 285 L 470 285 L 520 285" class="arrow" marker-end="url(#arrow)" />
+
+<path d="M 680 205 L 720 205 L 720 205 L 770 205" class="arrow" marker-end="url(#arrow)" />
+<path d="M 680 285 L 720 285 L 720 205 L 770 205" class="arrow" marker-end="url(#arrow)" />
+
+<path d="M 850 230 L 850 260" class="arrow" marker-end="url(#arrow)" />
+<path d="M 850 310 L 850 340" class="arrow" marker-end="url(#arrow)" />
+
+<path d="M 930 365 L 970 365 L 970 240 L 1020 240" class="arrow" marker-end="url(#arrow)" />
+<path d="M 930 365 L 970 365 L 970 330 L 1020 330" class="arrow" marker-end="url(#arrow)" />
+
+</svg>

@@ -13,10 +13,9 @@
 This is **not** a vector database, RAG wrapper, or agent framework.  
 This is the **control plane for what AI agents remember**.
 
-<!-- Future visual:
-docs/images/memoryops-hero-1200x600.png
-Alt: Hero banner showing MemoryOps as a central hub connecting engineering tools to AI agents.
--->
+<p align="center">
+  <img src="docs/assets/readme/memoryops-hero.png" alt="MemoryOps control plane connecting engineering activity to AI agent context" width="90%">
+</p>
 
 **Status:** MemoryOps is alpha. Core ingestion, retrieval, MCP, and control UI are functional, but APIs may change before v1.0.
 
@@ -86,50 +85,60 @@ MemoryOps is designed for:
 | **Processing** | Event normalization, entity extraction, importance scoring (fast + async LLM paths) | Enriches raw events with context and prioritizes what matters |
 | **Lifecycle** | Episodic → semantic promotion, decay, deduplication, automatic pruning | Keeps memory relevant and manageable without manual cleanup |
 
-<!-- Future visual:
-docs/images/memoryops-lifecycle-1200x600.png
-Alt: Diagram showing memory lifecycle from episodic events to semantic knowledge with promotion, decay, and pruning.
--->
+
 | **Retrieval** | Token-aware context packing with hybrid semantic + BM25 search | Returns optimal context within token budgets, not just top-K results |
 
-<!-- Future visual:
-docs/images/memoryops-retrieval-1200x600.png
-Alt: Diagram showing hybrid retrieval flow with semantic search, BM25, token packing, and feedback loop.
--->
+
 | **Feedback** | Per-memory ratings bias future retrieval via rolling relevance scores | System improves from agent and operator feedback over time |
 | **Governance** | Retrieval traces, audit log, pin/delete/merge, skills registry | Operators can inspect, control, and understand what agents remember |
 | **MCP/API** | Native Model Context Protocol server + REST API | Agents retrieve and store memory without HTTP glue code |
 | **Control UI** | Memory explorer, workspace settings, DLQ retry, health dashboard | Operators manage memory without touching the database |
 
-<!-- Future visual:
-docs/images/memoryops-ui-memory-explorer-1200x600.png
-Alt: Screenshot of MemoryOps control UI showing memory explorer, retrieval traces, and governance controls.
--->
+
 
 ---
 
-## MemoryOps vs. Verbatim-First Local Memory Systems
+## MemoryOps vs. the Field
+
+MemoryOps is designed for governed, inspectable, team-oriented agent memory. It is adjacent to vector databases, RAG wrappers, local-first memory tools, and managed memory APIs, but it focuses on the operational control plane around memory lifecycle and retrieval.
+
+### Where MemoryOps Fits
+
+<p align="center">
+  <img src="docs/assets/readme/memoryops-landscape.svg" alt="MemoryOps is optimized for governed team memory, not just raw recall or vector retrieval." width="90%">
+</p>
+
+### MemoryOps vs. Verbatim-First Local Memory
+
+<p align="center">
+  <img src="docs/assets/readme/memoryops-vs-mempalace.svg" alt="MemoryOps complements local-first memory systems by focusing on governed, team-oriented memory operations." width="90%">
+</p>
 
 Both approaches are valid. MemoryOps is optimized for teams that need governed, inspectable, multi-agent engineering memory. Verbatim-first local memory is attractive when the primary goal is faithful personal/project recall with minimal transformation.
 
-| Dimension | MemoryOps | Verbatim-first local memory systems |
+| Dimension | MemoryOps | Verbatim-first / local-first memory systems |
 |-----------|-----------|--------------------------------------|
-| **Primary goal** | Structured ingestion, lifecycle governance, and operator control for engineering agents | Local capture, verbatim storage, and semantic recall for personal/project memory |
-| **Ingestion model** | Structured webhooks from GitHub, Slack, Jira, Linear + agent observations endpoint | CLI hooks, file watching, project/session mining, local capture workflows |
-| **Memory representation** | Normalized events, extracted entities, promoted semantic knowledge | Raw/fidelitous storage with minimal transformation |
-| **Lifecycle/governance** | Episodic → semantic promotion, decay, deduplication, pruning rules | Append-first with optional cleanup; less automated lifecycle management |
-| **Retrieval explainability** | Per-component scoring traces, feedback loops, relevance scoring | Semantic similarity scores; less granular traceability |
-| **Operator control** | Control UI for inspection, pin/delete/merge, audit logs, skills registry | CLI-focused; less centralized operator visibility |
-| **Multi-agent/team use** | Workspace pools, inheritance, multi-agent memory sharing | Primarily personal/project-scoped; less team workflow integration |
-| **Self-hosting/data control** | Full self-hosted stack (Postgres, Redis, Qdrant) with air-gapped support | Local-first by design; data stays on-device |
-| **Best fit** | Engineering teams needing governed, multi-agent memory with lifecycle controls | Individuals needing faithful local recall with minimal infrastructure |
+| **Primary goal** | Governed engineering memory operations | Faithful local recall |
+| **Ingestion model** | Structured webhooks (GitHub, Jira) + Observations | Project/session mining, diaries, local capture |
+| **Memory representation** | Normalized episodic events → Semantic knowledge | Raw fidelity, minimal transformation |
+| **Lifecycle governance** | Decay, pruning, pinning, workspace publishing | Append-first, optional cleanup |
+| **Retrieval transparency** | Per-component scoring traces, feedback loops | Semantic similarity scores; less granular traceability |
+| **Team/agent scope** | Workspace pools, inheritance, multi-agent sharing | Primarily personal/project-scoped |
+| **Best fit** | Teams needing inspectable, governed agent memory | Individuals needing faithful local recall with minimal infrastructure |
 
-<!-- Future visual:
-docs/images/memoryops-vs-verbatim-memory-800x400.png
-Alt: Comparison chart showing MemoryOps vs verbatim-first local memory systems across key dimensions.
--->
+**Comparison discipline:** MemoryOps avoids benchmark claims unless workloads, baselines, and scoring methods are reproducible. The comparison here focuses on architecture, control surfaces, and operational fit.
 
-**Comparison discipline:** MemoryOps avoids benchmark claims until methodology, workloads, and comparison baselines are reproducible. This README focuses on architecture, control surfaces, and operational fit.
+### Retrieval Strategy
+
+<p align="center">
+  <img src="docs/assets/readme/memoryops-retrieval-pipeline.svg" alt="Retrieval combines hybrid search, feedback, and token-aware packing with explainable traces." width="90%">
+</p>
+
+### Memory Lifecycle
+
+<p align="center">
+  <img src="docs/assets/readme/memoryops-lifecycle.svg" alt="MemoryOps treats memory as an operational lifecycle, not an append-only transcript." width="90%">
+</p>
 
 ---
 
@@ -144,63 +153,31 @@ Alt: Comparison chart showing MemoryOps vs verbatim-first local memory systems a
 - **Control UI** — Memory explorer, pin/delete/merge, audit log, and skills registry
 - **MCP server** — Native Model Context Protocol server for Claude Code, VS Code, Open WebUI
 
-<!-- Future visual:
-docs/images/memoryops-mcp-vscode-1200x600.png
-Alt: Screenshot showing MemoryOps MCP integration with VS Code or Claude Code.
--->
+<p align="center">
+  <img src="docs/assets/readme/memoryops-vscode-mcp.svg" alt="Editor and MCP integrations bring governed memory into coding-agent workflows." width="90%">
+</p>
 - **Self-hosted stack** — Postgres, Redis, Qdrant with optional/local provider support
 
-<!-- Future visual:
-docs/images/memoryops-self-hosted-stack-800x400.png
-Alt: Diagram showing MemoryOps self-hosted stack with Postgres, Redis, Qdrant, and optional local providers.
--->
+<p align="center">
+  <img src="docs/assets/readme/memoryops-self-hosted-stack.svg" alt="MemoryOps is designed for self-hosted environments where engineering memory must stay under operator control." width="90%">
+</p>
 - **Point-in-time queries** — Reconstruct exact memory state at any past timestamp
 
 ---
 
 ## Architecture
 
-MemoryOps follows a pipeline architecture:
+<p align="center">
+  <img src="docs/assets/readme/memoryops-architecture.svg" alt="MemoryOps architecture showing ingestion, processing, storage, retrieval, MCP, API, and UI" width="95%">
+</p>
 
-1. **Events enter** through webhooks (GitHub, Slack, Jira, Linear) or the agent observations endpoint
-2. **Events are normalized and scored** via fast-path processing and async LLM enrichment
-3. **Raw events and memory units** are stored in Postgres with full history
-4. **Async jobs** use Redis Streams for backpressure and reliability
-5. **Search** uses Qdrant (vector) and Tantivy (BM25) with hybrid retrieval
-6. **Agents retrieve context** through API or MCP server
-7. **Operators inspect and govern memory** through the control UI
+1. Engineering tools and agents send events or observations.
+2. MemoryOps normalizes, scores, and stores events.
+3. Lifecycle workers promote, decay, deduplicate, and prune memory.
+4. Retrieval combines semantic search, BM25, feedback, and token-aware packing.
+5. Agents consume context through REST or MCP.
+6. Operators inspect and govern memory through the UI.
 
-<!-- Future visual:
-docs/images/memoryops-architecture-1200x600.png
-Alt: Architecture diagram showing MemoryOps ingestion, processing, storage, retrieval, MCP, and UI.
--->
-
-```
-                              ┌─────────────────────────────────────────────────────────┐
-                              │                     MemoryOps Platform                  │
-                              │                                                         │
-    ┌──────────┐             │  ┌──────────────┐   ┌──────────────┐   ┌────────────┐  │
-    │  GitHub  │──webhook──▶│  │  Ingestion   │──▶│  Processor   │──▶│ Retrieval  │  │
-    │  Slack   │             │  │  (Webhooks)  │   │ Fast + Slow  │   │  Engine    │  │
-    │  Jira    │             │  └──────────────┘   └──────────────┘   └────────────┘  │
-    │  Linear  │             │          │                  │                  │        │
-    └──────────┘             │       ▼│                  ▼│                  ▼│        │
-                              │    Postgres           Redis Queue      Qdrant +      │
-                              │   (events +          (async jobs)     Tantivy        │
-                              │    memories)                         (hybrid)        │
-                              │                                                         │
-                              │  ┌──────────────┐   ┌──────────────────────────────┐   │
-    ┌──────────┐             │  │  MCP Server  │◀──│  Memory Control Center (UI)  │   │
-    │ Claude   │──stdio/HTTP─│──│  (port 3003) │   │  React 19 + TypeScript       │   │
-    │ VS Code  │             │  └──────────────┘   └──────────────────────────────┘   │
-    │ OpenWebUI│             │                                                         │
-    └──────────┘             └─────────────────────────────────────────────────────────┘
-
-Legend:
-  ───▶  Data flow
-  ───   External integration
-  ◀──   Bidirectional communication
-```
 
 ---
 
@@ -357,7 +334,8 @@ MemoryOps exposes MCP tools via HTTP Streamable or stdio transport.
 |--------|-------|
 | Open WebUI | [docs/integrations/openwebui.md](docs/integrations/openwebui.md) |
 | Claude Code | [docs/integrations/claude-code.md](docs/integrations/claude-code.md) |
-| GitHub Copilot / VS Code / Continue.dev | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
+| GitHub Copilot / Continue.dev | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
+| VS Code Extension | [docs/integrations/vscode-extension.md](docs/integrations/vscode-extension.md) (Early local scaffold, not Marketplace-published) |
 
 See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport reference and HTTP Streamable session lifecycle.
 
