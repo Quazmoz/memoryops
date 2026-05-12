@@ -1,0 +1,45 @@
+# docker-compose.prod.yml — Production overlay
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this file changes vs. docker-compose.yml:
+#  - Removes ALL host-port bindings for postgres, redis, and qdrant so they
+#    are only reachable inside the Docker network (not exposed to the host).
+#  - Keeps the api (8080) and frontend (5173 -> container 8080) accessible via
+#    a reverse proxy.
+#  - Expects real secrets in the environment (APP_ENV=production enforced by
+#    the API startup validator).
+#
+# Prerequisites:
+#  - Set APP_ENV=production in your .env or shell.
+#  - All webhook secrets must be real values (not dev-placeholder).
+#  - Place a reverse proxy (e.g. nginx/Caddy/Traefik) in front of port 8080
+#    and 5173 (mapped to frontend container port 8080) before exposing them to
+#    the internet.
+
+services:
+  postgres:
+    # Remove host-facing port binding; only accessible within the Docker network.
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  qdrant:
+    ports: !reset []
+
+  api:
+    # Bind only on loopback so the host reverse proxy connects locally.
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      APP_ENV: production
+
+  mcp:
+    ports:
+      - "127.0.0.1:3003:3003"
+
+  frontend:
+    ports:
+      - "127.0.0.1:5173:8080"

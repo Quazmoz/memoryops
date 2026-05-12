@@ -12,6 +12,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
+import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { useMemoryDetail, useMemoryProvenance, usePublishMemory, useUpdateMemory } from "../hooks/use-memory";
 import { formatCount, formatDateTime, formatRelativeTime, formatScore } from "../lib/format";
 import { validateImportanceScore } from "../lib/validation";
@@ -114,10 +115,28 @@ export function MemoryDetail() {
           <header className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={memory.memory_type === "semantic" ? "teal" : "rust"}>{memory.memory_type === "semantic" ? "Semantic" : "Episodic"}</Badge>
-                <Badge variant={memory.scope_visibility === "workspace" ? "green" : "gray"}>{memory.scope_visibility === "workspace" ? "Workspace Pool" : "Private"}</Badge>
-                {memory.importance_overridden ? <Badge variant="amber">overridden</Badge> : null}
-                {memory.memory_type === "semantic" && memory.corroboration_count > 1 ? <Badge variant="purple">⬡ {memory.corroboration_count} sources</Badge> : null}
+                <TooltipBadge
+                  variant={memory.memory_type === "semantic" ? "teal" : "rust"}
+                  tooltip={memory.memory_type === "semantic"
+                    ? "Durable knowledge promoted from recurring or important episodic memories."
+                    : "Short-lived event-derived memories from raw activity like commits, PRs, messages, tickets, and agent observations."}
+                >
+                  {memory.memory_type === "semantic" ? "Semantic" : "Episodic"}
+                </TooltipBadge>
+                <TooltipBadge
+                  variant={memory.scope_visibility === "workspace" ? "green" : "gray"}
+                  tooltip={memory.scope_visibility === "workspace"
+                    ? "Workspace-visible memories are available across agents and users in this workspace, not just the original private scope."
+                    : "Scoped memory. Retrieval should respect the agent, user, or repo scope attached to this memory."}
+                >
+                  {memory.scope_visibility === "workspace" ? "Workspace Pool" : "Private"}
+                </TooltipBadge>
+                {memory.importance_overridden ? <TooltipBadge variant="amber" tooltip="This memory has a manual priority override set by an operator.">Overridden</TooltipBadge> : null}
+                {memory.memory_type === "semantic" && memory.corroboration_count > 1 ? (
+                  <TooltipBadge variant="purple" tooltip="Corroborating source episodes or events that support this semantic memory.">
+                    ⬡ {memory.corroboration_count} sources
+                  </TooltipBadge>
+                ) : null}
                 <span className="text-sm text-ink/55">Updated {formatDateTime(memory.updated_at)}</span>
                 {memory.promoted_at ? <span className="text-sm text-ink/55">Promoted {formatRelativeTime(memory.promoted_at)}</span> : null}
               </div>
@@ -125,15 +144,25 @@ export function MemoryDetail() {
             </div>
             <div className="flex flex-wrap justify-end gap-2">
               {memory.memory_type === "semantic" && memory.scope_visibility === "private" ? (
-                <Button type="button" variant="secondary" data-testid="detail-publish-button" onClick={publishToWorkspacePool} disabled={publishMemory.isPending}>
-                  <Share2 className="h-4 w-4" aria-hidden="true" />
-                  Publish
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button type="button" variant="secondary" data-testid="detail-publish-button" onClick={publishToWorkspacePool} disabled={publishMemory.isPending}>
+                      <Share2 className="h-4 w-4" aria-hidden="true" />
+                      Publish
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Makes this semantic memory available to the wider workspace pool so other agents and scopes can retrieve it.</TooltipContent>
+                </Tooltip>
               ) : null}
-              <Button type="button" variant={memory.pinned ? "secondary" : "default"} data-testid="detail-pin-toggle" onClick={togglePinned} disabled={updateMemory.isPending}>
-                <Check className="h-4 w-4" aria-hidden="true" />
-                {memory.pinned ? "Pinned" : "Pin"}
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button type="button" variant={memory.pinned ? "secondary" : "default"} data-testid="detail-pin-toggle" onClick={togglePinned} disabled={updateMemory.isPending}>
+                    <Check className="h-4 w-4" aria-hidden="true" />
+                    {memory.pinned ? "Pinned" : "Pin"}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{memory.pinned ? "Pinned memories stay protected from normal decay and pruning." : "Protect this memory from normal decay and pruning."}</TooltipContent>
+              </Tooltip>
             </div>
           </header>
 
@@ -143,7 +172,10 @@ export function MemoryDetail() {
           <section className="grid gap-4 xl:grid-cols-[1fr_22rem]">
             <Card>
               <CardHeader>
-                <CardTitle>Content</CardTitle>
+                <CardTitle className="flex items-center gap-1.5">
+                  <span>Content</span>
+                  <HelpTooltip label="Content">The normalized memory text that retrieval and lifecycle logic operate on.</HelpTooltip>
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="whitespace-pre-wrap rounded-lg border border-line bg-soft p-4 text-sm leading-6 text-ink">{memory.content}</div>
@@ -153,12 +185,15 @@ export function MemoryDetail() {
             <div className="grid gap-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Scores</CardTitle>
+                  <CardTitle className="flex items-center gap-1.5">
+                    <span>Scores</span>
+                    <HelpTooltip label="Scores">Priority, decay, access, and relevance signals used to rank and manage this memory.</HelpTooltip>
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="grid gap-3">
-                  <ScoreLine label="Importance" value={formatScore(memory.importance_score)} />
-                  <ScoreLine label="Decay" value={formatScore(memory.decay_score)} />
-                  <ScoreLine label="Access count" value={formatCount(memory.access_count)} />
+                  <ScoreLine label="Importance" helpText="Average priority score used by retrieval, lifecycle, and promotion logic." value={formatScore(memory.importance_score)} />
+                  <ScoreLine label="Decay" helpText="How strongly this memory is aging out of retrieval. Lower scores are more likely to be pruned or deprioritized." value={formatScore(memory.decay_score)} />
+                  <ScoreLine label="Access count" helpText="How many times retrieval or operator workflows have accessed this memory." value={formatCount(memory.access_count)} />
                   {memory.promoted_at ? <ScoreLine label="Promoted" value={formatRelativeTime(memory.promoted_at)} /> : null}
                   <RelevanceMeter score={memory.relevance_score} />
                 </CardContent>
@@ -170,7 +205,10 @@ export function MemoryDetail() {
           <section className="grid gap-4 xl:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>Entities</CardTitle>
+                <CardTitle className="flex items-center gap-1.5">
+                  <span>Entities</span>
+                  <HelpTooltip label="Entities">Extracted structured topics, repositories, people, or labels associated with this memory.</HelpTooltip>
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {memory.entities && memory.entities.length > 0 ? (
@@ -187,13 +225,16 @@ export function MemoryDetail() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Scope</CardTitle>
+                <CardTitle className="flex items-center gap-1.5">
+                  <span>Scope</span>
+                  <HelpTooltip label="Scope">Where this memory is allowed to apply. Retrieval should respect these workspace, agent, user, and repo boundaries.</HelpTooltip>
+                </CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 sm:grid-cols-2">
-                <ScopeField label="workspace_id" value={scope.workspace_id} />
-                <ScopeField label="agent_id" value={scope.agent_id ?? "workspace-wide"} />
-                <ScopeField label="user_id" value={scope.user_id ?? "all users"} />
-                <ScopeField label="repo" value={scope.repo ?? "all repos"} />
+                <ScopeField label="workspace_id" helpText="Workspace boundary for this memory record." value={scope.workspace_id} />
+                <ScopeField label="agent_id" helpText="Agent scope attached to this memory, if any." value={scope.agent_id ?? "workspace-wide"} />
+                <ScopeField label="user_id" helpText="User scope attached to this memory, if any." value={scope.user_id ?? "all users"} />
+                <ScopeField label="repo" helpText="Repository scope attached to this memory, if any." value={scope.repo ?? "all repos"} />
               </CardContent>
             </Card>
           </section>
@@ -201,7 +242,10 @@ export function MemoryDetail() {
           <section data-testid="provenance-panel">
             <Card>
               <CardHeader>
-                <CardTitle>Lineage</CardTitle>
+                <CardTitle className="flex items-center gap-1.5">
+                  <span>Lineage</span>
+                  <HelpTooltip label="Lineage">Shows how this memory was created, promoted, merged, accessed, or derived from source events.</HelpTooltip>
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {provenanceQuery.isLoading ? <Skeleton className="h-48 w-full" /> : null}
@@ -214,7 +258,10 @@ export function MemoryDetail() {
           <section className="grid gap-4 xl:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>Tags</CardTitle>
+                <CardTitle className="flex items-center gap-1.5">
+                  <span>Tags</span>
+                  <HelpTooltip label="Tags">Operator and system labels that help organize, filter, and retrieve this memory.</HelpTooltip>
+                </CardTitle>
               </CardHeader>
               <CardContent className="grid gap-4">
                 <div className="flex min-h-9 flex-wrap gap-2">
@@ -253,7 +300,10 @@ export function MemoryDetail() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Importance override</CardTitle>
+                <CardTitle className="flex items-center gap-1.5">
+                  <span>Importance override</span>
+                  <HelpTooltip label="Importance override">Manual operator override for the memory's priority. Use sparingly for rules, decisions, or high-value context.</HelpTooltip>
+                </CardTitle>
               </CardHeader>
               <CardContent className="grid gap-4">
                 <label className="grid gap-2 text-sm text-ink/70">
@@ -282,8 +332,28 @@ export function MemoryDetail() {
           </section>
 
           <section className="grid gap-4 xl:grid-cols-2">
-            <EmptyState title="Version History" message="Available in M6" />
-            <EmptyState title="Retrieval Traces" message="Available in M6" />
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
+                  <span>Version History</span>
+                  <HelpTooltip label="Version History">Future operator view for how this memory changed across edits, merges, and overrides.</HelpTooltip>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <EmptyState title="Version History" message="Available in M6" />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
+                  <span>Retrieval Traces</span>
+                  <HelpTooltip label="Retrieval Traces">Future operator view for when this memory was considered, included, or excluded during retrieval packing.</HelpTooltip>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <EmptyState title="Retrieval Traces" message="Available in M6" />
+              </CardContent>
+            </Card>
           </section>
         </>
       ) : null}
@@ -421,10 +491,10 @@ function provenanceNodeTestId(id: string): string {
   return `provenance-node-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
-function ScoreLine({ label, value }: { label: string; value: string }) {
+function ScoreLine({ label, value, helpText }: { label: string; value: string; helpText?: string }) {
   return (
     <div className="flex items-center justify-between rounded-md border border-line bg-soft px-3 py-2">
-      <span className="text-sm text-ink/65">{label}</span>
+      <span className="text-sm text-ink/65">{helpText ? <InfoLabel label={label} tooltip={helpText} /> : label}</span>
       <span className="font-mono text-sm font-semibold">{value}</span>
     </div>
   );
@@ -437,7 +507,9 @@ function RelevanceMeter({ score }: { score: number }) {
   return (
     <div className="grid gap-2 rounded-md border border-line bg-soft px-3 py-2">
       <div className="flex items-center justify-between">
-        <span className="text-sm text-ink/65">Relevance</span>
+        <span className="text-sm text-ink/65">
+          <InfoLabel label="Relevance" tooltip="Current retrieval relevance score for this memory in contexts where the backend provides one." />
+        </span>
         <span className="font-mono text-sm font-semibold">{percentage}%</span>
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-white">
@@ -447,12 +519,27 @@ function RelevanceMeter({ score }: { score: number }) {
   );
 }
 
-function ScopeField({ label, value }: { label: string; value: string }) {
+function ScopeField({ label, value, helpText }: { label: string; value: string; helpText: string }) {
   return (
     <div className="min-w-0 rounded-md border border-line bg-soft p-3">
-      <p className="text-xs font-medium uppercase text-ink/45">{label}</p>
+      <p className="text-xs font-medium uppercase text-ink/45">
+        <InfoLabel label={label} tooltip={helpText} />
+      </p>
       <p className="mt-1 break-all font-mono text-xs text-ink/75">{value}</p>
     </div>
+  );
+}
+
+function TooltipBadge({ children, tooltip, variant }: { children: React.ReactNode; tooltip: React.ReactNode; variant: React.ComponentProps<typeof Badge>["variant"] }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant={variant} tabIndex={0} className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          {children}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }
 

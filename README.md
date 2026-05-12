@@ -53,7 +53,7 @@ MemoryOps provides a complete control plane for memory, surpassing traditional R
 </p>
 
 ### Self-Hosting & Data Control
-For sensitive engineering contexts, data residency is critical. MemoryOps is designed to run fully air-gapped and self-hosted with its embedded vector database, requiring zero external cloud APIs.
+For sensitive engineering contexts, data residency is critical. MemoryOps is designed to run fully air-gapped and self-hosted with its **self-hosted vector database** (Qdrant), requiring zero external cloud APIs.
 
 <p align="center">
   <img src="docs/assets/chart2-bar.png" alt="Self-Hosting and Data Control" width="80%">
@@ -159,20 +159,21 @@ docker compose up -d api
 # First build compiles all Rust crates (~2-5 min). Subsequent starts are instant.
 
 # 6. Bootstrap your first workspace
+# Use the Node.js helper to automatically create a workspace and save credentials.
 # Replace <your-creation-secret> with WORKSPACE_CREATION_SECRET from your .env
-curl -X POST http://localhost:8080/v1/workspaces \
-  -H "Content-Type: application/json" \
-  -H "x-admin-token: <your-creation-secret>" \
-  -d '{"name": "my-workspace"}'
-# Response: {"workspace_id": "...", "api_key": "mops_..."}
-# SAVE both values — the api_key is returned only once!
+WORKSPACE_CREATION_SECRET=<your-creation-secret> node scripts/bootstrap.mjs
 
 # 7. Build and start the frontend container
-# Pass the workspace_id from Step 6 so it is baked into the static build:
-VITE_MEMORYOPS_WORKSPACE_ID=<workspace_id> docker compose up -d frontend
+# Pass the workspace_id from Step 6 so it is used at runtime:
+MEMORYOPS_WORKSPACE_ID=<workspace_id> docker compose up -d --build frontend
 
-# 8. (Optional) Seed development data
-API_KEY=<api_key> bash scripts/seed.sh
+# 8. (Optional) Start MCP server
+docker compose up -d mcp
+
+# 9. (Optional) Seed development data
+# We recommend using the cross-platform Node script:
+API_KEY=<api_key> node scripts/seed.mjs
+# (Unix users can still use: API_KEY=<api_key> bash scripts/seed.sh)
 ```
 
 | Service | URL |
@@ -188,6 +189,30 @@ curl http://localhost:8080/health/ready
 ```
 
 See [docs/local-development.md](docs/local-development.md) for the full local setup guide including Ollama, port reference, and the test stack.
+
+Note: You may see a Qdrant client/server version mismatch warning in the API logs (e.g., client 1.17 vs server 1.13). This is harmless for local development and API compatibility is maintained.
+
+---
+
+## Resetting Local Environment
+
+If you experience issues like a stale frontend image (e.g. ERR_EMPTY_RESPONSE on port 5173), you can reset the non-persistent containers:
+
+```bash
+docker compose down
+docker compose build --no-cache api frontend mcp
+docker compose up -d postgres redis qdrant
+sqlx migrate run
+docker compose up -d api
+```
+
+### Full Data Wipe
+> **WARNING: Destructive Operation**
+
+```bash
+docker compose down -v
+```
+Using `-v` will delete the Postgres, Redis, and Qdrant volumes. Use this **only** if you want to permanently delete all local workspaces, memories, and start completely fresh.
 
 ---
 
@@ -225,6 +250,7 @@ Copy `.env.example` to `.env`. All required variables must be set before startin
 | `GEMINI_API_KEY` | ❌ | — | Required if `llm.provider = "gemini"` |
 | `RUST_LOG` | ❌ | `info` | Log level (`trace`/`debug`/`info`/`warn`/`error`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | ❌ | — | OTLP endpoint, e.g. `http://localhost:4317` |
+| `WORKSPACE_CREATION_SECRET` | ✅ | — | Required bearer secret for `POST /v1/workspaces`.  Pass as `x-admin-token` header. |
 | `GITHUB_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | HMAC-SHA256 secret for GitHub webhooks. **Required in production.** |
 | `SLACK_SIGNING_SECRET` | ❌ | `dev-placeholder` | Slack signing secret. **Required in production.** |
 | `LINEAR_WEBHOOK_SECRET` | ❌ | `dev-placeholder` | Linear webhook secret. **Required in production.** |
@@ -244,9 +270,12 @@ See [docs/PROVIDERS.md](docs/PROVIDERS.md) for the full LLM and embedding provid
 
 ### Create a workspace
 
+Workspace creation requires the `x-admin-token` header set to `WORKSPACE_CREATION_SECRET` (see `.env.example`).
+
 ```bash
 curl -X POST http://localhost:8080/v1/workspaces \
   -H 'Content-Type: application/json' \
+  -H 'x-admin-token: <your-WORKSPACE_CREATION_SECRET>' \
   -d '{"name": "acme-engineering"}'
 # {"workspace_id": "018f...", "api_key": "mops_018f..._..."}
 ```
@@ -383,7 +412,8 @@ memoryops/
 │   ├── openapi.yaml  # OpenAPI contract (source of truth)
 │   └── local-development.md
 ├── .env.example
-├── docker-compose.yml
+├── docker-compose.yml        # Local dev (binds ports to 127.0.0.1)
+├── docker-compose.prod.yml   # Production overlay (no host-exposed infra ports)
 ├── docker-compose.test.yml
 ├── rust-toolchain.toml
 ├── Cargo.toml        # Workspace root
@@ -397,6 +427,18 @@ memoryops/
 MemoryOps is in **alpha**. Core ingestion, processing, retrieval, and MCP transport are functional. The API surface may change before v1.0. Not recommended for production use without review of the security considerations in [SECURITY.md](SECURITY.md).
 
 See [docs/FEATURES.md](docs/FEATURES.md) for the full milestone tracker.
+
+---
+
+## Branch Strategy & CI
+
+| Branch | Purpose | CI |
+|--------|---------|-----|
+| `main` | Production-ready code | Full CI: fmt, clippy, audit, tests, coverage |
+| `development` / `staging` | Active work, staging validation | Lightweight: fmt + frontend build only |
+| `feat/**`, `dev/**` | Feature branches | Lightweight: fmt + frontend build only |
+
+Full CI runs only on pushes to `main` and pull requests targeting `main`. The lightweight `dev-lint` workflow runs on all other branches to catch formatting regressions quickly without consuming CI minutes for integration tests.
 
 ---
 

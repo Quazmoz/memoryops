@@ -11,6 +11,7 @@ import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Skeleton } from "./ui/skeleton";
+import { HelpTooltip } from "./ui/tooltip";
 
 type FeedbackPanelProps = {
   workspaceId: string;
@@ -63,7 +64,10 @@ export function FeedbackPanel({ workspaceId, memoryId, initialQueryId = "" }: Fe
     <Card data-testid="feedback-panel">
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <CardTitle>Feedback</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Feedback</span>
+            <HelpTooltip label="Feedback">Operator ratings and notes that can help tune whether this memory should be trusted, boosted, or deprioritized.</HelpTooltip>
+          </CardTitle>
           <Badge variant={avgBadge.variant} className="gap-1">
             <avgBadge.Icon className="h-3.5 w-3.5" aria-hidden="true" />
             {avgBadge.label} {avgRating.toFixed(2)}

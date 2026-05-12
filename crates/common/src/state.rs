@@ -23,6 +23,10 @@ pub struct AppState {
     pub llm_provider: Arc<dyn LlmProvider>,
     pub config: Arc<AppConfig>,
     pub github_webhook_secret: String,
+    /// Parsed `TRUSTED_PROXY_CIDRS` env var: `(network_addr, prefix_len)` pairs.
+    /// Only peers whose address falls in one of these CIDRs are trusted to set
+    /// `X-Forwarded-For`.  Empty = trust nobody (use direct peer IP only).
+    pub trusted_proxy_cidrs: Arc<Vec<(std::net::IpAddr, u8)>>,
 }
 
 pub fn build_embedding_provider(config: &AppConfig) -> Arc<dyn EmbeddingProvider> {

@@ -6,8 +6,9 @@ services:
       POSTGRES_DB: memoryops
       POSTGRES_USER: memoryops
       POSTGRES_PASSWORD: memoryops
+    # Bind to localhost only — dev convenience; use docker-compose.prod.yml for production
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -15,13 +16,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   redis:
     image: redis:7
     container_name: memoryops-redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -29,13 +31,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   qdrant:
-    image: qdrant/qdrant:latest
+    # Pin to a specific release — do not use :latest in shared environments
+    image: qdrant/qdrant:v1.13.6
     container_name: memoryops-qdrant
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
     volumes:
       - qdrant-data:/qdrant/storage
     healthcheck:
@@ -43,6 +47,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   frontend:
     build:
@@ -50,14 +55,18 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api
-        VITE_MEMORYOPS_WORKSPACE_ID: ${VITE_MEMORYOPS_WORKSPACE_ID:-}
+        # VITE_MEMORYOPS_WORKSPACE_ID is no longer baked into the image.
+        # Set MEMORYOPS_WORKSPACE_ID at runtime instead (see entrypoint.sh).
     container_name: memoryops-frontend
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:8080"
+    environment:
+      # Runtime workspace ID injected via entrypoint.sh into /config.json
+      MEMORYOPS_WORKSPACE_ID: ${MEMORYOPS_WORKSPACE_ID:-${VITE_MEMORYOPS_WORKSPACE_ID:-}}
     depends_on:
       - api
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/index.html | grep -q '<html' || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/index.html | grep -q '<html' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -68,27 +77,35 @@ services:
       context: .
     command: ["api"]
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       DATABASE_URL: postgres://memoryops:memoryops@postgres:5432/memoryops
       REDIS_URL: redis://redis:6379
       QDRANT_URL: http://qdrant:6334
       APP_HOST: 0.0.0.0
       APP_PORT: "8080"
+      APP_ENV: ${APP_ENV:-development}
       APP_SECRET_KEY: ${APP_SECRET_KEY}
+      # Webhook secrets — use real values in production (APP_ENV=production rejects dev-placeholder)
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-dev-placeholder}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-dev-placeholder}
+      LINEAR_WEBHOOK_SECRET: ${LINEAR_WEBHOOK_SECRET:-dev-placeholder}
+      JIRA_WEBHOOK_SECRET: ${JIRA_WEBHOOK_SECRET:-dev-placeholder}
       WORKSPACE_CREATION_SECRET: ${WORKSPACE_CREATION_SECRET}
+      # Trusted reverse-proxy CIDRs for X-Forwarded-For (comma-separated CIDR notation)
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.1/32}
     depends_on:
       - postgres
       - redis
       - qdrant
+    restart: unless-stopped
 
   mcp:
     build:
       context: .
     command: ["mcp"]
     ports:
-      - "3003:3003"
+      - "127.0.0.1:3003:3003"
     environment:
       DATABASE_URL: postgres://memoryops:memoryops@postgres:5432/memoryops
       REDIS_URL: redis://redis:6379
@@ -99,6 +116,7 @@ services:
     depends_on:
       - postgres
       - redis
+    restart: unless-stopped
 
 volumes:
   postgres-data:

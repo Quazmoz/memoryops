@@ -7,8 +7,8 @@ use std::{
 use anyhow::anyhow;
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
-    http::{header::HeaderName, HeaderMap, StatusCode},
+    extract::{connect_info::ConnectInfo, Path, Query, State},
+    http::{header::HeaderName, HeaderMap, Request, StatusCode},
     response::IntoResponse,
     Extension, Json,
 };
@@ -39,7 +39,6 @@ pub const MAX_IMPORT_BODY_BYTES: usize = 50 * 1024 * 1024;
 const WORKSPACE_CREATE_RATE_LIMIT_CAPACITY: i64 = 5;
 const WORKSPACE_CREATE_REFILL_TOKENS_PER_SEC: f64 = 5.0 / 3600.0;
 const X_ADMIN_TOKEN_HEADER: HeaderName = HeaderName::from_static("x-admin-token");
-const X_FORWARDED_FOR_HEADER: HeaderName = HeaderName::from_static("x-forwarded-for");
 const KNOWN_CONFIG_KEYS: &[&str] = &[
     "promotion_threshold",
     "dedup_cosine_threshold",
@@ -152,11 +151,27 @@ struct WorkspaceStatsRow {
 
 pub async fn create_workspace(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<CreateWorkspaceRequest>,
 ) -> AppResult<Json<CreateWorkspaceResponse>> {
     authorize_workspace_creation(&headers)?;
-    let created_from_ip = resolve_client_ip(&headers);
+    // Build a minimal Request so we can reuse the shared IP resolver.
+    let created_from_ip = {
+        let mut builder = Request::builder();
+        if let Some(xff) = headers.get("x-forwarded-for") {
+            builder = builder.header("x-forwarded-for", xff);
+        }
+        if let Some(xri) = headers.get("x-real-ip") {
+            builder = builder.header("x-real-ip", xri);
+        }
+        let mut dummy_req: Request<Body> = builder
+            .body(Body::empty())
+            .unwrap_or_else(|_| Request::new(Body::empty()));
+        dummy_req.extensions_mut().insert(ConnectInfo(peer_addr));
+        crate::middleware::rate_limit::resolve_client_ip(&dummy_req, &state.trusted_proxy_cidrs)
+            .unwrap_or_else(|| IpAddr::from([127, 0, 0, 1]))
+    };
     enforce_workspace_creation_rate_limit(&state, created_from_ip).await?;
 
     if request.name.trim().is_empty() {
@@ -578,11 +593,15 @@ async fn process_import_line(
             response.imported = response.imported.saturating_add(1);
             match state.redis.get().await {
                 Ok(mut conn) => {
-                    if let Err(error) = enqueue_slow_job(&mut *conn, memory_id, workspace_id, 0).await {
+                    if let Err(error) =
+                        enqueue_slow_job(&mut *conn, memory_id, workspace_id, 0).await
+                    {
                         tracing::warn!(error = ?error, memory_id = %memory_id, "failed to enqueue imported memory for embedding");
                     }
                 }
-                Err(error) => tracing::warn!(error = ?error, memory_id = %memory_id, "failed to get Redis connection for import enqueue"),
+                Err(error) => {
+                    tracing::warn!(error = ?error, memory_id = %memory_id, "failed to get Redis connection for import enqueue")
+                }
             }
         }
         Err(error) => {
@@ -905,36 +924,6 @@ fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
     }
 }
 
-fn resolve_client_ip(headers: &HeaderMap) -> IpAddr {
-    // 1. X-Forwarded-For (set by nginx and most CDNs)
-    if let Some(value) = headers.get(&X_FORWARDED_FOR_HEADER) {
-        if let Ok(raw) = value.to_str() {
-            if let Some(first) = raw.split(',').next() {
-                let candidate = first.trim();
-                if let Ok(ip) = candidate.parse::<IpAddr>() {
-                    return ip;
-                }
-                if let Ok(addr) = candidate.parse::<SocketAddr>() {
-                    return addr.ip();
-                }
-            }
-        }
-    }
-
-    // 2. X-Real-IP (set by some reverse proxies)
-    if let Some(value) = headers.get("x-real-ip") {
-        if let Ok(raw) = value.to_str() {
-            if let Ok(ip) = raw.trim().parse::<IpAddr>() {
-                return ip;
-            }
-        }
-    }
-
-    // 3. Local dev fallback — rate-limiting still applies but all local
-    //    requests share the same bucket, which is fine for development.
-    IpAddr::from([127, 0, 0, 1])
-}
-
 async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> AppResult<()> {
     let key = format!("workspace:create:ratelimit:{ip}");
     let now = unix_timestamp_secs()?;
@@ -1250,12 +1239,15 @@ pub async fn reindex_workspace(
     match state.redis.get().await {
         Ok(mut conn) => {
             for row in &rows {
-                if let Err(error) = enqueue_slow_job(&mut *conn, row.id, row.workspace_id, 0).await {
+                if let Err(error) = enqueue_slow_job(&mut *conn, row.id, row.workspace_id, 0).await
+                {
                     tracing::warn!(error = ?error, memory_id = %row.id, "failed to enqueue memory for reindex");
                 }
             }
         }
-        Err(error) => tracing::warn!(error = ?error, "failed to get Redis connection for reindex enqueue"),
+        Err(error) => {
+            tracing::warn!(error = ?error, "failed to get Redis connection for reindex enqueue")
+        }
     }
 
     // FIX: was `format!("user:{}", auth.key_id)` — use auth.actor() for
@@ -1278,10 +1270,12 @@ pub async fn reindex_workspace(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use std::{net::SocketAddr, sync::Arc};
 
     use axum::{
         body::{to_bytes, Body},
+        extract::connect_info::ConnectInfo,
         http::{Method, Request, StatusCode},
     };
     use common::{
@@ -1298,6 +1292,7 @@ mod tests {
     use super::*;
 
     async fn test_state(pool: PgPool) -> AppState {
+        std::env::set_var("WORKSPACE_CREATION_SECRET", "test-workspace-create-secret");
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:16379".to_owned());
         let redis = {
@@ -1334,6 +1329,7 @@ mod tests {
             )),
             config: Arc::new(config),
             github_webhook_secret: "test-secret".to_owned(),
+            trusted_proxy_cidrs: Arc::new(Vec::new()),
         }
     }
 
@@ -1452,6 +1448,32 @@ mod tests {
             Ok(request) => request,
             Err(error) => panic!("test request should build: {error}"),
         }
+    }
+
+    fn workspace_create_request(
+        name: &str,
+        peer_addr: SocketAddr,
+        x_forwarded_for: Option<&str>,
+    ) -> Request<Body> {
+        let secret = std::env::var("WORKSPACE_CREATION_SECRET")
+            .unwrap_or_else(|_| "test-workspace-create-secret".to_owned());
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/workspaces")
+            .header("content-type", "application/json")
+            .header("x-admin-token", secret);
+
+        if let Some(xff) = x_forwarded_for {
+            builder = builder.header("x-forwarded-for", xff);
+        }
+
+        let mut request =
+            match builder.body(Body::from(serde_json::json!({ "name": name }).to_string())) {
+                Ok(request) => request,
+                Err(error) => panic!("workspace create request should build: {error}"),
+            };
+        request.extensions_mut().insert(ConnectInfo(peer_addr));
+        request
     }
 
     async fn response_json(response: axum::response::Response) -> Value {
@@ -1657,10 +1679,7 @@ mod tests {
 
         assert_eq!(target["llm_provider"], serde_json::json!("openai"));
         assert_eq!(target["llm_model"], serde_json::json!("gpt-4.1"));
-        assert_eq!(
-            target["embedding_provider"],
-            serde_json::json!("openai")
-        );
+        assert_eq!(target["embedding_provider"], serde_json::json!("openai"));
         assert_eq!(
             target["embedding_model"],
             serde_json::json!("text-embedding-3-large")
@@ -1867,5 +1886,114 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         let body = response_json(response).await;
         assert!(body.get("errors").is_some());
+    }
+
+    async fn created_from_ip_for_workspace(pool: &PgPool, workspace_id: Uuid) -> String {
+        match sqlx::query_scalar::<_, Option<String>>(
+            "SELECT created_from_ip::TEXT FROM workspaces WHERE id = $1",
+        )
+        .bind(workspace_id)
+        .fetch_one(pool)
+        .await
+        {
+            Ok(Some(ip)) => ip,
+            Ok(None) => panic!("created_from_ip should be stored for workspace"),
+            Err(error) => panic!("created_from_ip query should succeed: {error}"),
+        }
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn workspace_create_uses_direct_peer_ip_without_xff(pool: PgPool) {
+        let app = crate::router(test_state(pool.clone()).await);
+        let response = match app
+            .oneshot(workspace_create_request(
+                &format!("workspace-{}", Uuid::now_v7()),
+                SocketAddr::from(([198, 51, 100, 7], 12345)),
+                None,
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("workspace request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let workspace_id = match body.get("workspace_id").and_then(Value::as_str) {
+            Some(raw) => match Uuid::parse_str(raw) {
+                Ok(workspace_id) => workspace_id,
+                Err(error) => panic!("workspace_id should be UUID: {error}"),
+            },
+            None => panic!("workspace response should include workspace_id"),
+        };
+
+        let created_from_ip = created_from_ip_for_workspace(&pool, workspace_id).await;
+        assert_eq!(created_from_ip, "198.51.100.7");
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn workspace_create_uses_xff_when_peer_is_trusted_proxy(pool: PgPool) {
+        let mut state = test_state(pool.clone()).await;
+        state.trusted_proxy_cidrs = Arc::new(vec![(
+            "127.0.0.1"
+                .parse()
+                .expect("loopback CIDR address should parse"),
+            32,
+        )]);
+        let app = crate::router(state);
+
+        let response = match app
+            .oneshot(workspace_create_request(
+                &format!("workspace-{}", Uuid::now_v7()),
+                SocketAddr::from(([127, 0, 0, 1], 12345)),
+                Some("203.0.113.9, 127.0.0.1"),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("workspace request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let workspace_id = match body.get("workspace_id").and_then(Value::as_str) {
+            Some(raw) => match Uuid::parse_str(raw) {
+                Ok(workspace_id) => workspace_id,
+                Err(error) => panic!("workspace_id should be UUID: {error}"),
+            },
+            None => panic!("workspace response should include workspace_id"),
+        };
+
+        let created_from_ip = created_from_ip_for_workspace(&pool, workspace_id).await;
+        assert_eq!(created_from_ip, "203.0.113.9");
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn workspace_create_ignores_xff_for_untrusted_peer(pool: PgPool) {
+        let app = crate::router(test_state(pool.clone()).await);
+        let response = match app
+            .oneshot(workspace_create_request(
+                &format!("workspace-{}", Uuid::now_v7()),
+                SocketAddr::from(([198, 51, 100, 20], 12345)),
+                Some("203.0.113.40"),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("workspace request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let workspace_id = match body.get("workspace_id").and_then(Value::as_str) {
+            Some(raw) => match Uuid::parse_str(raw) {
+                Ok(workspace_id) => workspace_id,
+                Err(error) => panic!("workspace_id should be UUID: {error}"),
+            },
+            None => panic!("workspace response should include workspace_id"),
+        };
+
+        let created_from_ip = created_from_ip_for_workspace(&pool, workspace_id).await;
+        assert_eq!(created_from_ip, "198.51.100.20");
     }
 }

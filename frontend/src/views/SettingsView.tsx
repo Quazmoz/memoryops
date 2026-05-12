@@ -10,6 +10,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
@@ -306,10 +307,13 @@ export function SettingsView() {
           <p className="text-sm font-medium text-accent-strong">Workspace</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Settings</h1>
         </div>
-        <Badge variant={hasApiKey ? "green" : "amber"}>
-          <ShieldCheck className="mr-1 h-3 w-3" aria-hidden="true" />
-          {hasApiKey ? "API key loaded" : "Setup needed"}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant={hasApiKey ? "green" : "amber"}>
+            <ShieldCheck className="mr-1 h-3 w-3" aria-hidden="true" />
+            {hasApiKey ? "API key loaded" : "Setup needed"}
+          </Badge>
+          <HelpTooltip label={hasApiKey ? "API key loaded" : "Setup needed"}>Shows whether this Control Center session has the credentials required to manage the active workspace.</HelpTooltip>
+        </div>
       </header>
 
       <section className="grid gap-4 lg:grid-cols-[1fr_1fr]">
@@ -320,28 +324,36 @@ export function SettingsView() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3">
-              <Field label="Workspace ID" value={workspaceId} />
-              <Field label="Key prefix" value={apiKey.slice(0, 8)} />
+              <Field label="Workspace ID" helpText="Workspace identifier used to scope API calls, retrieval, and lifecycle operations." value={workspaceId} />
+              <Field label="Key prefix" helpText="Visible prefix of the loaded API key so you can verify which credential is active without exposing the full secret." value={apiKey.slice(0, 8)} />
             </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <CardTitle>Backup</CardTitle>
+            <CardTitle className="flex items-center gap-1.5">
+              <span>Backup</span>
+              <HelpTooltip label="Backup">Export or restore workspace memories without changing backend APIs or lifecycle rules.</HelpTooltip>
+            </CardTitle>
             <Download className="h-4 w-4 text-accent-strong" aria-hidden="true" />
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                data-testid="export-jsonl-button"
-                onClick={() => exportMutation.mutate()}
-                disabled={!hasApiKey || workspaceId.trim().length === 0 || exportMutation.isPending}
-              >
-                {exportMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
-                Export JSONL
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    data-testid="export-jsonl-button"
+                    onClick={() => exportMutation.mutate()}
+                    disabled={!hasApiKey || workspaceId.trim().length === 0 || exportMutation.isPending}
+                  >
+                    {exportMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
+                    Export JSONL
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Downloads workspace memories as newline-delimited JSON for backup or migration.</TooltipContent>
+              </Tooltip>
               <input
                 ref={importFileInputRef}
                 data-testid="import-jsonl-input"
@@ -353,16 +365,21 @@ export function SettingsView() {
                   event.currentTarget.value = "";
                 }}
               />
-              <Button
-                type="button"
-                variant="secondary"
-                data-testid="import-jsonl-button"
-                onClick={chooseImportFile}
-                disabled={!hasApiKey || workspaceId.trim().length === 0 || importMutation.isPending}
-              >
-                {importMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
-                Import JSONL
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    data-testid="import-jsonl-button"
+                    onClick={chooseImportFile}
+                    disabled={!hasApiKey || workspaceId.trim().length === 0 || importMutation.isPending}
+                  >
+                    {importMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
+                    Import JSONL
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Restores memories from a previous JSONL export.</TooltipContent>
+              </Tooltip>
             </div>
             {importResult ? (
               <p className="text-sm text-ink/70">
@@ -375,14 +392,17 @@ export function SettingsView() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Promotion</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Promotion</span>
+            <HelpTooltip label="Promotion">Lifecycle controls for turning recurring episodic activity into durable semantic memory.</HelpTooltip>
+          </CardTitle>
           <GitMerge className="h-4 w-4 text-accent-strong" aria-hidden="true" />
         </CardHeader>
         <CardContent className="grid gap-5">
           <div className="grid gap-5 xl:grid-cols-2">
             <label className="grid gap-2 text-sm text-ink/70">
               <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
-                <span>Promotion threshold: {promotionThreshold.toFixed(2)}</span>
+                <InfoLabel label={`Promotion threshold: ${promotionThreshold.toFixed(2)}`} tooltip="Minimum confidence required before related episodic memories are promoted into semantic memory." />
                 {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <input
@@ -399,7 +419,7 @@ export function SettingsView() {
 
             <label className="grid gap-2 text-sm text-ink/70">
               <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
-                <span>Dedup cosine threshold: {dedupThreshold.toFixed(2)}</span>
+                <InfoLabel label={`Dedup cosine threshold: ${dedupThreshold.toFixed(2)}`} tooltip="Similarity cutoff used to avoid creating duplicate semantic memories." />
                 {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <input
@@ -416,7 +436,7 @@ export function SettingsView() {
 
             <label className="grid gap-2 text-sm text-ink/70">
               <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
-                <span>Decay half-life: {decayHalfLife}d</span>
+                <InfoLabel label={`Decay half-life: ${decayHalfLife}d`} tooltip="Number of days before normal memory priority decays by roughly half." />
                 {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <input
@@ -433,7 +453,7 @@ export function SettingsView() {
 
             <label className="grid gap-2 text-sm text-ink/70">
               <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
-                <span>Prune below: {pruningThreshold.toFixed(2)}</span>
+                <InfoLabel label={`Prune below: ${pruningThreshold.toFixed(2)}`} tooltip="Memories below this decay or priority threshold may be pruned or archived during lifecycle processing." />
                 {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <input
@@ -450,15 +470,20 @@ export function SettingsView() {
           </div>
 
           <div className="grid gap-2">
-            <Button
-              type="button"
-              data-testid="run-promotion-button"
-              onClick={() => promotionMutation.mutate()}
-              disabled={!hasApiKey || workspaceId.trim().length === 0 || promotionMutation.isPending}
-            >
-              {promotionMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
-              Run Promotion Now
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  data-testid="run-promotion-button"
+                  onClick={() => promotionMutation.mutate()}
+                  disabled={!hasApiKey || workspaceId.trim().length === 0 || promotionMutation.isPending}
+                >
+                  {promotionMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
+                  Run Promotion Now
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Manually starts a lifecycle pass to cluster episodic memories and promote durable knowledge.</TooltipContent>
+            </Tooltip>
             {promotionResult ? (
               <p className="text-sm text-ink/70">Promoted {promotionResult.units_promoted} semantic memories from {promotionResult.clusters_found} clusters</p>
             ) : null}
@@ -468,7 +493,7 @@ export function SettingsView() {
 
           <div className="grid gap-2">
             <label className="text-xs font-medium uppercase text-ink/45" htmlFor="sub-agent-pools">
-              Sub-Agent Pools
+              <InfoLabel label="Sub-Agent Pools" tooltip="Comma-separated agent pool names allowed to share memory within this workspace." />
             </label>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input
@@ -490,13 +515,18 @@ export function SettingsView() {
       {/* Contradiction Detection ─────────────────────────────────────── */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Contradiction Detection</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Contradiction Detection</span>
+            <HelpTooltip label="Contradiction Mode">Controls whether new contradictions wait for human review or resolve automatically.</HelpTooltip>
+          </CardTitle>
           <ShieldAlert className="h-4 w-4 text-accent-strong" aria-hidden="true" />
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-sm font-medium text-ink">Contradiction Mode</p>
+              <p className="text-sm font-medium text-ink">
+                <InfoLabel label="Contradiction Mode" tooltip="Choose whether contradictions are quarantined for review or auto-resolved by recency." />
+              </p>
               <p className="mt-1 text-xs text-ink/60">
                 {contradictionMode === "quarantine"
                   ? "New contradictions are flagged for manual review"
@@ -524,23 +554,32 @@ export function SettingsView() {
             </button>
           </div>
           <div className="flex items-center gap-2 text-xs text-ink/55">
-            <span className={contradictionMode === "quarantine" ? "font-semibold text-accent-strong" : ""}>Quarantine for review</span>
+            <span className={contradictionMode === "quarantine" ? "font-semibold text-accent-strong" : ""}>
+              Quarantine for review
+            </span>
+            <HelpTooltip label="Quarantine for review">New contradictions are flagged for manual operator review before any memory is archived.</HelpTooltip>
             <span>/</span>
-            <span className={contradictionMode === "auto_resolve" ? "font-semibold text-accent-strong" : ""}>Auto-resolve (newer wins)</span>
+            <span className={contradictionMode === "auto_resolve" ? "font-semibold text-accent-strong" : ""}>
+              Auto-resolve newer wins
+            </span>
+            <HelpTooltip label="Auto-resolve newer wins">When a contradiction is detected, MemoryOps keeps the newer memory and archives the older one automatically.</HelpTooltip>
           </div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Provider config</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Provider config</span>
+            <HelpTooltip label="Provider config">Embedding and LLM settings that control indexing, retrieval, and model-assisted workflows.</HelpTooltip>
+          </CardTitle>
           {configMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin text-accent-strong" aria-hidden="true" /> : <ServerCog className="h-4 w-4 text-accent-strong" aria-hidden="true" />}
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="grid gap-4">
             <div className="grid gap-2">
               <label className="text-xs font-medium uppercase text-ink/45" htmlFor="embedding-provider">
-                Embedding provider
+                <InfoLabel label="Embedding provider" tooltip="Provider used to generate embeddings for retrieval indexing." />
               </label>
               <select
                 id="embedding-provider"
@@ -555,7 +594,7 @@ export function SettingsView() {
             </div>
             <div className="grid gap-2">
               <label className="text-xs font-medium uppercase text-ink/45" htmlFor="embedding-model">
-                Embedding model
+                <InfoLabel label="Embedding model" tooltip="Specific embedding model used to vectorize workspace memories." />
               </label>
               <Input id="embedding-model" data-testid="embedding-model-input" value={embeddingModel} onChange={(event) => saveEmbeddingModel(event.target.value)} />
             </div>
@@ -564,7 +603,7 @@ export function SettingsView() {
           <div className="grid gap-4">
             <div className="grid gap-2">
               <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-provider">
-                LLM provider
+                <InfoLabel label="LLM provider" tooltip="Provider used for model-assisted MemoryOps workflows." />
               </label>
               <select
                 id="llm-provider"
@@ -580,7 +619,7 @@ export function SettingsView() {
             </div>
             <div className="grid gap-2">
               <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-model">
-                LLM model
+                <InfoLabel label="LLM model" tooltip="Specific language model used for model-assisted MemoryOps workflows." />
               </label>
               <Input id="llm-model" data-testid="llm-model-input" value={llmModel} onChange={(event) => saveLlmModel(event.target.value)} />
             </div>
@@ -591,7 +630,10 @@ export function SettingsView() {
       {/* Re-Index ──────────────────────────────────────────────────────── */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Embedding Re-Index</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Embedding Re-Index</span>
+            <HelpTooltip label="Re-Index Workspace">Clears and rebuilds embeddings using the current embedding provider and model. Required after provider or model changes.</HelpTooltip>
+          </CardTitle>
           <RefreshCw className="h-4 w-4 text-accent-strong" aria-hidden="true" />
         </CardHeader>
         <CardContent className="grid gap-4">
@@ -624,16 +666,21 @@ export function SettingsView() {
               </Button>
             </div>
           ) : (
-            <Button
-              type="button"
-              variant="secondary"
-              data-testid="reindex-button"
-              disabled={!canAct || reindexMutation.isPending}
-              onClick={() => setConfirmReindex(true)}
-            >
-              <RefreshCw className="h-4 w-4" aria-hidden="true" />
-              Re-Index Workspace
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  data-testid="reindex-button"
+                  disabled={!canAct || reindexMutation.isPending}
+                  onClick={() => setConfirmReindex(true)}
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  Re-Index Workspace
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Clears and rebuilds embeddings using the current embedding provider and model. Required after provider or model changes.</TooltipContent>
+            </Tooltip>
           )}
         </CardContent>
       </Card>
@@ -641,7 +688,10 @@ export function SettingsView() {
       {/* System Health ─────────────────────────────────────────────────── */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>System Health</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>System Health</span>
+            <HelpTooltip label="System Health">Current readiness of the services MemoryOps depends on, such as database, queue, and vector index components.</HelpTooltip>
+          </CardTitle>
           <div className="flex items-center gap-2">
             {healthQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin text-accent-strong" aria-hidden="true" /> : <Activity className="h-4 w-4 text-accent-strong" aria-hidden="true" />}
           </div>
@@ -662,15 +712,20 @@ export function SettingsView() {
                 )}>
                   {healthQuery.data.status}
                 </span>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void healthQuery.refetch()}
-                  disabled={healthQuery.isFetching}
-                >
-                  Check Now
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void healthQuery.refetch()}
+                      disabled={healthQuery.isFetching}
+                    >
+                      Check Now
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Refreshes the latest system health checks for this workspace environment.</TooltipContent>
+                </Tooltip>
               </div>
             </>
           ) : !healthQuery.isFetching ? (
@@ -683,7 +738,10 @@ export function SettingsView() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
-            <CardTitle>Compliance</CardTitle>
+            <CardTitle className="flex items-center gap-1.5">
+              <span>Compliance</span>
+              <HelpTooltip label="Compliance settings">Retention, purge, and right-to-erasure controls for regulated memory handling.</HelpTooltip>
+            </CardTitle>
             <p className="mt-1 text-xs text-ink/60">Data retention and right-to-erasure settings</p>
           </div>
           {configMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin text-accent-strong" aria-hidden="true" /> : <Shield className="h-4 w-4 text-accent-strong" aria-hidden="true" />}
@@ -691,7 +749,9 @@ export function SettingsView() {
         <CardContent className="grid gap-5">
           <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
             <div>
-              <p className="text-sm font-medium text-ink">Memory retention limit</p>
+              <p className="text-sm font-medium text-ink">
+                <InfoLabel label="Retention max age days" tooltip="Maximum age in days before old memories become eligible for retention purge." />
+              </p>
               <p className="mt-1 text-xs text-ink/60">Hard-purge memories older than this many days. Leave blank to disable.</p>
               {retentionMaxAgeDays ? (
                 <Badge variant="amber" className="mt-2">
@@ -714,7 +774,9 @@ export function SettingsView() {
 
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-sm font-medium text-ink">Include source events in purge</p>
+              <p className="text-sm font-medium text-ink">
+                <InfoLabel label="Compliance hard purge" tooltip="When enabled, compliance deletion permanently removes matching data instead of soft-deleting it. Treat as destructive." />
+              </p>
               <p className="mt-1 text-xs text-ink/60">Also delete originating webhook events on erasure and retention purge. Cannot be undone.</p>
             </div>
             <button
@@ -740,7 +802,9 @@ export function SettingsView() {
 
           <div className="grid gap-3 rounded-lg border border-line bg-soft/40 p-4">
             <div>
-              <p className="text-sm font-medium text-ink">Right to Erasure</p>
+              <p className="text-sm font-medium text-ink">
+                <InfoLabel label="Forget or erase user data" tooltip="Operator control to delete memories associated with a specific user scope." />
+              </p>
               <p className="mt-1 text-xs text-ink/60">Hard-purge all memories for a specific user ID (GDPR Article 17 / CCPA). Cannot be undone.</p>
             </div>
             {eraseNotice ? (
@@ -758,16 +822,21 @@ export function SettingsView() {
                 placeholder="user_id to erase"
                 disabled={!canAct || forgetUserMutation.isPending}
               />
-              <Button
-                type="button"
-                variant="destructive"
-                data-testid="erase-user-data-button"
-                onClick={requestEraseUserData}
-                disabled={!canAct || eraseUserId.trim().length === 0 || forgetUserMutation.isPending}
-              >
-                {forgetUserMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <AlertTriangle className="h-4 w-4" aria-hidden="true" />}
-                Erase User Data
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    data-testid="erase-user-data-button"
+                    onClick={requestEraseUserData}
+                    disabled={!canAct || eraseUserId.trim().length === 0 || forgetUserMutation.isPending}
+                  >
+                    {forgetUserMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <AlertTriangle className="h-4 w-4" aria-hidden="true" />}
+                    Erase User Data
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Deletes memories associated with the specified user scope. Treat as destructive.</TooltipContent>
+              </Tooltip>
             </div>
             {confirmEraseUserId ? (
               <div className="rounded-lg border border-rust/30 bg-orange-50 p-3">
@@ -815,10 +884,12 @@ function HealthCheckCard({ check }: { check: HealthCheck }) {
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({ label, helpText, value }: { label: string; helpText: string; value: string }) {
   return (
     <div>
-      <p className="text-xs font-medium uppercase text-ink/45">{label}</p>
+      <p className="text-xs font-medium uppercase text-ink/45">
+        <InfoLabel label={label} tooltip={helpText} />
+      </p>
       <p className="mt-1 break-all rounded-md border border-line bg-soft px-3 py-2 font-mono text-sm">{value}</p>
     </div>
   );

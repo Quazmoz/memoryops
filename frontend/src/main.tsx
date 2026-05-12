@@ -5,6 +5,8 @@ import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
 import "./index.css";
+import { TooltipProvider } from "./components/ui/tooltip";
+import { loadRuntimeConfig } from "./store/app-store";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -15,12 +17,19 @@ const queryClient = new QueryClient({
   },
 });
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </QueryClientProvider>
-  </React.StrictMode>,
-);
+// Load /config.json before mounting so the workspace ID is available on first
+// render.  Falls back gracefully to the VITE_MEMORYOPS_WORKSPACE_ID env var
+// (dev mode) when the file is absent or the fetch fails.
+loadRuntimeConfig().then(() => {
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </React.StrictMode>,
+  );
+});

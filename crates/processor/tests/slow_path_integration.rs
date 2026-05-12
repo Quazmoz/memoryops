@@ -361,6 +361,7 @@ async fn test_state(pool: PgPool) -> AppState {
         llm_provider: Arc::new(TestLlmProvider),
         config: Arc::new(config),
         github_webhook_secret: "test-secret".to_owned(),
+        trusted_proxy_cidrs: Arc::new(Vec::new()),
     }
 }
 

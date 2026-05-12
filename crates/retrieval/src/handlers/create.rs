@@ -98,11 +98,15 @@ pub async fn handle_create(
 
     match state.redis.get().await {
         Ok(mut conn) => {
-            if let Err(error) = processor::worker::enqueue_slow_job(&mut *conn, id, workspace_id, 0).await {
+            if let Err(error) =
+                processor::worker::enqueue_slow_job(&mut *conn, id, workspace_id, 0).await
+            {
                 tracing::warn!(error = ?error, memory_id = %id, "failed to enqueue memory for embedding");
             }
         }
-        Err(error) => tracing::warn!(error = ?error, memory_id = %id, "failed to get Redis connection for enqueue"),
+        Err(error) => {
+            tracing::warn!(error = ?error, memory_id = %id, "failed to get Redis connection for enqueue")
+        }
     }
 
     Ok(Json(CreateMemoryResponse { memory_id: id, id }))
