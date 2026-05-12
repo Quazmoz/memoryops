@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
 import "./index.css";
+import { TooltipProvider } from "./components/ui/tooltip";
 import { loadRuntimeConfig } from "./store/app-store";
 
 const queryClient = new QueryClient({
@@ -23,9 +24,11 @@ loadRuntimeConfig().then(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <TooltipProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </TooltipProvider>
       </QueryClientProvider>
     </React.StrictMode>,
   );

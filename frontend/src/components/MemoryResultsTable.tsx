@@ -9,6 +9,7 @@ import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Skeleton } from "./ui/skeleton";
+import { InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { EntityChip } from "./EntityChip";
 
 export type MemoryRow = MemoryUnit & {
@@ -41,20 +42,38 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
       },
       {
         id: "content",
-        header: "Memory",
+        header: () => <InfoLabel label="Memory" tooltip="Stored memory content plus its type, visibility, and protection badges." />,
         cell: ({ row }) => {
           const memory = row.original;
           return (
             <div className="min-w-[18rem] space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={memory.memory_type === "semantic" ? "teal" : "rust"}>{memoryTypeLabel(memory)}</Badge>
+                <TooltipBadge
+                  variant={memory.memory_type === "semantic" ? "teal" : "rust"}
+                  tooltip={memory.memory_type === "semantic"
+                    ? "Durable knowledge promoted from recurring or important episodic memories."
+                    : "Short-lived event-derived memories from raw activity like commits, PRs, messages, tickets, and agent observations."}
+                >
+                  {memoryTypeLabel(memory)}
+                </TooltipBadge>
                 {memory.memory_type === "semantic" && memory.corroboration_count > 1 ? (
-                  <Badge variant="purple" title={`${memory.source_episode_ids.length || memory.corroboration_count} source episodes`}>
+                  <TooltipBadge
+                    variant="purple"
+                    tooltip={`${memory.source_episode_ids.length || memory.corroboration_count} corroborating source episodes or events support this semantic memory.`}
+                  >
                     ⬡ {memory.corroboration_count} sources
-                  </Badge>
+                  </TooltipBadge>
                 ) : null}
-                {memory.scope_visibility === "workspace" ? <Badge variant="green">Workspace Pool</Badge> : null}
-                {memory.pinned ? <Badge variant="amber">Pinned</Badge> : null}
+                {memory.scope_visibility === "workspace" ? (
+                  <TooltipBadge variant="green" tooltip="Workspace-visible memories are available across agents and users in this workspace, not just the original private scope.">
+                    Workspace Pool
+                  </TooltipBadge>
+                ) : null}
+                {memory.pinned ? (
+                  <TooltipBadge variant="amber" tooltip="Pinned memories are protected from normal decay and pruning.">
+                    Pinned
+                  </TooltipBadge>
+                ) : null}
               </div>
               <p className="text-sm font-medium text-ink">{previewText(memory.content)}</p>
             </div>
@@ -63,7 +82,7 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
       },
       {
         id: "scores",
-        header: "Scores",
+        header: () => <InfoLabel label="Scores" tooltip="Importance, decay, and optional match score used to rank and pack memory into agent context." />,
         cell: ({ row }) => {
           const memory = row.original;
           return (
@@ -77,12 +96,12 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
       },
       {
         id: "entities",
-        header: "Entities",
+        header: () => <InfoLabel label="Entities" tooltip="Extracted structured topics, repositories, people, or labels associated with the memory." />,
         cell: ({ row }) => <EntityTagList memory={row.original} />,
       },
       {
         id: "updated",
-        header: "Updated",
+        header: () => <InfoLabel label="Updated" tooltip="Most recent update timestamp for the stored memory record." />,
         cell: ({ row }) => <span className="whitespace-nowrap text-xs text-ink/65">{formatDateTime(row.original.updated_at)}</span>,
       },
       ];
@@ -90,25 +109,30 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
       if (showPinControls) {
         tableColumns.push({
         id: "pin",
-        header: "Pin",
+        header: () => <InfoLabel label="Pin" tooltip="Pin or unpin a memory to control whether lifecycle pruning can age it out." />,
         cell: ({ row }) => {
           const memory = row.original;
           const Icon = memory.pinned ? PinOff : Pin;
           return (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              data-testid={`pin-toggle-${memory.id}`}
-              aria-label={memory.pinned ? "Unpin memory" : "Pin memory"}
-              disabled={pendingIds.has(memory.id)}
-              onClick={(event) => {
-                event.stopPropagation();
-                onTogglePinned?.(memory);
-              }}
-            >
-              <Icon className="h-4 w-4" aria-hidden="true" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  data-testid={`pin-toggle-${memory.id}`}
+                  aria-label={memory.pinned ? "Unpin memory" : "Pin memory"}
+                  disabled={pendingIds.has(memory.id)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onTogglePinned?.(memory);
+                  }}
+                >
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{memory.pinned ? "Removes protection so normal decay and pruning rules apply again." : "Protects this memory from normal decay and pruning."}</TooltipContent>
+            </Tooltip>
           );
         },
         });
@@ -212,5 +236,18 @@ function MemoryTableSkeleton() {
         </div>
       ))}
     </div>
+  );
+}
+
+function TooltipBadge({ children, tooltip, variant }: { children: React.ReactNode; tooltip: React.ReactNode; variant: React.ComponentProps<typeof Badge>["variant"] }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant={variant} tabIndex={0} className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          {children}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }

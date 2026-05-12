@@ -1,0 +1,112 @@
+{
+  "name": "memoryops-vscode",
+  "displayName": "MemoryOps",
+  "description": "Bring governed MemoryOps agent memory into VS Code.",
+  "version": "0.0.1",
+  "publisher": "quazmoz",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "memoryops",
+    "ai agents",
+    "mcp",
+    "memory",
+    "devops"
+  ],
+  "activationEvents": [
+    "onCommand:memoryops.testConnection",
+    "onCommand:memoryops.searchMemory",
+    "onCommand:memoryops.retrieveContextForCurrentFile",
+    "onCommand:memoryops.saveSelectionAsObservation",
+    "onCommand:memoryops.openSettings"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "memoryops.testConnection",
+        "title": "MemoryOps: Test Connection",
+        "category": "MemoryOps"
+      },
+      {
+        "command": "memoryops.searchMemory",
+        "title": "MemoryOps: Search Memory",
+        "category": "MemoryOps"
+      },
+      {
+        "command": "memoryops.retrieveContextForCurrentFile",
+        "title": "MemoryOps: Retrieve Context for Current File",
+        "category": "MemoryOps"
+      },
+      {
+        "command": "memoryops.saveSelectionAsObservation",
+        "title": "MemoryOps: Save Selection as Observation",
+        "category": "MemoryOps"
+      },
+      {
+        "command": "memoryops.openSettings",
+        "title": "MemoryOps: Open Settings",
+        "category": "MemoryOps"
+      }
+    ],
+    "configuration": {
+      "title": "MemoryOps",
+      "properties": {
+        "memoryops.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Base URL for the MemoryOps API."
+        },
+        "memoryops.workspaceId": {
+          "type": "string",
+          "default": "",
+          "description": "MemoryOps workspace UUID."
+        },
+        "memoryops.apiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "MemoryOps workspace API key. Store this in user settings, not checked-in workspace settings."
+        },
+        "memoryops.defaultTopK": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Default number of memories to request for search/retrieval commands."
+        },
+        "memoryops.defaultTokenBudget": {
+          "type": "number",
+          "default": 2048,
+          "minimum": 256,
+          "maximum": 16000,
+          "description": "Default token budget for retrieval context requests."
+        },
+        "memoryops.defaultAgentId": {
+          "type": "string",
+          "default": "vscode",
+          "description": "Agent identifier used when saving observations from VS Code."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.15",
+    "@types/vscode": "^1.93.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.6.3"
+  }
+}

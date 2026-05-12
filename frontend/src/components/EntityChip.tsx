@@ -1,4 +1,5 @@
 import { Badge } from "./ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import type { EntityType, MemoryEntity } from "../api/types";
 
 type EntityChipProps = {
@@ -9,9 +10,14 @@ export function EntityChip({ entity }: EntityChipProps) {
   const type = normalizeEntityType(entity.entity_type);
 
   return (
-    <Badge variant={entityVariant(type)} title={typeLabel(type)}>
-      {entity.value}
-    </Badge>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant={entityVariant(type)} tabIndex={0} className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          {entity.value}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent>{typeLabel(type)}</TooltipContent>
+    </Tooltip>
   );
 }
 

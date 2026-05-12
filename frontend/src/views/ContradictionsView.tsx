@@ -14,6 +14,7 @@ import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Skeleton } from "../components/ui/skeleton";
+import { HelpTooltip, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { formatDateTime, formatRelativeTime, formatScore } from "../lib/format";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
@@ -131,9 +132,14 @@ export function ContradictionsView() {
 
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Contradiction status">
         {tabs.map((tab) => (
-          <button key={tab.value} type="button" role="tab" aria-selected={status === tab.value} onClick={() => selectStatus(tab.value)} className={tabClass(status === tab.value)}>
-            {tab.label}
-          </button>
+          <Tooltip key={tab.value}>
+            <TooltipTrigger asChild>
+              <button key={tab.value} type="button" role="tab" aria-selected={status === tab.value} onClick={() => selectStatus(tab.value)} className={tabClass(status === tab.value)}>
+                {tab.label}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{statusTabTooltip(tab.value)}</TooltipContent>
+          </Tooltip>
         ))}
       </div>
 
@@ -159,7 +165,7 @@ export function ContradictionsView() {
             disabled={bulkDismissMutation.isPending}
           >
             {bulkDismissMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
-            Dismiss Selected
+            Bulk dismiss
           </Button>
           <button type="button" onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-amber-700 hover:underline">
             Clear
@@ -183,24 +189,40 @@ export function ContradictionsView() {
                       className="mr-1 h-4 w-4 rounded border-line text-accent accent-accent"
                     />
                   ) : null}
-                  <Badge variant={item.conflict_score > 0.5 ? "rust" : "amber"}>Conflict {formatScore(item.conflict_score)}</Badge>
-                  <span className="text-xs text-ink/55">Flagged {formatRelativeTime(item.created_at)}</span>
-                  <span className="text-xs text-ink/55">Similarity {formatScore(item.similarity)}</span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge variant={item.conflict_score > 0.5 ? "rust" : "amber"} tabIndex={0} className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                        Conflict {formatScore(item.conflict_score)}
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent>How strongly MemoryOps believes these memories disagree.</TooltipContent>
+                  </Tooltip>
+                  <TooltipText value="Flagged time: when MemoryOps created this contradiction review item.">
+                    <span className="text-xs text-ink/55">Flagged {formatRelativeTime(item.created_at)}</span>
+                  </TooltipText>
+                  <TooltipText value="How semantically close the two memories are. High similarity plus disagreement can indicate a true contradiction.">
+                    <span className="text-xs text-ink/55">Similarity {formatScore(item.similarity)}</span>
+                  </TooltipText>
                   {isResolved ? <Badge variant="green">{item.resolution.replace("_", " ")}</Badge> : null}
                 </div>
 
                 {item.resolution === "open" ? (
                   <div className="relative">
-                    <Button
-                      type="button"
-                      data-testid={`resolve-button-${item.id}`}
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setResolveTarget(resolveTarget === item.id ? null : item.id)}
-                    >
-                      <ChevronDown className="h-4 w-4" aria-hidden="true" />
-                      Resolve
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          data-testid={`resolve-button-${item.id}`}
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setResolveTarget(resolveTarget === item.id ? null : item.id)}
+                        >
+                          <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                          Resolve
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Choose how MemoryOps should resolve this contradiction flag.</TooltipContent>
+                    </Tooltip>
                     {resolveTarget === item.id ? (
                       <div className="absolute right-0 z-10 mt-2 w-80 rounded-lg border border-line bg-white p-3 shadow-lg">
                         <textarea
@@ -210,50 +232,43 @@ export function ContradictionsView() {
                           placeholder="Notes (optional)"
                         />
                         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          <Button
-                            type="button"
-                            size="sm"
+                          <ResolutionButton
+                            tooltip="Keep the selected memory and archive the conflicting one."
                             className="bg-green-600 text-white hover:bg-green-700"
+                            pending={resolveMutation.isPending}
                             onMouseEnter={() => setHoverResolution("keep_a")}
                             onMouseLeave={() => setHoverResolution(null)}
                             onClick={() => submitResolution(item.id, "keep_a")}
-                            disabled={resolveMutation.isPending}
                           >
-                            {resolveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />}
                             Keep A
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
+                          </ResolutionButton>
+                          <ResolutionButton
+                            tooltip="Keep the selected memory and archive the conflicting one."
                             className="bg-green-600 text-white hover:bg-green-700"
+                            pending={resolveMutation.isPending}
                             onMouseEnter={() => setHoverResolution("keep_b")}
                             onMouseLeave={() => setHoverResolution(null)}
                             onClick={() => submitResolution(item.id, "keep_b")}
-                            disabled={resolveMutation.isPending}
                           >
-                            {resolveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />}
                             Keep B
-                          </Button>
-                          <Button
-                            type="button"
+                          </ResolutionButton>
+                          <ResolutionButton
+                            tooltip="Mark this as not requiring deletion. Use when both memories can be true in different contexts."
                             variant="secondary"
-                            size="sm"
+                            pending={resolveMutation.isPending}
                             onClick={() => submitResolution(item.id, "accepted")}
-                            disabled={resolveMutation.isPending}
                           >
-                            {resolveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />}
                             Accept both
-                          </Button>
-                          <Button
-                            type="button"
+                          </ResolutionButton>
+                          <ResolutionButton
+                            tooltip="Resolve the flag without changing either memory."
                             variant="secondary"
-                            size="sm"
+                            pending={resolveMutation.isPending}
+                            icon="dismiss"
                             onClick={() => submitResolution(item.id, "dismissed")}
-                            disabled={resolveMutation.isPending}
                           >
-                            {resolveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <XCircle className="h-3.5 w-3.5" aria-hidden="true" />}
                             Dismiss flag
-                          </Button>
+                          </ResolutionButton>
                         </div>
                       </div>
                     ) : null}
@@ -264,8 +279,12 @@ export function ContradictionsView() {
               {/* Winner/loser display for resolved keep_a/keep_b flags */}
               {item.kept_memory_id ? (
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                  <span className="rounded bg-green-100 px-2 py-0.5 font-medium text-green-800">Winner: {item.kept_memory_id.slice(0, 8)}…</span>
-                  <span className="rounded bg-red-50 px-2 py-0.5 text-red-700 line-through">Archived: {item.discarded_memory_id?.slice(0, 8)}…</span>
+                  <TooltipText value="Winning memory kept after contradiction resolution.">
+                    <span className="rounded bg-green-100 px-2 py-0.5 font-medium text-green-800">Winner: {item.kept_memory_id.slice(0, 8)}…</span>
+                  </TooltipText>
+                  <TooltipText value="Conflicting memory archived after contradiction resolution.">
+                    <span className="rounded bg-red-50 px-2 py-0.5 text-red-700 line-through">Archived: {item.discarded_memory_id?.slice(0, 8)}…</span>
+                  </TooltipText>
                 </div>
               ) : null}
 
@@ -299,16 +318,22 @@ export function ContradictionsView() {
               className="h-4 w-4 rounded border-line accent-accent"
             />
             Select all visible
+            <HelpTooltip label="Select all visible">Select every currently visible contradiction so you can dismiss them in bulk.</HelpTooltip>
           </label>
         </div>
       ) : null}
 
       {nextCursor ? (
         <div className="flex justify-center">
-          <Button type="button" variant="secondary" onClick={() => setAfter(nextCursor)} disabled={contradictionsQuery.isFetching}>
-            {contradictionsQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            Load more
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="secondary" onClick={() => setAfter(nextCursor)} disabled={contradictionsQuery.isFetching}>
+                {contradictionsQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+                Load more
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Fetch the next page of contradiction flags for review.</TooltipContent>
+          </Tooltip>
         </div>
       ) : null}
     </div>
@@ -334,7 +359,10 @@ function MemoryPreview({
       )}
     >
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-semibold uppercase text-ink/45">{title}</p>
+        <p className="inline-flex items-center gap-1 text-xs font-semibold uppercase text-ink/45">
+          <span>{title}</span>
+          <HelpTooltip label={title}>{title === "Memory A" ? "First side of the flagged contradiction pair." : "Second side of the flagged contradiction pair."}</HelpTooltip>
+        </p>
         <span className="whitespace-nowrap text-xs text-ink/55">{formatDateTime(memory.created_at)}</span>
       </div>
       <p className="mt-2 text-sm leading-6 text-ink">{memory.content_preview}</p>
@@ -374,4 +402,80 @@ function errorMessage(error: unknown): string {
 
 function traceLog(_msg: string) {
   // intentionally empty; used as a no-op placeholder for future toast support
+}
+
+function statusTabTooltip(value: string): string {
+  if (value === "auto_resolved") {
+    return "Flags resolved automatically by the configured contradiction policy.";
+  }
+  if (value === "keep_a" || value === "keep_b") {
+    return "Flags resolved by keeping one memory and archiving the conflicting one.";
+  }
+  if (value === "dismissed") {
+    return "Flags resolved without changing either memory.";
+  }
+  if (value === "accepted") {
+    return "Flags marked as valid in context, so both memories remain.";
+  }
+  return "Open contradiction flags that still need operator review.";
+}
+
+function TooltipText({ value, children }: { value: string; children: React.ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          {children}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{value}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ResolutionButton({
+  children,
+  tooltip,
+  pending,
+  icon,
+  variant,
+  className,
+  onClick,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  children: React.ReactNode;
+  tooltip: string;
+  pending: boolean;
+  icon?: "dismiss";
+  variant?: React.ComponentProps<typeof Button>["variant"];
+  className?: string;
+  onClick: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant={variant}
+          size="sm"
+          className={className}
+          onMouseEnter={onMouseEnter}
+          onMouseLeave={onMouseLeave}
+          onClick={onClick}
+          disabled={pending}
+        >
+          {pending
+            ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            : icon === "dismiss"
+              ? <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+              : <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />}
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
 }

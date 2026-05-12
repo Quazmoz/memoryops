@@ -62,11 +62,11 @@ services:
       - "127.0.0.1:5173:8080"
     environment:
       # Runtime workspace ID injected via entrypoint.sh into /config.json
-      MEMORYOPS_WORKSPACE_ID: ${VITE_MEMORYOPS_WORKSPACE_ID:-}
+      MEMORYOPS_WORKSPACE_ID: ${MEMORYOPS_WORKSPACE_ID:-${VITE_MEMORYOPS_WORKSPACE_ID:-}}
     depends_on:
       - api
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/index.html | grep -q '<html' || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/index.html | grep -q '<html' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

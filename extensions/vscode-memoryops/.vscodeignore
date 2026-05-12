@@ -1,0 +1,8 @@
+src/**
+.vscode/**
+.gitignore
+tsconfig.json
+*.tsbuildinfo
+node_modules/**
+*.vsix
+.DS_Store

@@ -8,6 +8,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
+import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { useRetrieve, useRetrievalTrace } from "../hooks/use-workspace";
 import { formatCount, formatDateTime, formatScore } from "../lib/format";
 import { cn } from "../lib/utils";
@@ -95,13 +96,16 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
 
       <Card>
         <CardHeader>
-          <CardTitle>Query</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Query</span>
+            <HelpTooltip label="Query">Run a retrieval request and inspect how MemoryOps ranks and packs memory into agent context.</HelpTooltip>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <form className="grid gap-4" onSubmit={submitQuery}>
             <div className="grid gap-2">
               <label className="text-sm font-medium text-ink" htmlFor="trace-query-input">
-                Query
+                <InfoLabel label="Query" tooltip="Natural-language retrieval request sent into the MemoryOps ranking pipeline." />
               </label>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-ink/40" aria-hidden="true" />
@@ -117,16 +121,16 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
-              <ScopeInput id="trace-agent-id-input" label="Agent ID" value={agentId} onChange={setAgentId} />
-              <ScopeInput id="trace-user-id-input" label="User ID" value={userId} onChange={setUserId} />
-              <ScopeInput id="trace-repo-input" label="Repo" value={repo} onChange={setRepo} placeholder="owner/repo" />
+              <ScopeInput id="trace-agent-id-input" label="Agent ID" helpText="Restrict retrieval to memories visible to a specific agent scope." value={agentId} onChange={setAgentId} />
+              <ScopeInput id="trace-user-id-input" label="User ID" helpText="Restrict retrieval to memories visible to a specific user scope." value={userId} onChange={setUserId} />
+              <ScopeInput id="trace-repo-input" label="Repo" helpText="Restrict retrieval to memories scoped to a specific repository, usually owner/repo." value={repo} onChange={setRepo} placeholder="owner/repo" />
             </div>
             <p className="text-xs text-ink/55">Leave blank to retrieve across all scopes</p>
 
             <div className="grid gap-3 md:grid-cols-[minmax(8rem,0.8fr)_minmax(7rem,0.6fr)_minmax(9rem,0.7fr)_auto] md:items-end">
               <div className="grid gap-2">
                 <label className="text-sm font-medium text-ink" htmlFor="trace-mode-select">
-                  Mode
+                  <InfoLabel label="Mode" tooltip="Hybrid combines vector similarity and keyword ranking before final scoring. Vector uses embedding similarity. Keyword uses lexical matching for exact names, IDs, repos, and error strings." />
                 </label>
                 <select
                   id="trace-mode-select"
@@ -143,7 +147,7 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
 
               <div className="grid gap-2">
                 <label className="text-sm font-medium text-ink" htmlFor="trace-limit-input">
-                  Limit
+                  <InfoLabel label="Limit" tooltip="Maximum number of candidate memories MemoryOps should consider before final packing." />
                 </label>
                 <Input
                   id="trace-limit-input"
@@ -158,7 +162,7 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
 
               <div className="grid gap-2">
                 <label className="text-sm font-medium text-ink" htmlFor="trace-budget-input">
-                  Token budget
+                  <InfoLabel label="Token budget" tooltip="Maximum approximate context tokens MemoryOps should pack for the agent." />
                 </label>
                 <Input
                   id="trace-budget-input"
@@ -171,10 +175,15 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
                 />
               </div>
 
-              <Button type="submit" data-testid="trace-submit" disabled={!canSubmit}>
-                {retrieve.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Search className="h-4 w-4" aria-hidden="true" />}
-                Run query
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button type="submit" data-testid="trace-submit" disabled={!canSubmit}>
+                    {retrieve.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Search className="h-4 w-4" aria-hidden="true" />}
+                    Run query
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Runs the retrieval request and captures the packed results plus the scoring trace.</TooltipContent>
+              </Tooltip>
             </div>
           </form>
 
@@ -184,8 +193,14 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
 
       {retrieve.data ? (
         <section className="grid gap-4">
-          <div className="rounded-md border border-line bg-panel px-4 py-3 text-sm font-medium text-ink" data-testid="trace-summary">
-            {formatCount(packedItems.length)} memories packed · {formatCount(candidateCount)} candidates · {formatCount(tokenCount)} tokens · {formatCount(elapsedMs)}ms
+          <div className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-panel px-4 py-3 text-sm font-medium text-ink" data-testid="trace-summary">
+            <SummaryStat label="memories packed" tooltip="How many memories survived filtering and were packed into the final context." value={formatCount(packedItems.length)} />
+            <span className="text-ink/35">·</span>
+            <SummaryStat label="candidates" tooltip="Candidate memories considered before final inclusion and token-budget filtering." value={formatCount(candidateCount)} />
+            <span className="text-ink/35">·</span>
+            <SummaryStat label="tokens" tooltip="Approximate total context tokens packed into the final retrieval result." value={formatCount(tokenCount)} />
+            <span className="text-ink/35">·</span>
+            <SummaryStat label="elapsed ms" tooltip="Approximate end-to-end time the retrieval request took to execute." value={`${formatCount(elapsedMs)}ms`} />
           </div>
 
           <div className="grid gap-3">
@@ -232,9 +247,9 @@ function PackedMemoryCard({ memory, index }: { memory: PackedMemory; index: numb
           {memory.content}
         </p>
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink/60">
-          <span>RRF {rrfScore.toFixed(3)}</span>
-          <span>Importance {formatScore(memory.importance_score)}</span>
-          <span>Decay {formatScore(memory.decay_score)}</span>
+          <TraceLabelValue label="RRF" tooltip="Reciprocal Rank Fusion score used to merge ranking signals." value={rrfScore.toFixed(3)} />
+          <TraceLabelValue label="Importance" tooltip="Priority score used by retrieval, lifecycle, and promotion logic." value={formatScore(memory.importance_score)} />
+          <TraceLabelValue label="Decay" tooltip="How strongly this memory is aging out of retrieval. Lower scores are more likely to be pruned or deprioritized." value={formatScore(memory.decay_score)} />
           <span>{formatCount(tokenCount)} tokens</span>
         </div>
       </CardContent>
@@ -264,45 +279,58 @@ function TracePanel({
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <CardTitle>Trace metadata</CardTitle>
-            {trace.feedback_applied ? <Badge variant="green">Feedback applied</Badge> : null}
+            <CardTitle className="flex items-center gap-1.5">
+              <span>Trace metadata</span>
+              <HelpTooltip label="Trace metadata">Captured request metadata and ranking totals for this retrieval run.</HelpTooltip>
+            </CardTitle>
+            {trace.feedback_applied ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="green" tabIndex={0} className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">Feedback applied</Badge>
+                </TooltipTrigger>
+                <TooltipContent>Memory feedback signals were incorporated into the final retrieval scoring.</TooltipContent>
+              </Tooltip>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent>
           <dl className="grid gap-3 md:grid-cols-2">
-            <TraceMeta label="Query" value={trace.query_text ?? trace.query ?? "Not recorded"} wide />
-            <TraceMeta label="Mode" value={trace.search_mode ?? trace.mode ?? "hybrid"} />
-            <TraceMeta label="Created" value={trace.created_at ? formatDateTime(trace.created_at) : "Not recorded"} />
-            <TraceMeta label="Elapsed" value={`${formatCount(elapsedMs)}ms`} />
-            <TraceMeta label="Candidates" value={formatCount(totalCandidates)} />
-            <TraceMeta label="Included" value={formatCount(trace.included_count)} />
-            <TraceMeta label="Token budget" value={formatCount(tokenBudget)} />
-            <TraceMeta label="Tokens" value={formatCount(tokenCount)} />
+            <TraceMeta label="Query" tooltip="Natural-language retrieval request captured for this trace." value={trace.query_text ?? trace.query ?? "Not recorded"} wide />
+            <TraceMeta label="Mode" tooltip="Retrieval mode used for this run." value={trace.search_mode ?? trace.mode ?? "hybrid"} />
+            <TraceMeta label="Created" tooltip="When this trace record was captured." value={trace.created_at ? formatDateTime(trace.created_at) : "Not recorded"} />
+            <TraceMeta label="Elapsed" tooltip="Approximate execution time for the retrieval request." value={`${formatCount(elapsedMs)}ms`} />
+            <TraceMeta label="Candidates" tooltip="Total candidates evaluated before final packing." value={formatCount(totalCandidates)} />
+            <TraceMeta label="Included" tooltip="Candidates that survived filtering and were packed into the final context." value={formatCount(trace.included_count)} />
+            <TraceMeta label="Token budget" tooltip="Maximum approximate context tokens allowed for this run." value={formatCount(tokenBudget)} />
+            <TraceMeta label="Tokens" tooltip="Approximate tokens actually packed into the final result." value={formatCount(tokenCount)} />
           </dl>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Candidates</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Candidates</span>
+            <HelpTooltip label="Candidates">Each memory MemoryOps considered, how it scored, and whether it made the final packed context.</HelpTooltip>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="thin-scrollbar overflow-x-auto rounded-md border border-line">
             <table className="w-full min-w-[1120px] border-collapse text-left text-sm" data-testid="trace-candidates-table">
               <thead className="bg-soft text-xs uppercase text-ink/55">
                 <tr>
-                  <th className="px-3 py-2 font-medium">Memory ID</th>
-                  <th className="px-3 py-2 font-medium">Type</th>
-                  <th className="px-3 py-2 font-medium">Keyword</th>
-                  <th className="px-3 py-2 font-medium">Vector</th>
-                  <th className="px-3 py-2 font-medium">RRF</th>
-                  <th className="px-3 py-2 font-medium">Relevance</th>
-                  <th className="px-3 py-2 font-medium">Decay</th>
-                  <th className="px-3 py-2 font-medium">Importance</th>
-                  <th className="px-3 py-2 font-medium">Final</th>
-                  <th className="px-3 py-2 font-medium">Tokens</th>
-                  <th className="px-3 py-2 font-medium">Included</th>
-                  <th className="px-3 py-2 font-medium">Reason</th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Memory ID" tooltip="Identifier of the candidate memory evaluated during retrieval." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Type" tooltip="Whether the candidate memory is episodic or semantic." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Keyword" tooltip="Lexical matching score for exact names, IDs, repos, and strings." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Vector" tooltip="Embedding similarity score for semantic retrieval." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="RRF" tooltip="Reciprocal Rank Fusion score used to merge ranking signals." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Relevance" tooltip="Overall relevance score when the backend reports one for the candidate." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Decay" tooltip="Aging signal that can lower a memory's retrieval priority over time." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Importance" tooltip="Priority score used by retrieval, lifecycle, and promotion logic." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Final" tooltip="Final candidate score after combining ranking and memory-control signals." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Tokens" tooltip="Approximate token cost of including this memory in context." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Included" tooltip="Whether the candidate survived filtering and was packed into the final context." /></th>
+                  <th className="px-3 py-2 font-medium"><InfoLabel label="Reason" tooltip="Why the candidate was excluded or any special packing note recorded by the backend." /></th>
                 </tr>
               </thead>
               <tbody>
@@ -318,19 +346,19 @@ function TracePanel({
   );
 }
 
-function TraceMeta({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+function TraceMeta({ label, tooltip, value, wide = false }: { label: string; tooltip: string; value: string; wide?: boolean }) {
   return (
     <div className={cn("grid grid-cols-[9rem_1fr] items-start gap-3 border-b border-line/70 pb-3 last:border-b-0 md:last:border-b", wide && "md:col-span-2")}>
-      <dt className="text-sm text-ink/60">{label}</dt>
+      <dt className="text-sm text-ink/60"><InfoLabel label={label} tooltip={tooltip} /></dt>
       <dd className="min-w-0 break-words text-sm font-medium text-ink">{value}</dd>
     </div>
   );
 }
 
-function ScopeInput({ id, label, value, onChange, placeholder }: { id: string; label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+function ScopeInput({ id, label, helpText, value, onChange, placeholder }: { id: string; label: string; helpText: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
   return (
     <label className="grid gap-2 text-sm font-medium text-ink" htmlFor={id}>
-      {label}
+      <InfoLabel label={label} tooltip={helpText} />
       <Input id={id} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
     </label>
   );
@@ -354,10 +382,37 @@ function TraceCandidateRow({ candidate }: { candidate: RetrievalTraceEntry }) {
       <td className="px-3 py-3">
         <span className={cn("font-semibold", candidate.included ? "text-green-700" : "text-orange-700")}>{candidate.included ? "✓" : "✗"}</span>
       </td>
-      <td className="max-w-[14rem] px-3 py-3" title={reason || undefined}>
-        {reason ? truncate(reason, 40) : "—"}
+      <td className="max-w-[14rem] px-3 py-3">
+        {reason ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={0} className="inline-block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                {truncate(reason, 40)}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{reason}</TooltipContent>
+          </Tooltip>
+        ) : "—"}
       </td>
     </tr>
+  );
+}
+
+function SummaryStat({ label, tooltip, value }: { label: string; tooltip: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <InfoLabel label={label} tooltip={tooltip} labelClassName="text-sm font-medium" />
+      <span>{value}</span>
+    </span>
+  );
+}
+
+function TraceLabelValue({ label, tooltip, value }: { label: string; tooltip: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <InfoLabel label={label} tooltip={tooltip} labelClassName="text-xs text-ink/60" />
+      <span>{value}</span>
+    </span>
   );
 }
 

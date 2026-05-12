@@ -18,6 +18,7 @@ import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
@@ -81,32 +82,39 @@ export function Ingest() {
       <section className="grid gap-4 xl:grid-cols-[22rem_1fr]">
         <Card>
           <CardHeader className="pb-0">
-            <CardTitle>Event</CardTitle>
+            <CardTitle className="flex items-center gap-1.5">
+              <span>Event</span>
+              <HelpTooltip label="Event">Choose the source fixture and event shape you want MemoryOps to ingest.</HelpTooltip>
+            </CardTitle>
             <div className="mt-3 flex border-b border-line" role="tablist" aria-label="Webhook source">
               {webhookSources.map((source) => {
                 const active = selectedSource === source.source;
                 return (
-                  <button
-                    key={source.source}
-                    type="button"
-                    role="tab"
-                    data-testid={`source-tab-${source.source}`}
-                    aria-selected={active}
-                    onClick={() => selectSource(source.source)}
-                    className={cn(
-                      "border-b-2 px-3 pb-2 pt-1 text-sm font-medium transition-colors",
-                      active ? "border-accent text-accent-strong" : "border-transparent text-ink/55 hover:border-line hover:text-ink",
-                    )}
-                  >
-                    {source.label}
-                  </button>
+                  <Tooltip key={source.source}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        role="tab"
+                        data-testid={`source-tab-${source.source}`}
+                        aria-selected={active}
+                        onClick={() => selectSource(source.source)}
+                        className={cn(
+                          "border-b-2 px-3 pb-2 pt-1 text-sm font-medium transition-colors",
+                          active ? "border-accent text-accent-strong" : "border-transparent text-ink/55 hover:border-line hover:text-ink",
+                        )}
+                      >
+                        {source.label}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Simulates a {source.label} webhook arriving at the MemoryOps ingest pipeline.</TooltipContent>
+                  </Tooltip>
                 );
               })}
             </div>
           </CardHeader>
           <CardContent className="grid gap-4">
             <label className="grid gap-2 text-sm font-medium text-ink/70">
-              Event type
+              <InfoLabel label="Event type" tooltip="Specific webhook fixture to send for the selected integration source." />
               <select
                 data-testid="webhook-event-select"
                 value={selectedKind}
@@ -122,20 +130,30 @@ export function Ingest() {
             </label>
 
             <div className="rounded-md border border-line bg-soft p-3 text-sm">
-              <p className="text-xs font-medium uppercase text-ink/45">Actor</p>
+              <p className="text-xs font-medium uppercase text-ink/45">
+                <InfoLabel label="Actor" tooltip="Principal or system that appears to have produced the fixture event." />
+              </p>
               <p className="mt-1 font-mono">{fixture.actor}</p>
             </div>
 
-            <Button type="button" data-testid="fire-webhook-button" onClick={handleFireWebhook} disabled={mutation.isPending}>
-              <Send className="h-4 w-4" aria-hidden="true" />
-              {mutation.isPending ? "Firing" : "Fire Webhook"}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" data-testid="fire-webhook-button" onClick={handleFireWebhook} disabled={mutation.isPending}>
+                  <Send className="h-4 w-4" aria-hidden="true" />
+                  {mutation.isPending ? "Firing" : "Fire Webhook"}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Sends this fixture to the backend as if the selected integration delivered a webhook event.</TooltipContent>
+            </Tooltip>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Payload</CardTitle>
+            <CardTitle className="flex items-center gap-1.5">
+              <span>Payload</span>
+              <HelpTooltip label="Payload editor">Editable JSON fixture. Use this to test ingestion, extraction, memory creation, and error handling.</HelpTooltip>
+            </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
             <textarea
@@ -152,10 +170,22 @@ export function Ingest() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Response</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Response</span>
+            <HelpTooltip label="Response panel">Raw backend response returned after the ingest request is accepted or rejected.</HelpTooltip>
+          </CardTitle>
           <div className="flex items-center gap-2">
             <Badge variant="muted" className="capitalize">{fixture.source}</Badge>
-            {response ? <Badge data-testid="webhook-response-status" variant={response.ok ? "accent" : "rust"}>{response.status}</Badge> : null}
+            {response ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge data-testid="webhook-response-status" variant={response.ok ? "accent" : "rust"} tabIndex={0} className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                    {response.status}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>HTTP status returned by the backend for this ingest request.</TooltipContent>
+              </Tooltip>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent>
@@ -173,13 +203,25 @@ export function Ingest() {
           {accepted ? (
             <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
               <Sparkles className="h-4 w-4" aria-hidden="true" />
-              <span>202 Accepted{acceptedEventId ? ` · ${acceptedEventId}` : ""}</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" tabIndex={0}>
+                    202 Accepted{acceptedEventId ? ` · ${acceptedEventId}` : ""}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>The backend accepted the event for asynchronous processing. Memories may appear after the processor handles it.</TooltipContent>
+              </Tooltip>
               {showExplorerLink ? (
-                <Button asChild variant="secondary" size="sm">
-                  <Link to={`/memory?q=${encodeURIComponent(fixture.actor)}`} data-testid="view-in-explorer-link">
-                    View in Explorer
-                  </Link>
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button asChild variant="secondary" size="sm">
+                      <Link to={`/memory?q=${encodeURIComponent(fixture.actor)}`} data-testid="view-in-explorer-link">
+                        View in Explorer
+                      </Link>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Jumps into Memory Explorer so you can look for memories created from this test event.</TooltipContent>
+                </Tooltip>
               ) : null}
             </div>
           ) : null}

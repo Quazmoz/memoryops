@@ -1,7 +1,9 @@
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { vi } from "vitest";
 
 import type { RetrieveResponse, RetrievalTrace } from "../api/types";
+import { TooltipProvider } from "../components/ui/tooltip";
 import { useRetrieve, useRetrievalTrace } from "../hooks/use-workspace";
 import { RetrievalTraceView } from "./RetrievalTraceView";
 
@@ -22,7 +24,7 @@ describe("RetrievalTraceView", () => {
   it("disables the submit button while pending", () => {
     mockUseRetrieve.mockReturnValue(mutationState({ isPending: true }));
 
-    render(<RetrievalTraceView />);
+    renderWithTooltip(<RetrievalTraceView />);
 
     expect((screen.getByTestId("trace-submit") as HTMLButtonElement).disabled).toBe(true);
   });
@@ -30,7 +32,7 @@ describe("RetrievalTraceView", () => {
   it("shows the summary bar after a successful mutation", () => {
     mockUseRetrieve.mockReturnValue(mutationState({ data: retrieveResponse() }));
 
-    render(<RetrievalTraceView />);
+    renderWithTooltip(<RetrievalTraceView />);
 
     expect(screen.getByTestId("trace-summary")).toBeTruthy();
   });
@@ -38,9 +40,16 @@ describe("RetrievalTraceView", () => {
   it("renders the candidates table", () => {
     mockUseRetrievalTrace.mockReturnValue(queryState({ data: retrievalTrace() }));
 
-    render(<RetrievalTraceView initialActiveQueryId="query-1" />);
+    renderWithTooltip(<RetrievalTraceView initialActiveQueryId="query-1" />);
 
     expect(screen.getByTestId("trace-candidates-table")).toBeTruthy();
+  });
+
+  it("renders accessible help triggers for retrieval controls", () => {
+    renderWithTooltip(<RetrievalTraceView />);
+
+    expect(screen.getByLabelText("Help: Token budget")).toBeInTheDocument();
+    expect(screen.getByLabelText("Help: Mode")).toBeInTheDocument();
   });
 });
 
@@ -127,4 +136,8 @@ function retrievalTrace(): RetrievalTrace {
       },
     ],
   };
+}
+
+function renderWithTooltip(ui: ReactElement) {
+  return render(<TooltipProvider delayDuration={0}>{ui}</TooltipProvider>);
 }

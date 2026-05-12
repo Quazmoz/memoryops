@@ -10,6 +10,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Skeleton } from "../components/ui/skeleton";
+import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { useMemoryList } from "../hooks/use-memory";
 import { formatCount, formatDateTime, formatRelativeTime, previewText } from "../lib/format";
 import { useAppStore } from "../store/app-store";
@@ -109,7 +110,12 @@ export function LifecycleView() {
           <p className="text-sm font-medium text-accent-strong">Promotion</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Lifecycle</h1>
         </div>
-        <Badge variant={authReady ? "green" : "amber"}>{authReady ? "Workspace connected" : "Setup needed"}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant={authReady ? "green" : "amber"}>{authReady ? "Workspace connected" : "Setup needed"}</Badge>
+          <HelpTooltip label={authReady ? "Workspace connected" : "Setup needed"}>
+            Shows whether this workspace is configured well enough to run lifecycle and promotion operations.
+          </HelpTooltip>
+        </div>
       </header>
 
       {workspaceQuery.isError ? <InlineError title="Workspace unavailable" message={workspaceQuery.error.message} /> : null}
@@ -118,12 +124,16 @@ export function LifecycleView() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Promotion Controls</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Promotion Controls</span>
+            <HelpTooltip label="Promotion Controls">Tune how MemoryOps clusters episodic memories and promotes durable semantic knowledge.</HelpTooltip>
+          </CardTitle>
           {configMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin text-accent-strong" aria-hidden="true" /> : <GitMerge className="h-4 w-4 text-accent-strong" aria-hidden="true" />}
         </CardHeader>
         <CardContent className="grid gap-5 xl:grid-cols-[1fr_1fr_auto] xl:items-end">
           <ThresholdSlider
             label="promotion_threshold"
+            helpText="Minimum confidence required before related episodic memories are promoted into semantic memory."
             min={0.5}
             max={1}
             value={promotionThreshold}
@@ -132,24 +142,30 @@ export function LifecycleView() {
           />
           <ThresholdSlider
             label="dedup_cosine_threshold"
+            helpText="Similarity cutoff used to avoid creating duplicate semantic memories."
             min={0.8}
             max={0.99}
             value={dedupThreshold}
             onChange={setDedupThreshold}
             disabled={!authReady || workspaceQuery.isLoading}
           />
-          <Button type="button" data-testid="manual-promote-button" onClick={() => promotionMutation.mutate()} disabled={!authReady || promotionMutation.isPending}>
-            {promotionMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
-            Run Promotion Pass
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" data-testid="manual-promote-button" onClick={() => promotionMutation.mutate()} disabled={!authReady || promotionMutation.isPending}>
+                {promotionMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
+                Run Promotion Pass
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Manually starts a lifecycle pass to cluster episodic memories and promote durable knowledge.</TooltipContent>
+          </Tooltip>
         </CardContent>
       </Card>
 
       {promotionReport ? (
         <section className="grid gap-4 md:grid-cols-3" aria-label="Promotion report" data-testid="promote-status">
-          <ReportCard title="clusters_found" value={promotionReport.clusters_found} />
-          <ReportCard title="units_promoted" value={promotionReport.units_promoted} />
-          <ReportCard title="units_skipped" value={promotionReport.units_skipped} />
+          <ReportCard title="clusters_found" helpText="Related episodic groups MemoryOps considered for promotion during this pass." value={promotionReport.clusters_found} />
+          <ReportCard title="units_promoted" helpText="New semantic memories created from qualifying episodic clusters." value={promotionReport.units_promoted} />
+          <ReportCard title="units_skipped" helpText="Candidate units skipped because they failed the confidence threshold or looked like duplicates." value={promotionReport.units_skipped} />
         </section>
       ) : null}
 
@@ -157,7 +173,10 @@ export function LifecycleView() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium text-accent-strong">Semantic memory</p>
-            <h2 className="mt-1 text-xl font-semibold tracking-normal text-ink">Recent Promotions</h2>
+            <h2 className="mt-1 inline-flex items-center gap-1.5 text-xl font-semibold tracking-normal text-ink">
+              <span>Recent Promotions</span>
+              <HelpTooltip label="Recent Promotions">Recently promoted semantic memories so you can inspect what durable knowledge lifecycle created.</HelpTooltip>
+            </h2>
           </div>
           <Database className="h-4 w-4 text-accent-strong" aria-hidden="true" />
         </div>
@@ -179,11 +198,11 @@ export function LifecycleView() {
   );
 }
 
-function ThresholdSlider({ label, min, max, value, onChange, disabled }: { label: string; min: number; max: number; value: number; onChange: (value: number) => void; disabled: boolean }) {
+function ThresholdSlider({ label, helpText, min, max, value, onChange, disabled }: { label: string; helpText: string; min: number; max: number; value: number; onChange: (value: number) => void; disabled: boolean }) {
   return (
     <label className="grid gap-2 text-sm text-ink/70">
       <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
-        <span>{label}</span>
+        <InfoLabel label={label} tooltip={helpText} />
         <span className="inline-flex items-center gap-1 font-mono text-ink/70">
           <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
           {value.toFixed(2)}
@@ -203,11 +222,13 @@ function ThresholdSlider({ label, min, max, value, onChange, disabled }: { label
   );
 }
 
-function ReportCard({ title, value }: { title: string; value: number }) {
+function ReportCard({ title, helpText, value }: { title: string; helpText: string; value: number }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-medium text-ink/65">{title}</CardTitle>
+        <CardTitle className="text-sm font-medium text-ink/65">
+          <InfoLabel label={title} tooltip={helpText} />
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <p className="text-3xl font-semibold">{formatCount(value)}</p>
@@ -223,8 +244,18 @@ function SemanticMemoryCard({ memory }: { memory: MemoryUnit }) {
         <div className="min-w-0">
           <p className="text-sm font-medium text-ink">{previewText(memory.content, 160)}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink/60">
-            <Badge variant="teal">source_count {sourceCount(memory)}</Badge>
-            <span>Promoted {memory.promoted_at ? formatRelativeTime(memory.promoted_at) : "Pending"}</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="teal" tabIndex={0} className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                  source_count {sourceCount(memory)}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>How many source episodes or events were consolidated into this semantic memory.</TooltipContent>
+            </Tooltip>
+            <span className="inline-flex items-center gap-1">
+              <span>Promoted {memory.promoted_at ? formatRelativeTime(memory.promoted_at) : "Pending"}</span>
+              <HelpTooltip label="promoted timestamp">When this semantic memory was promoted from episodic material.</HelpTooltip>
+            </span>
           </div>
         </div>
         <span className="whitespace-nowrap text-xs text-ink/55">{formatDateTime(memory.updated_at)}</span>

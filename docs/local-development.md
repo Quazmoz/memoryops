@@ -101,12 +101,20 @@ curl http://localhost:8080/health
 
 ## 5. Bootstrap a workspace
 
-Before you can use the frontend, bootstrap a workspace. This single endpoint requires 
-no authentication and returns both the `workspace_id` and the initial `api_key` together:
+Before you can use the frontend, bootstrap a workspace. You can use the provided Node.js helper script to automatically create a workspace and save the credentials.
 
+```bash
+# Requires WORKSPACE_CREATION_SECRET from your .env
+WORKSPACE_CREATION_SECRET=<your-creation-secret> node scripts/bootstrap.mjs
+```
+
+This will create a uniquely named workspace and save the `workspace_id` and `api_key` to `.memoryops.local.json`.
+
+Alternatively, via curl:
 ```bash
 curl -sS -X POST http://localhost:8080/v1/workspaces \
   -H 'Content-Type: application/json' \
+  -H 'x-admin-token: <your-creation-secret>' \
   -d '{"name": "Local Dev Workspace"}'
 ```
 
@@ -239,3 +247,26 @@ To test incoming webhook payloads:
 - **Slow path jobs stuck in DLQ:** Make sure Ollama is running and the model is pulled (`ollama pull llama3`).
 - **Frontend 404 on `/v1`:** The Vite proxy requires the API server to be running on `8080`. Check that `cargo run -p api` is successfully running.
 - **Qdrant connection refused:** Ensure the gRPC port `6334` is bound and exposed in `docker-compose.yml` (the Rust client connects via gRPC).
+- **Stale frontend image / ERR_EMPTY_RESPONSE:** The container may be using an old nginx config listening on port 80 instead of 8080. Rebuild the frontend: `docker compose build --no-cache frontend` and force recreate `docker compose up -d --force-recreate frontend`.
+
+---
+
+## 13. Resetting Local Environment
+
+If you experience persistent issues, you can reset the non-persistent containers:
+
+```bash
+docker compose down
+docker compose build --no-cache api frontend mcp
+docker compose up -d postgres redis qdrant
+sqlx migrate run
+docker compose up -d api
+```
+
+### Full Data Wipe
+> **WARNING: Destructive Operation**
+
+```bash
+docker compose down -v
+```
+Using `-v` will delete the Postgres, Redis, and Qdrant volumes. Use this **only** if you want to permanently delete all local workspaces, memories, and start completely fresh.

@@ -1,7 +1,9 @@
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { vi } from "vitest";
 
 import { useMemoryFeedback, useSubmitFeedback } from "../hooks/use-memory";
+import { TooltipProvider } from "./ui/tooltip";
 import { FeedbackPanel } from "./FeedbackPanel";
 
 vi.mock("../hooks/use-memory", () => ({
@@ -19,7 +21,7 @@ describe("FeedbackPanel", () => {
   });
 
   it("renders three rating buttons", () => {
-    render(<FeedbackPanel workspaceId="workspace-1" memoryId="memory-1" />);
+    renderWithTooltip(<FeedbackPanel workspaceId="workspace-1" memoryId="memory-1" />);
 
     expect(screen.getByRole("button", { name: /positive feedback/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /neutral feedback/i })).toBeTruthy();
@@ -29,7 +31,7 @@ describe("FeedbackPanel", () => {
   it("disables submit when mutation is pending", () => {
     mockUseSubmitFeedback.mockReturnValue(submitFeedbackState({ isPending: true }));
 
-    render(<FeedbackPanel workspaceId="workspace-1" memoryId="memory-1" />);
+    renderWithTooltip(<FeedbackPanel workspaceId="workspace-1" memoryId="memory-1" />);
 
     expect((screen.getByTestId("feedback-submit") as HTMLButtonElement).disabled).toBe(true);
   });
@@ -60,4 +62,8 @@ function submitFeedbackState(overrides: Record<string, unknown> = {}) {
     mutate: vi.fn(),
     ...overrides,
   } as unknown as ReturnType<typeof useSubmitFeedback>;
+}
+
+function renderWithTooltip(ui: ReactElement) {
+  return render(<TooltipProvider delayDuration={0}>{ui}</TooltipProvider>);
 }
