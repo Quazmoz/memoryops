@@ -108,6 +108,12 @@ MemoryOps is designed for governed, inspectable, team-oriented agent memory. It 
   <img src="docs/assets/readme/memoryops-landscape.svg" alt="MemoryOps is optimized for governed team memory, not just raw recall or vector retrieval." width="90%">
 </p>
 
+### Memory Architecture Comparison (MemoryOps vs. OpenClaw vs. Nous Hermes)
+
+<p align="center">
+  <img src="docs/assets/readme/memoryops-vs-field.png" alt="Sleek Infographic comparing MemoryOps, OpenClaw, and Nous Hermes memory architectures" width="90%">
+</p>
+
 ### MemoryOps vs. Verbatim-First Local Memory
 
 <p align="center">
