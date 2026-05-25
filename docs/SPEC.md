@@ -169,6 +169,12 @@ pub enum MemoryType {
     Episodic,
     Semantic,
 }
+
+#### Episodic vs. Semantic Memory
+
+MemoryOps distinguishes between these two core memory types:
+*   **Episodic Memory**: Represents discrete, point-in-time experiences or events (e.g., a specific GitHub PR merge event, a production deployment failure alert, or a specific Slack observation). They are highly time-sensitive, subject to a mathematical decay rate (fading in relevance over time), and act as raw inputs to the memory engine.
+*   **Semantic Memory**: Represents durable, consolidated facts, rules, and workspace-level concepts (e.g., "The database connection pool limit is 20", or coding styles, or API usage contracts). Semantic memories do not decay under the normal pipeline, are version-controlled upon modification, and are created either manually via the API or automatically via the Promotion Pipeline (which clusters related episodic memories, summarizes them using an LLM, and promotes the consensus to a semantic memory).
 ```
 
 ### 5.3 MemoryScope
@@ -573,10 +579,16 @@ pub struct AppState {
     pub app_secret_key: Arc<Zeroizing<String>>,
 }
 ```
-
 ---
 
 ## 9. Ingestion Layer
+
+The Ingestion Pipeline is the secure, high-throughput gateway of the MemoryOps control plane. It acts as an HMAC-validated receiver for developer workflow activity, translating raw tool actions into standardized `RawEvent` structs.
+
+#### Key Characteristics of the Ingestion Pipeline:
+*   **Security & Signature Validation**: Webhooks are never accepted blindly. All incoming requests undergo strict HMAC signature verification using a per-workspace registered integration secret key (e.g. `X-Hub-Signature-256` for GitHub, `X-Slack-Signature` for Slack).
+*   **Transactional Idempotency**: Duplicate webhook deliveries (common in distributed messaging) are rejected automatically before processing. The ingestion transaction guarantees that a raw event is stored in PostgreSQL and enqueued in Redis Streams (`XADD`) atomically.
+*   **Decoupled Async Architecture**: Webhook ingestion is designed for extreme speed, immediately returning a `202 Accepted` status to the caller, while asynchronous workers in the `processor` crate handle parsing, entity extraction, importance scoring, and Qdrant storage.
 
 ### 9.1 WebhookValidator Trait
 
