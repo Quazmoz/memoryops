@@ -29,3 +29,4 @@ uuid.workspace = true
 async-trait.workspace = true
 deadpool-redis.workspace = true
 reqwest.workspace = true
+zeroize.workspace = true

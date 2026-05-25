@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use common::{
+    build_embedding_provider_for_workspace,
     error::{AppResult, ProviderError},
     models::MemoryType,
     providers::EmbeddingProvider,
@@ -99,9 +100,11 @@ pub async fn vector_search_results(
     let memory_types = normalized_memory_types(req)?;
     let scope = req.resolved_scope_filter();
     let workspace_pool = req.workspace_pool_access();
+    let workspace_config = crate::handlers::fetch_workspace_config(state, req.workspace_id).await?;
+    let embedding_provider = build_embedding_provider_for_workspace(&state.config, &workspace_config);
     let candidates = vector_search(
         &state.qdrant,
-        &state.embedding_provider,
+        &embedding_provider,
         VectorSearchOptions {
             workspace_id: req.workspace_id,
             query: &req.query,

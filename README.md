@@ -376,14 +376,9 @@ Copy `.env.example` to `.env`. All required variables must be set before startin
 | `HF_API_KEY` | If `llm.provider = "huggingface"` |
 | `GEMINI_API_KEY` | If `llm.provider = "gemini"` |
 
-### Optional - Webhook Secrets
+### Webhook Signing Secrets
 
-| Variable | Default | When Required |
-|----------|---------|---------------|
-| `GITHUB_WEBHOOK_SECRET` | `dev-placeholder` | **Required in production** for GitHub webhooks |
-| `SLACK_SIGNING_SECRET` | `dev-placeholder` | **Required in production** for Slack webhooks |
-| `LINEAR_WEBHOOK_SECRET` | `dev-placeholder` | **Required in production** for Linear webhooks |
-| `JIRA_WEBHOOK_SECRET` | `dev-placeholder` | **Required in production** for Jira webhooks |
+Webhook signing secrets are stored per workspace by registering an integration with `POST /v1/workspaces/{id}/integrations`. They are not process-wide environment variables.
 
 ### Optional - MCP Server
 
@@ -436,9 +431,9 @@ curl -X POST http://localhost:8080/v1/workspaces/018f.../keys \
 
 In your GitHub repo settings, add a webhook pointing to:
 ```
-https://your-host/v1/webhooks/github
+https://your-host/v1/ingest/github/<workspace_id>
 ```
-Set the secret to match `GITHUB_WEBHOOK_SECRET`.
+Set the secret to the GitHub integration secret registered for that workspace.
 
 ### Retrieve memory for an agent
 

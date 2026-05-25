@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use axum::{extract::Query, extract::State, Extension, Json};
-use common::{auth::AuthContext, error::AppResult, models::MemoryUnit, AppError, AppState};
+use common::{
+    auth::AuthContext, build_embedding_provider_for_workspace, error::AppResult,
+    models::MemoryUnit, AppError, AppState,
+};
 use qdrant_client::{
     qdrant::{point_id::PointIdOptions, Condition, Filter, ScoredPoint, SearchPointsBuilder},
     Qdrant,
@@ -140,8 +143,10 @@ pub async fn handle_memory_search(
     };
 
     let memory_store = PgMemorySearchStore { db: &state.db };
+    let config = super::fetch_workspace_config(&state, options.workspace_id).await?;
+    let embedding_provider = build_embedding_provider_for_workspace(&state.config, &config);
     let response = run_memory_search(
-        &state.embedding_provider,
+        &embedding_provider,
         &state.qdrant,
         &memory_store,
         options,

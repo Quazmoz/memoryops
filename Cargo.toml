@@ -70,8 +70,11 @@ hex = "0.4"
 argon2 = "0.5"
 aes-gcm = "0.10"
 base64 = "0.22"
+hkdf = "0.12"
 bs58 = "0.5"
 rand = "0.9"
+subtle = "2"
+zeroize = "1"
 
 # Qdrant is the required vector search backend and is held in shared AppState.
 qdrant-client = "1.13"

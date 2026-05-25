@@ -32,3 +32,4 @@ deadpool-redis.workspace = true
 qdrant-client.workspace = true
 tokio.workspace = true
 tower = { version = "0.5", features = ["util"] }
+zeroize.workspace = true

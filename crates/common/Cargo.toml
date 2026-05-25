@@ -11,12 +11,15 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+aes-gcm.workspace = true
 argon2.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+base64.workspace = true
 bs58.workspace = true
 chrono.workspace = true
 deadpool-redis.workspace = true
+hkdf.workspace = true
 qdrant-client.workspace = true
 rand.workspace = true
 redis.workspace = true
@@ -33,3 +36,4 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 validator.workspace = true
 hex.workspace = true
+zeroize.workspace = true

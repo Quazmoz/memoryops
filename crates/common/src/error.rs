@@ -49,6 +49,8 @@ pub enum AppError {
     Validation(String),
     #[error("unprocessable entity: {0}")]
     Unprocessable(String),
+    #[error("not implemented: {0}")]
+    NotImplemented(String),
     #[error("conflict: {0}")]
     Conflict(String),
     #[error("rate limited")]
@@ -83,6 +85,7 @@ impl AppError {
             AppError::Unprocessable(_) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable_entity")
             }
+            AppError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not_implemented"),
             AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             AppError::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             AppError::Provider(ref inner) => match inner {

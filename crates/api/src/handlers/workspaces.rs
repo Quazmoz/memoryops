@@ -31,6 +31,7 @@ use qdrant_client::qdrant::DeletePointsBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use super::{keys, require_workspace};
@@ -167,7 +168,7 @@ pub async fn create_workspace(
         }
         let mut dummy_req: Request<Body> = builder
             .body(Body::empty())
-            .unwrap_or_else(|_| Request::new(Body::empty()));
+            .map_err(|error| AppError::Internal(anyhow!(error)))?;
         dummy_req.extensions_mut().insert(ConnectInfo(peer_addr));
         crate::middleware::rate_limit::resolve_client_ip(&dummy_req, &state.trusted_proxy_cidrs)
             .unwrap_or_else(|| IpAddr::from([127, 0, 0, 1]))
@@ -220,7 +221,7 @@ pub async fn create_workspace(
 }
 
 #[axum::debug_handler]
-pub async fn list_workspaces(
+pub async fn get_current_workspace(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> AppResult<Json<Workspace>> {
@@ -628,6 +629,8 @@ fn sanitize_imported_memory(mut memory: MemoryUnit, workspace_id: Uuid) -> Memor
     memory.corroboration_count = 0;
     // Reset version so conflict resolution starts clean in the target workspace.
     memory.version = 1;
+    // Retrieval feedback is workspace-local; imported memories should start neutral.
+    memory.relevance_score = 0.5;
     memory
 }
 
@@ -917,7 +920,11 @@ fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
         return Err(AppError::Forbidden);
     };
 
-    if provided_secret == expected_secret {
+    if bool::from(
+        provided_secret
+            .as_bytes()
+            .ct_eq(expected_secret.as_bytes()),
+    ) {
         Ok(())
     } else {
         Err(AppError::Forbidden)
@@ -928,12 +935,16 @@ async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> 
     let key = format!("workspace:create:ratelimit:{ip}");
     let now = unix_timestamp_secs()?;
 
-    let mut redis = state
-        .redis
-        .get()
-        .await
-        .map_err(|error| AppError::Internal(anyhow!(error)))?;
-    let allowed = redis::Script::new(
+    let mut redis = match state.redis.get().await {
+        Ok(redis) => redis,
+        Err(error) => {
+            tracing::warn!(error = ?error, ip = %ip, "workspace creation rate limit failed closed: Redis unavailable");
+            return Err(AppError::RateLimited {
+                retry_after_secs: 60,
+            });
+        }
+    };
+    let allowed = match redis::Script::new(
         r#"
         local data = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
         local tokens = tonumber(data[1])
@@ -967,7 +978,15 @@ async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> 
     .arg(WORKSPACE_CREATE_REFILL_TOKENS_PER_SEC)
     .invoke_async::<i64>(&mut *redis)
     .await
-    .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    {
+        Ok(allowed) => allowed,
+        Err(error) => {
+            tracing::warn!(error = ?error, ip = %ip, "workspace creation rate limit failed closed: Redis script failed");
+            return Err(AppError::RateLimited {
+                retry_after_secs: 60,
+            });
+        }
+    };
 
     if allowed == 1 {
         Ok(())
@@ -1328,7 +1347,9 @@ mod tests {
                 None,
             )),
             config: Arc::new(config),
-            github_webhook_secret: "test-secret".to_owned(),
+            app_secret_key: Arc::new(zeroize::Zeroizing::new(
+                "test-secret-key-for-unit-tests".to_owned(),
+            )),
             trusted_proxy_cidrs: Arc::new(Vec::new()),
         }
     }
@@ -1351,7 +1372,10 @@ mod tests {
 
     async fn insert_api_key(pool: &PgPool, workspace_id: Uuid) -> String {
         let key_id = Uuid::now_v7();
-        let (plaintext, prefix) = crate::security::generate_api_key(workspace_id);
+        let (plaintext, prefix) = match crate::security::generate_api_key(workspace_id) {
+            Ok(generated) => generated,
+            Err(error) => panic!("test key should be generated: {error}"),
+        };
         let key_hash = match crate::security::hash_secret(&plaintext) {
             Ok(hash) => hash,
             Err(error) => panic!("test key hash should be generated: {error}"),

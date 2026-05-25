@@ -195,8 +195,51 @@ async fn apply_decay_scores(
     decay_half_life_days: u32,
 ) -> AppResult<u64> {
     let decay_half_life_secs = half_life_secs(decay_half_life_days);
-    let updated_ids = sqlx::query_scalar::<_, Uuid>(
+    let batch_size = i64::from(state.config.decay.batch_size.max(1));
+    let mut cursor = None;
+    let mut total = 0_u64;
+
+    loop {
+        let updated_ids = decay_score_batch(
+            &state.db,
+            workspace_id,
+            decay_half_life_secs,
+            cursor,
+            batch_size,
+        )
+        .await?;
+        if updated_ids.is_empty() {
+            break;
+        }
+
+        cursor = updated_ids.last().copied();
+        total = total.saturating_add(len_to_u64(updated_ids.len())?);
+    }
+
+    Ok(total)
+}
+
+async fn decay_score_batch(
+    db: &PgPool,
+    workspace_id: Uuid,
+    decay_half_life_secs: f64,
+    cursor: Option<Uuid>,
+    batch_size: i64,
+) -> AppResult<Vec<Uuid>> {
+    sqlx::query_scalar::<_, Uuid>(
         r#"
+        WITH candidates AS (
+            SELECT id
+            FROM memory_units
+            WHERE workspace_id = $1
+              AND deleted_at IS NULL
+              AND pinned = false
+              AND importance_overridden = false
+              AND ($3::uuid IS NULL OR id > $3)
+            ORDER BY id ASC
+            LIMIT $4
+            FOR UPDATE SKIP LOCKED
+        )
         UPDATE memory_units
         SET decay_score = GREATEST(
             0.0::double precision,
@@ -205,20 +248,18 @@ async fn apply_decay_scores(
                 EXTRACT(EPOCH FROM (NOW() - created_at)) / $2
             )
         )::real
-        WHERE workspace_id = $1
-          AND deleted_at IS NULL
-          AND pinned = false
-          AND importance_overridden = false
-        RETURNING id
+        FROM candidates
+        WHERE memory_units.id = candidates.id
+        RETURNING memory_units.id
         "#,
     )
     .bind(workspace_id)
     .bind(decay_half_life_secs)
-    .fetch_all(&state.db)
+    .bind(cursor)
+    .bind(batch_size)
+    .fetch_all(db)
     .await
-    .map_err(AppError::Database)?;
-
-    len_to_u64(updated_ids.len())
+    .map_err(AppError::Database)
 }
 
 pub async fn run_pruning_pass(state: &AppState) -> AppResult<u64> {

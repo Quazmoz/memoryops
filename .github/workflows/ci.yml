@@ -39,7 +39,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       qdrant:
-        image: qdrant/qdrant:latest
+        image: qdrant/qdrant:v1.13.6
         ports:
           - 6333:6333
           - 6334:6334
@@ -63,7 +63,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo tools
-        run: cargo install cargo-audit cargo-llvm-cov --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-llvm-cov
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -77,8 +79,13 @@ jobs:
       - name: Audit dependencies
         run: cargo audit
 
+      - name: Install sqlx CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: sqlx-cli
+
       - name: Run migrations
-        run: cargo install sqlx-cli --no-default-features --features postgres --locked && sqlx migrate run
+        run: sqlx migrate run
 
       - name: Test
         run: cargo test --workspace --all-features
@@ -124,7 +131,7 @@ jobs:
       DATABASE_URL: postgres://memoryops:memoryops@localhost:15432/memoryops_test
       REDIS_URL: redis://localhost:16379
       QDRANT_URL: http://localhost:16333
-      GITHUB_WEBHOOK_SECRET: test-secret
+      APP_SECRET_KEY: test-secret-key-for-unit-tests
       RUST_LOG: info
     steps:
       - name: Checkout
@@ -143,7 +150,9 @@ jobs:
         run: docker compose -f docker-compose.test.yml up -d --wait
 
       - name: Install sqlx CLI
-        run: cargo install sqlx-cli --no-default-features --features postgres --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: sqlx-cli
 
       - name: Run migrations
         run: sqlx migrate run

@@ -23,14 +23,15 @@ tags:
   - name: Export
   - name: Health
 paths:
-  /v1/ingest/github:
+  /v1/ingest/github/{workspace_id}:
     post:
       tags: [Webhooks]
       operationId: ingestGitHub
       summary: Receive a GitHub webhook event
-      description: Validates the GitHub signature and accepts supported repository events for ingestion.
+      description: Validates the workspace integration GitHub signature and accepts supported repository events for ingestion.
       security: []
       parameters:
+        - $ref: '#/components/parameters/WebhookWorkspaceId'
         - name: X-Hub-Signature-256
           in: header
           required: true
@@ -46,7 +47,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/WorkspaceConfig'
+              type: object
+              additionalProperties: true
       responses:
         '202':
           description: Event accepted for processing
@@ -60,14 +62,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/RateLimited'
-  /v1/ingest/slack:
+  /v1/ingest/slack/{workspace_id}:
     post:
       tags: [Webhooks]
       operationId: ingestSlack
       summary: Receive a Slack Events API webhook
-      description: Validates the Slack signature and accepts supported workspace events for ingestion.
+      description: Validates the workspace integration Slack signature and accepts supported workspace events for ingestion.
       security: []
       parameters:
+        - $ref: '#/components/parameters/WebhookWorkspaceId'
         - name: X-Slack-Signature
           in: header
           required: true
@@ -97,7 +100,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/RateLimited'
-  /v1/ingest/linear:
+  /v1/ingest/linear/{workspace_id}:
     post:
       tags: [Webhooks]
       operationId: ingestLinear
@@ -105,6 +108,7 @@ paths:
       description: Accepts supported Linear Issue, Comment, Project, and Cycle events. Validates X-Linear-Signature when a signing secret is configured for the workspace integration.
       security: []
       parameters:
+        - $ref: '#/components/parameters/WebhookWorkspaceId'
         - name: X-Linear-Signature
           in: header
           required: false
@@ -130,14 +134,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/RateLimited'
-  /v1/ingest/jira:
+  /v1/ingest/jira/{workspace_id}:
     post:
       tags: [Webhooks]
       operationId: ingestJira
       summary: Receive a Jira Cloud admin webhook event
-      description: Validates X-Hub-Signature and accepts supported issue and comment events for ingestion. Jira Connect JWT webhooks are not supported in M10.
+      description: Validates the workspace integration X-Hub-Signature and accepts supported issue and comment events for ingestion. Jira Connect JWT webhooks are not supported in M10.
       security: []
       parameters:
+        - $ref: '#/components/parameters/WebhookWorkspaceId'
         - name: X-Hub-Signature
           in: header
           required: true
@@ -199,6 +204,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '413':
+          description: Observation body exceeds the configured 1 MiB limit
   /v1/memory:
     get:
       tags: [Memory]
@@ -526,6 +533,21 @@ paths:
                 $ref: '#/components/schemas/Workspace'
         '400':
           $ref: '#/components/responses/BadRequest'
+  /v1/workspaces/me:
+    get:
+      tags: [Workspaces]
+      operationId: getCurrentWorkspace
+      summary: Get the authenticated workspace
+      description: Returns workspace metadata and configuration for the workspace bound to the API key.
+      responses:
+        '200':
+          description: Current workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v1/workspaces/{id}:
     get:
       tags: [Workspaces]
@@ -570,6 +592,21 @@ paths:
                 $ref: '#/components/schemas/WorkspaceStatsHistory'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/metrics:
+    get:
+      tags: [Workspaces]
+      operationId: getWorkspaceMetrics
+      summary: Get workspace metrics
+      description: Placeholder route; per-workspace metrics are not implemented until process-global metrics are partitioned by workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -718,6 +755,12 @@ paths:
       description: Lists non-secret API key metadata for a workspace.
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
+        - name: include_revoked
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: API keys
@@ -905,6 +948,13 @@ components:
       schema:
         type: string
         format: uuid
+    WebhookWorkspaceId:
+      name: workspace_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     MemoryId:
       name: id
       in: path
@@ -959,6 +1009,12 @@ components:
             $ref: '#/components/schemas/ErrorEnvelope'
     UnprocessableEntity:
       description: Request is syntactically valid but cannot be applied to this resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    NotImplemented:
+      description: Feature is not implemented
       content:
         application/json:
           schema:
@@ -1492,7 +1548,7 @@ components:
           format: float
     RetrievalResult:
       type: object
-      required: [query_id, memories, total_tokens, trace, retrieved_at]
+      required: [query_id, memories, total_tokens, trace]
       properties:
         query_id:
           type: string
@@ -1504,25 +1560,43 @@ components:
         total_tokens:
           type: integer
         trace:
+          anyOf:
+            - $ref: '#/components/schemas/RetrievalTraceResponse'
+            - type: 'null'
+    ScoredMemory:
+      type: object
+      required: [id, content, memory_type, importance_score, decay_score, relevance_score, entities, score_breakdown]
+      properties:
+        id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        memory_type:
+          type: string
+        importance_score:
+          type: number
+          format: float
+        decay_score:
+          type: number
+          format: float
+        relevance_score:
+          type: number
+          format: double
+        entities:
           type: array
           items:
-            $ref: '#/components/schemas/RetrievalTraceEntry'
-        retrieved_at:
-          type: string
-          format: date-time
-    ScoredMemory:
-      allOf:
-        - $ref: '#/components/schemas/MemoryUnit'
-        - type: object
-          required: [score]
-          properties:
-            score:
-              $ref: '#/components/schemas/ScoreBreakdown'
+            $ref: '#/components/schemas/Entity'
+        score_breakdown:
+          $ref: '#/components/schemas/ScoreBreakdown'
     ScoreBreakdown:
       type: object
-      required: [semantic_similarity, importance, recency, source_authority, memory_type, final_score]
+      required: [semantic_similarity, keyword_rank, importance, recency, source_authority]
       properties:
         semantic_similarity:
+          type: number
+          format: float
+        keyword_rank:
           type: number
           format: float
         importance:
@@ -1534,43 +1608,53 @@ components:
         source_authority:
           type: number
           format: float
-        memory_type:
-          type: number
-          format: float
-        final_score:
-          type: number
-          format: float
     RetrievalTraceEntry:
       type: object
-      required: [memory_id, breakdown, token_count, included]
+      required: [memory_id, score, included, exclusion_reason, relevance_score, score_breakdown]
       properties:
         memory_id:
           type: string
           format: uuid
-        breakdown:
-          $ref: '#/components/schemas/ScoreBreakdown'
-        token_count:
-          type: integer
+        score:
+          type: number
+          format: float
         included:
           type: boolean
         exclusion_reason:
           anyOf:
             - $ref: '#/components/schemas/ExclusionReason'
             - type: 'null'
+        relevance_score:
+          type: [number, 'null']
+          format: double
+        score_breakdown:
+          $ref: '#/components/schemas/ScoreBreakdown'
     ExclusionReason:
       type: string
       enum: [token_budget, dedup, filtered, below_min_importance]
     RetrievalTraceResponse:
       type: object
-      required: [query_id, trace]
+      required: [query_id, query, as_of, mode, feedback_applied, candidates_evaluated, included_count, excluded_count, entries]
       properties:
         query_id:
           type: string
           format: uuid
+        query:
+          type: string
         as_of:
           type: [string, 'null']
           format: date-time
-        trace:
+        mode:
+          $ref: '#/components/schemas/SearchMode'
+        feedback_applied:
+          type: boolean
+        candidates_evaluated:
+          type: integer
+        included_count:
+          type: integer
+        excluded_count:
+          type: integer
+        entries:
           type: array
           items:
             $ref: '#/components/schemas/RetrievalTraceEntry'

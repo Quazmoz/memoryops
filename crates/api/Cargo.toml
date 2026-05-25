@@ -22,7 +22,7 @@ chrono.workspace = true
 common.workspace = true
 deadpool-redis.workspace = true
 futures-util.workspace = true
-hkdf = "0.12"
+hkdf.workspace = true
 ipnet.workspace = true
 ingestion.workspace = true
 processor.workspace = true
@@ -35,11 +35,12 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
+subtle.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 validator.workspace = true
-zeroize = "1"
+zeroize.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

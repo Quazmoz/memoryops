@@ -554,7 +554,7 @@ export async function fireWebhook(workspaceId: string, fixture: WebhookFixture, 
   headers.set("x-workspace-id", workspaceId);
 
   const bodyString = JSON.stringify(payload);
-  const endpoint = await applySourceHeaders(headers, fixture, bodyString);
+  const endpoint = await applySourceHeaders(headers, fixture, bodyString, workspaceId);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
   
@@ -583,7 +583,13 @@ export async function fireWebhook(workspaceId: string, fixture: WebhookFixture, 
   };
 }
 
-async function applySourceHeaders(headers: Headers, fixture: WebhookFixture, payloadString: string): Promise<string> {
+async function applySourceHeaders(
+  headers: Headers,
+  fixture: WebhookFixture,
+  payloadString: string,
+  workspaceId: string
+): Promise<string> {
+  const encodedWorkspaceId = encodeURIComponent(workspaceId);
   switch (fixture.source) {
     case "github": {
       if (!fixture.githubEvent) {
@@ -594,21 +600,21 @@ async function applySourceHeaders(headers: Headers, fixture: WebhookFixture, pay
       headers.set("x-github-delivery", crypto.randomUUID());
       const signature = await generateGitHubSignature(payloadString);
       headers.set("x-hub-signature-256", signature);
-      return "/v1/ingest/github";
+      return `/v1/ingest/github/${encodedWorkspaceId}`;
     }
     case "slack": {
       headers.set("x-slack-signature", `v0=${dummyHexSignature()}`);
       headers.set("x-slack-request-timestamp", Math.floor(Date.now() / 1000).toString());
-      return "/v1/ingest/slack";
+      return `/v1/ingest/slack/${encodedWorkspaceId}`;
     }
     case "linear": {
       headers.set("x-linear-signature", dummyHexSignature());
-      return "/v1/ingest/linear";
+      return `/v1/ingest/linear/${encodedWorkspaceId}`;
     }
     case "jira": {
       headers.set("x-hub-signature", `sha256=${dummyHexSignature()}`);
       headers.set("x-atlassian-webhook-identifier", crypto.randomUUID());
-      return "/v1/ingest/jira";
+      return `/v1/ingest/jira/${encodedWorkspaceId}`;
     }
     case "observation": {
       return "/v1/ingest/observation";

@@ -10,10 +10,16 @@ use crate::{
 };
 
 fn client_with_timeout(timeout_secs: u64) -> Client {
-    Client::builder()
+    match Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
         .build()
-        .unwrap_or_default()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            tracing::warn!(error = ?error, timeout_secs, "failed to build reqwest client with timeout; using default client");
+            Client::new()
+        }
+    }
 }
 
 pub struct OllamaProvider {

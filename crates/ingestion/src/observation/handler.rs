@@ -4,6 +4,8 @@ use serde::Deserialize;
 
 use super::ingest::{ingest_observation, ObservationInput, ObservationOutput};
 
+pub const MAX_OBSERVATION_BODY_BYTES: usize = 1024 * 1024;
+
 #[derive(Debug, Deserialize)]
 pub struct ObservationRequest {
     pub content: String,

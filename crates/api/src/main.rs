@@ -31,11 +31,13 @@ async fn main() -> anyhow::Result<()> {
     let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_owned());
     let config = AppConfig::from_path(config_path)?;
     let _telemetry_guard = init_telemetry(&config.telemetry)?;
-    crate::security::validate_secret_key_at_startup()
+    let app_secret_key = crate::security::app_secret_key_from_env()
+        .map_err(|_| anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
+    crate::security::validate_secret_key(app_secret_key.as_str())
         .map_err(|_| anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
     workspace_creation_secret_from_env()?;
     validate_production_secrets()?;
-    let state = build_state(config.clone()).await?;
+    let state = build_state(config.clone(), app_secret_key).await?;
     processor::start_workers(state.clone()).await?;
     tokio::spawn(processor::scheduler::run_scheduler(state.clone()));
 
@@ -47,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown_signal())
     .await?;
 
     Ok(())
@@ -96,13 +99,15 @@ fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
+async fn build_state(
+    config: AppConfig,
+    app_secret_key: zeroize::Zeroizing<String>,
+) -> anyhow::Result<AppState> {
     let database_url =
         std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL not set"))?;
     let redis_url = std::env::var("REDIS_URL").map_err(|_| anyhow::anyhow!("REDIS_URL not set"))?;
     let qdrant_url =
         std::env::var("QDRANT_URL").map_err(|_| anyhow::anyhow!("QDRANT_URL not set"))?;
-    let github_webhook_secret = webhook_secret_from_env("GITHUB_WEBHOOK_SECRET")?;
     let trusted_proxy_cidrs = Arc::new(parse_trusted_proxy_cidrs());
 
     let db = PgPoolOptions::new()
@@ -112,11 +117,10 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         .connect(&database_url)
         .await?;
     ensure_skill_secret_configuration(&db).await?;
-    #[allow(clippy::expect_used)]
     let redis = {
         let cfg = deadpool_redis::Config::from_url(&redis_url);
         cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))
-            .expect("failed to create Redis pool")
+            .map_err(|error| anyhow::anyhow!("failed to create Redis pool: {error}"))?
     };
     let qdrant = Qdrant::from_url(&qdrant_url).build()?;
 
@@ -128,12 +132,12 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         redis,
         qdrant,
         processor_semaphore: Arc::new(Semaphore::new(
-            usize::try_from(config.database.max_connections).unwrap_or(10),
+            config.processor.fast_path_concurrency.max(1),
         )),
         embedding_provider,
         llm_provider,
         config: Arc::new(config),
-        github_webhook_secret,
+        app_secret_key: Arc::new(app_secret_key),
         trusted_proxy_cidrs,
     })
 }
@@ -166,13 +170,6 @@ async fn ensure_skill_secret_configuration(db: &sqlx::PgPool) -> anyhow::Result<
     Ok(())
 }
 
-fn webhook_secret_from_env(name: &'static str) -> anyhow::Result<String> {
-    match std::env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(anyhow::anyhow!(format!("{name} must be set"))),
-    }
-}
-
 /// When `APP_ENV=production`, reject secrets that are empty or still set to
 /// the dev-only placeholder value.  This prevents accidental production
 /// deployments with insecure defaults.
@@ -185,26 +182,17 @@ fn validate_production_secrets() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    const WEBHOOK_SECRETS: &[&str] = &[
-        "GITHUB_WEBHOOK_SECRET",
-        "SLACK_SIGNING_SECRET",
-        "LINEAR_WEBHOOK_SECRET",
-        "JIRA_WEBHOOK_SECRET",
-    ];
-
     let mut errors: Vec<String> = Vec::new();
 
-    for name in WEBHOOK_SECRETS {
+    for name in ["APP_SECRET_KEY", "WORKSPACE_CREATION_SECRET"] {
         match std::env::var(name) {
             Ok(value) if !value.trim().is_empty() && value.trim() != DEV_PLACEHOLDER => {}
             Ok(value) if value.trim() == DEV_PLACEHOLDER => {
                 errors.push(format!(
-                    "{name} is set to the dev-placeholder value — set a real secret for production"
+                    "{name} is set to the dev-placeholder value; set a real secret for production"
                 ));
             }
-            _ => {
-                errors.push(format!("{name} must be set in production"));
-            }
+            _ => errors.push(format!("{name} must be set in production")),
         }
     }
 
@@ -254,6 +242,34 @@ fn workspace_creation_secret_from_env() -> anyhow::Result<String> {
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = ?error, "failed to install Ctrl+C shutdown handler");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(error) => tracing::error!(error = ?error, "failed to install SIGTERM shutdown handler"),
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("shutdown signal received; draining HTTP server");
 }
 
 async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
@@ -644,7 +660,9 @@ mod tests {
                 None,
             )),
             config: Arc::new(config),
-            github_webhook_secret: "test-secret".to_owned(),
+            app_secret_key: Arc::new(zeroize::Zeroizing::new(
+                "test-secret-key-for-unit-tests".to_owned(),
+            )),
             trusted_proxy_cidrs: Arc::new(Vec::new()),
         }
     }
@@ -667,7 +685,10 @@ mod tests {
 
     async fn insert_api_key(pool: &PgPool, workspace_id: Uuid, revoked: bool) -> String {
         let key_id = Uuid::now_v7();
-        let (plaintext, prefix) = security::generate_api_key(workspace_id);
+        let (plaintext, prefix) = match security::generate_api_key(workspace_id) {
+            Ok(generated) => generated,
+            Err(error) => panic!("test key should be generated: {error}"),
+        };
         let key_hash = match security::hash_secret(&plaintext) {
             Ok(hash) => hash,
             Err(error) => panic!("test key hash should be generated: {error}"),

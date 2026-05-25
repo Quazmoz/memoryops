@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::security::hash_secret;
+use crate::security::encrypt_secret;
 
 use super::require_workspace;
 
@@ -76,22 +76,24 @@ pub async fn create_integration(
         ));
     }
 
-    let secret_hash = match webhook_secret.as_deref() {
-        Some(secret) => Some(hash_secret(secret)?),
+    let secret_enc = match webhook_secret.as_deref() {
+        Some(secret) => Some(encrypt_secret(state.app_secret_key.as_ref().as_str(), secret)?),
         None => None,
     };
     sqlx::query(
         r#"
-        INSERT INTO integrations (workspace_id, source, webhook_secret_hash, deleted_at)
-        VALUES ($1, $2, $3, NULL)
+        INSERT INTO integrations (workspace_id, source, webhook_secret_hash, webhook_secret_enc, deleted_at)
+        VALUES ($1, $2, $3, $4, NULL)
         ON CONFLICT (workspace_id, source) DO UPDATE
         SET webhook_secret_hash = EXCLUDED.webhook_secret_hash,
+            webhook_secret_enc = EXCLUDED.webhook_secret_enc,
             deleted_at = NULL
         "#,
     )
     .bind(id)
     .bind(request.source)
-    .bind(secret_hash.as_deref())
+    .bind(Option::<&str>::None)
+    .bind(secret_enc.as_deref())
     .execute(&state.db)
     .await
     .map_err(AppError::Database)?;

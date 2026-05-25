@@ -22,9 +22,9 @@ cp .env.example .env
 ```
 
 **Required vs Optional Variables:**
-- Core connection strings (`DATABASE_URL`, `REDIS_URL`, `QDRANT_URL`) and server details (`APP_HOST`, `APP_PORT`) are **required**.
-- `APP_ENV=development` enables GitHub webhook secret fallback to ease local testing.
-- Webhook secrets (`GITHUB_WEBHOOK_SECRET`, `SLACK_SIGNING_SECRET`, etc.) default to `dev-placeholder` for local use out of the box.
+- Core connection strings (`DATABASE_URL`, `REDIS_URL`, `QDRANT_URL`), server details (`APP_HOST`, `APP_PORT`), `APP_SECRET_KEY`, and `WORKSPACE_CREATION_SECRET` are **required**.
+- `APP_ENV=development` enables local-friendly defaults where supported, but webhook secrets are still stored per workspace.
+- Webhook signing secrets are registered per workspace through the integrations API for local and production use.
 - AI Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are optional unless you configure those providers in `config.toml`.
 
 Next, configure the frontend:

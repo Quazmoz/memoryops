@@ -570,7 +570,7 @@ pub struct AppState {
     pub embedding_provider: Arc<dyn EmbeddingProvider>,
     pub llm_provider: Arc<dyn LlmProvider>,
     pub config: Arc<AppConfig>,
-    pub github_webhook_secret: String,
+    pub app_secret_key: Arc<Zeroizing<String>>,
 }
 ```
 
@@ -616,7 +616,7 @@ pub enum ValidationError {
 ### 9.3 Ingestion Flow
 
 ```
-POST /v1/ingest/github
+POST /v1/ingest/github/{workspace_id}
   │
   ├─ 1. Validate HMAC  →  401 ValidationError on failure
   ├─ 2. Parse event type from X-GitHub-Event header
@@ -816,10 +816,10 @@ Full per-component score breakdown (`semantic_similarity`, `importance`, `recenc
 
 | Method | Path | Status | Description |
 |--------|------|--------|-------------|
-| POST | `/v1/ingest/github` | ✅ Live | GitHub webhook receiver |
-| POST | `/v1/ingest/slack` | ✅ Live | Slack Events API receiver |
-| POST | `/v1/ingest/linear` | ✅ Live | Linear webhook receiver |
-| POST | `/v1/ingest/jira` | ✅ Live | Jira Cloud admin webhook receiver |
+| POST | `/v1/ingest/github/{workspace_id}` | ✅ Live | GitHub webhook receiver |
+| POST | `/v1/ingest/slack/{workspace_id}` | ✅ Live | Slack Events API receiver |
+| POST | `/v1/ingest/linear/{workspace_id}` | ✅ Live | Linear webhook receiver |
+| POST | `/v1/ingest/jira/{workspace_id}` | ✅ Live | Jira Cloud admin webhook receiver |
 
 #### Memory (live — M4 complete)
 
@@ -1239,7 +1239,7 @@ Window: 60s sliding. Excess → `429 Too Many Requests` with `Retry-After`.
 | `/` | Dashboard | `GET /health/ready`, `GET /v1/memory` (counts) |
 | `/memory` | MemoryExplorer | `GET /v1/memory`, `POST /v1/memory/search`, `PATCH /v1/memory/:id` |
 | `/memory/:id` | MemoryDetail | `GET /v1/memory/:id`, `PATCH /v1/memory/:id` |
-| `/ingest` | WebhookTester | `POST /v1/ingest/github` (dev tool) |
+| `/ingest` | WebhookTester | `POST /v1/ingest/github/{workspace_id}` (dev tool) |
 | `/settings` | WorkspaceSettings | config display only (M6 write) |
 
 Views for `/retrieve/trace`, `/lifecycle`, `/audit`, `/integrations` are stubbed with empty states in M5 and wired to real endpoints in M6+.

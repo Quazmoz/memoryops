@@ -22,7 +22,7 @@ pub fn bootstrap_router() -> Router<AppState> {
 
 pub fn protected_router() -> Router<AppState> {
     Router::new()
-        .route("/v1/workspaces/me", get(workspaces::list_workspaces))
+        .route("/v1/workspaces/me", get(workspaces::get_current_workspace))
         .route(
             "/v1/workspaces/{id}",
             get(workspaces::get_workspace).delete(workspaces::delete_workspace),

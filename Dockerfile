@@ -20,4 +20,4 @@ RUN chown -R memoryops:memoryops /app
 
 USER memoryops
 
-CMD ["mcp"]
+CMD ["api"]

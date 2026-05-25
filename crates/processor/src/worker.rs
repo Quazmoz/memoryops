@@ -7,8 +7,9 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use common::{
     audit::spawn_audit_log,
+    build_embedding_provider_for_workspace, build_llm_provider_for_workspace,
     error::AppResult,
-    models::{AuditAction, MemoryUnit},
+    models::{AuditAction, MemoryUnit, WorkspaceConfig},
     providers::LlmProvider,
     telemetry::{LLM_LATENCY, SLOW_PATH_FAILED, SLOW_PATH_PROCESSED},
     AppError, AppState,
@@ -148,7 +149,16 @@ pub async fn run_worker(worker_id: usize, state: AppState) {
     }
 
     loop {
-        match read_new_messages(&mut *redis, STREAM_KEY, GROUP_NAME, &consumer_name, 5000).await {
+        match read_reclaimed_or_new_messages(
+            &state,
+            &mut *redis,
+            STREAM_KEY,
+            GROUP_NAME,
+            &consumer_name,
+            5000,
+        )
+        .await
+        {
             Ok(messages) => {
                 if messages.is_empty() {
                     continue;
@@ -214,7 +224,8 @@ pub async fn run_slow_worker(worker_id: usize, state: AppState) {
     }
 
     loop {
-        match read_new_messages(
+        match read_reclaimed_or_new_messages(
+            &state,
             &mut *redis,
             PROCESSOR_JOBS_STREAM,
             SLOW_GROUP_NAME,
@@ -335,6 +346,74 @@ async fn read_new_messages(
         .await?;
 
     parse_stream_read_reply(value)
+}
+
+async fn read_reclaimed_or_new_messages(
+    state: &AppState,
+    redis: &mut impl ConnectionLike,
+    stream_key: &str,
+    group_name: &str,
+    consumer_name: &str,
+    block_ms: usize,
+) -> anyhow::Result<Vec<StreamId>> {
+    let idle_ms = reclaim_idle_ms(state);
+    match reclaim_pending_messages(redis, stream_key, group_name, consumer_name, idle_ms).await {
+        Ok(messages) if !messages.is_empty() => {
+            tracing::warn!(
+                stream_key,
+                group_name,
+                consumer_name,
+                count = messages.len(),
+                "reclaimed stale Redis stream messages"
+            );
+            Ok(messages)
+        }
+        Ok(_) => read_new_messages(redis, stream_key, group_name, consumer_name, block_ms).await,
+        Err(error) => {
+            tracing::warn!(error = ?error, stream_key, group_name, "failed to reclaim stale Redis stream messages");
+            read_new_messages(redis, stream_key, group_name, consumer_name, block_ms).await
+        }
+    }
+}
+
+async fn reclaim_pending_messages(
+    redis: &mut impl ConnectionLike,
+    stream_key: &str,
+    group_name: &str,
+    consumer_name: &str,
+    min_idle_ms: usize,
+) -> anyhow::Result<Vec<StreamId>> {
+    let value = redis::cmd("XAUTOCLAIM")
+        .arg(stream_key)
+        .arg(group_name)
+        .arg(consumer_name)
+        .arg(min_idle_ms)
+        .arg("0-0")
+        .arg("COUNT")
+        .arg(10)
+        .query_async::<Value>(&mut *redis)
+        .await?;
+
+    parse_xautoclaim_reply(value)
+}
+
+fn reclaim_idle_ms(state: &AppState) -> usize {
+    state
+        .config
+        .processor
+        .processing_stale_threshold_secs
+        .saturating_mul(1000)
+        .min(usize::MAX as u64) as usize
+}
+
+fn parse_xautoclaim_reply(value: Value) -> anyhow::Result<Vec<StreamId>> {
+    match value {
+        Value::Nil => Ok(Vec::new()),
+        Value::Array(values) if values.len() >= 2 => {
+            from_redis_value(&values[1]).map_err(Into::into)
+        }
+        other => Err(anyhow!("unexpected XAUTOCLAIM reply: {other:?}")),
+    }
 }
 
 fn parse_stream_read_reply(value: Value) -> anyhow::Result<Vec<StreamId>> {
@@ -471,15 +550,18 @@ async fn process_slow_stream_message(
 }
 
 pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> {
+    let workspace_config = fetch_workspace_config(&state.db, job.workspace_id).await?;
+    let llm_provider = build_llm_provider_for_workspace(&state.config, &workspace_config);
+    let embedding_provider = build_embedding_provider_for_workspace(&state.config, &workspace_config);
     let memory_store = PgSlowMemoryStore { db: &state.db };
     let embedder = QdrantSlowPathEmbedder {
-        embedder: Embedder::from_state(state),
+        embedder: Embedder::new(embedding_provider, state.qdrant.clone()),
     };
 
     let updated = process_slow_with_dependencies(
         job,
         &memory_store,
-        state.llm_provider.as_ref(),
+        llm_provider.as_ref(),
         &embedder,
         Some(state.db.clone()),
     )
@@ -510,6 +592,21 @@ pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> 
     }
 
     Ok(())
+}
+
+async fn fetch_workspace_config(db: &PgPool, workspace_id: Uuid) -> AppResult<WorkspaceConfig> {
+    let value = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT config FROM workspaces WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(workspace_id)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound {
+        resource: format!("workspace:{workspace_id}"),
+    })?;
+
+    Ok(serde_json::from_value::<WorkspaceConfig>(value).unwrap_or_default())
 }
 
 async fn process_slow_with_dependencies(

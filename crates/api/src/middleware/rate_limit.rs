@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn endpoint_groups_follow_m6_defaults() {
         assert!(matches!(
-            endpoint_group("/v1/ingest/github"),
+            endpoint_group("/v1/ingest/github/018f1234-0000-7000-8000-000000000000"),
             Some(RateLimitGroup::Ingest)
         ));
         assert!(matches!(

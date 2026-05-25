@@ -96,10 +96,11 @@ pub async fn create_skill(
     validate_name(&request.name)?;
     validate_description(&request.description)?;
     validate_endpoint_url(&request.endpoint_url)?;
+    validate_endpoint_url_dns(&request.endpoint_url).await?;
     validate_schema(request.input_schema.as_ref(), "input_schema")?;
     validate_schema(request.output_schema.as_ref(), "output_schema")?;
     let auth_header = normalized_optional_text(request.auth_header.as_deref());
-    let auth_secret_enc = encrypted_secret(request.auth_secret.as_deref())?;
+    let auth_secret_enc = encrypted_secret(&state, request.auth_secret.as_deref())?;
     validate_auth_pair(auth_header.as_ref(), auth_secret_enc.as_ref())?;
 
     let skill = sqlx::query_as::<_, SkillResponse>(
@@ -196,6 +197,7 @@ pub async fn update_skill(
     }
     if let Some(endpoint_url) = &request.endpoint_url {
         validate_endpoint_url(endpoint_url)?;
+        validate_endpoint_url_dns(endpoint_url).await?;
     }
     validate_schema(request.input_schema.as_ref(), "input_schema")?;
     validate_schema(request.output_schema.as_ref(), "output_schema")?;
@@ -204,7 +206,7 @@ pub async fn update_skill(
         .auth_header
         .as_deref()
         .and_then(|value| normalized_optional_text(Some(value)));
-    let auth_secret_enc = encrypted_secret(request.auth_secret.as_deref())?;
+    let auth_secret_enc = encrypted_secret(&state, request.auth_secret.as_deref())?;
     if auth_secret_enc.is_some() && auth_header.is_none() {
         let existing_header = sqlx::query_scalar::<_, Option<String>>(
             "SELECT auth_header FROM workspace_skills WHERE workspace_id = $1 AND name = $2",
@@ -305,7 +307,8 @@ pub async fn get_skill_secret(
     let ciphertext = row.auth_secret_enc.ok_or_else(|| AppError::NotFound {
         resource: format!("workspace_skill_secret:{name}"),
     })?;
-    let decrypted = decrypt_secret_legacy_or_current(&ciphertext)?;
+    let decrypted =
+        decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), &ciphertext)?;
     persist_migrated_ciphertext(&state.db, id, &name, &decrypted).await?;
 
     Ok(Json(SkillSecretResponse {
@@ -501,11 +504,11 @@ fn normalized_optional_text(value: Option<&str>) -> Option<String> {
     })
 }
 
-fn encrypted_secret(value: Option<&str>) -> AppResult<Option<String>> {
+fn encrypted_secret(state: &AppState, value: Option<&str>) -> AppResult<Option<String>> {
     let Some(secret) = normalized_optional_text(value) else {
         return Ok(None);
     };
-    encrypt_secret(&secret).map(Some)
+    encrypt_secret(state.app_secret_key.as_ref().as_str(), &secret).map(Some)
 }
 
 async fn persist_migrated_ciphertext(
@@ -594,7 +597,8 @@ pub async fn test_skill(
         skill.auth_header.as_deref(),
         skill.auth_secret_enc.as_deref(),
     ) {
-        let decrypted = decrypt_secret_legacy_or_current(enc)?;
+        let decrypted =
+            decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), enc)?;
         persist_migrated_ciphertext(&state.db, id, &name, &decrypted).await?;
         req_builder = req_builder.header(header_name, decrypted.plaintext);
     }

@@ -1,4 +1,7 @@
-use axum::{extract::Path, extract::State, Extension, Json};
+use axum::{
+    extract::{Path, Query, State},
+    Extension, Json,
+};
 use chrono::{DateTime, Utc};
 use common::{
     audit::spawn_audit_log,
@@ -41,6 +44,12 @@ pub struct ApiKeySummary {
 
 pub type KeyRecord = ApiKeySummary;
 
+#[derive(Debug, Deserialize)]
+pub struct ListKeysQuery {
+    #[serde(default)]
+    pub include_revoked: bool,
+}
+
 /// Inserts a new API key record for a workspace and returns the plaintext key once.
 pub async fn insert_key(
     db: &PgPool,
@@ -59,7 +68,7 @@ async fn insert_key_record(
     name: &str,
 ) -> AppResult<(String, KeyRecord)> {
     let key_id = Uuid::now_v7();
-    let (plaintext, prefix) = generate_api_key(workspace_id);
+    let (plaintext, prefix) = generate_api_key(workspace_id)?;
     let key_hash = hash_secret(&plaintext)?;
     let created = sqlx::query_as::<_, ApiKeySummary>(
         r#"
@@ -179,6 +188,7 @@ pub async fn list_keys(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<Uuid>,
+    Query(query): Query<ListKeysQuery>,
 ) -> AppResult<Json<Vec<ApiKeySummary>>> {
     require_workspace(&auth, id)?;
     let keys = sqlx::query_as::<_, ApiKeySummary>(
@@ -186,10 +196,12 @@ pub async fn list_keys(
         SELECT id, name, prefix, created_at, last_used_at, revoked
         FROM api_keys
         WHERE workspace_id = $1
+          AND ($2::boolean OR revoked = false)
         ORDER BY created_at DESC
         "#,
     )
     .bind(id)
+    .bind(query.include_revoked)
     .fetch_all(&state.db)
     .await
     .map_err(AppError::Database)?;

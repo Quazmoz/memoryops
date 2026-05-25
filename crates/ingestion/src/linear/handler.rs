@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -23,6 +23,7 @@ use crate::{
         validator::{self, verify_signature},
     },
     store::find_raw_event_id_by_idempotency_key,
+    webhook::workspace_webhook_secret,
     STREAM_KEY,
 };
 
@@ -33,22 +34,17 @@ pub struct LinearIngestResponse {
     event_id: Option<Uuid>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct LinearIntegration {
-    workspace_id: Uuid,
-    signing_secret: Option<String>,
-}
-
 #[axum::debug_handler]
 #[tracing::instrument(skip(state, headers, body))]
 pub async fn handle_linear_webhook(
     State(state): State<AppState>,
+    Path(workspace_id): Path<Uuid>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, AppError> {
     let payload = serde_json::from_slice::<Value>(&body)
         .map_err(|error| AppError::Validation(format!("invalid JSON payload: {error}")))?;
-    let integration = matching_linear_integration(&state, &headers, &body).await?;
+    verify_linear_integration(&state, workspace_id, &headers, &body).await?;
     let parsed = parse_linear_event(&payload)?;
     let idempotency_key = parsed.idempotency_key();
 
@@ -65,9 +61,8 @@ pub async fn handle_linear_webhook(
             .into_response());
     }
 
-    let event =
-        insert_and_publish_linear_event(&state, integration.workspace_id, &parsed, idempotency_key)
-            .await?;
+    let event = insert_and_publish_linear_event(&state, workspace_id, &parsed, idempotency_key)
+        .await?;
     INGEST_EVENTS.add(1, &[]);
 
     Ok((
@@ -80,49 +75,25 @@ pub async fn handle_linear_webhook(
         .into_response())
 }
 
-async fn matching_linear_integration(
+async fn verify_linear_integration(
     state: &AppState,
+    workspace_id: Uuid,
     headers: &HeaderMap,
     body: &[u8],
-) -> Result<LinearIntegration, AppError> {
-    let integrations = sqlx::query_as::<_, LinearIntegration>(
-        r#"
-        SELECT workspace_id,
-            NULLIF(webhook_secret, '') AS signing_secret
-        FROM integrations
-        WHERE source = 'linear'
-          AND deleted_at IS NULL
-        ORDER BY workspace_id ASC
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(AppError::Database)?;
-
+) -> Result<(), AppError> {
     let has_signature = headers.get(validator::SIGNATURE_HEADER).is_some();
-    let mut unsigned = Vec::new();
+    let secret = workspace_webhook_secret(state, workspace_id, Source::Linear).await?;
 
-    for integration in integrations {
-        match integration.signing_secret.as_deref().map(str::trim) {
-            Some(secret) if !secret.is_empty() => {
-                if verify_signature(headers, body, secret).is_ok() {
-                    return Ok(integration);
-                }
-            }
-            _ => unsigned.push(integration.workspace_id),
-        }
+    if let Some(secret) = secret.as_deref().map(str::trim).filter(|secret| !secret.is_empty()) {
+        return verify_signature(headers, body, secret);
     }
 
-    if !has_signature && unsigned.len() == 1 {
-        let workspace_id = unsigned[0];
+    if !has_signature {
         tracing::warn!(
             workspace_id = %workspace_id,
             "accepting unsigned Linear webhook because no signing secret is configured"
         );
-        return Ok(LinearIntegration {
-            workspace_id,
-            signing_secret: None,
-        });
+        return Ok(());
     }
 
     Err(AppError::Unauthorized)

@@ -4,9 +4,14 @@ use deadpool_redis::Pool as RedisPool;
 use qdrant_client::Qdrant;
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
+use zeroize::Zeroizing;
 
 use crate::{
-    config::{AppConfig, EmbeddingProviderKind, LlmProviderKind},
+    config::{
+        AnthropicConfig, AppConfig, EmbeddingProviderKind, GeminiConfig, LlmProviderKind,
+        OpenAiEmbeddingConfig, OpenAiLlmConfig,
+    },
+    models::WorkspaceConfig,
     providers::{
         AnthropicProvider, EmbeddingProvider, FastEmbedProvider, GeminiProvider, LlmProvider,
         OllamaProvider, OpenAIEmbedProvider, OpenAIProvider, OpenAiCompatibleProvider,
@@ -22,11 +27,90 @@ pub struct AppState {
     pub embedding_provider: Arc<dyn EmbeddingProvider>,
     pub llm_provider: Arc<dyn LlmProvider>,
     pub config: Arc<AppConfig>,
-    pub github_webhook_secret: String,
+    pub app_secret_key: Arc<Zeroizing<String>>,
     /// Parsed `TRUSTED_PROXY_CIDRS` env var: `(network_addr, prefix_len)` pairs.
     /// Only peers whose address falls in one of these CIDRs are trusted to set
     /// `X-Forwarded-For`.  Empty = trust nobody (use direct peer IP only).
     pub trusted_proxy_cidrs: Arc<Vec<(std::net::IpAddr, u8)>>,
+}
+
+pub fn build_embedding_provider_for_workspace(
+    config: &AppConfig,
+    workspace_config: &WorkspaceConfig,
+) -> Arc<dyn EmbeddingProvider> {
+    let mut effective = config.clone();
+    if let Some(provider) = workspace_config
+        .embedding_provider
+        .as_deref()
+        .and_then(parse_embedding_provider_kind)
+    {
+        effective.embedding.provider = provider;
+    }
+    if let Some(model) = workspace_config.embedding_model.as_deref() {
+        effective.embedding.model = model.to_owned();
+        if effective.embedding.provider == EmbeddingProviderKind::Openai {
+            effective.embedding.openai = Some(OpenAiEmbeddingConfig {
+                model: model.to_owned(),
+            });
+        }
+    }
+
+    build_embedding_provider(&effective)
+}
+
+pub fn build_llm_provider_for_workspace(
+    config: &AppConfig,
+    workspace_config: &WorkspaceConfig,
+) -> Arc<dyn LlmProvider> {
+    let mut effective = config.clone();
+    if let Some(provider) = workspace_config
+        .llm_provider
+        .as_deref()
+        .and_then(parse_llm_provider_kind)
+    {
+        effective.llm.provider = provider;
+    }
+    if let Some(model) = workspace_config.llm_model.as_deref() {
+        effective.llm.model = model.to_owned();
+        effective.llm.openai = Some(OpenAiLlmConfig {
+            model: model.to_owned(),
+        });
+        effective.llm.anthropic = Some(AnthropicConfig {
+            model: model.to_owned(),
+        });
+        if effective.llm.provider == LlmProviderKind::Gemini && effective.llm.gemini.is_none() {
+            effective.llm.gemini = Some(GeminiConfig { api_key_env: None });
+        }
+    }
+
+    build_llm_provider(&effective)
+}
+
+fn parse_embedding_provider_kind(value: &str) -> Option<EmbeddingProviderKind> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "fastembed" | "fast_embed" => Some(EmbeddingProviderKind::FastEmbed),
+        "openai" => Some(EmbeddingProviderKind::Openai),
+        other => {
+            tracing::warn!(provider = other, "unknown workspace embedding provider override");
+            None
+        }
+    }
+}
+
+fn parse_llm_provider_kind(value: &str) -> Option<LlmProviderKind> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "ollama" => Some(LlmProviderKind::Ollama),
+        "openai" => Some(LlmProviderKind::Openai),
+        "anthropic" => Some(LlmProviderKind::Anthropic),
+        "openai_compatible" | "openai-compatible" => Some(LlmProviderKind::OpenaiCompatible),
+        "openrouter" => Some(LlmProviderKind::Openrouter),
+        "huggingface" | "hugging_face" => Some(LlmProviderKind::Huggingface),
+        "gemini" => Some(LlmProviderKind::Gemini),
+        other => {
+            tracing::warn!(provider = other, "unknown workspace LLM provider override");
+            None
+        }
+    }
 }
 
 pub fn build_embedding_provider(config: &AppConfig) -> Arc<dyn EmbeddingProvider> {

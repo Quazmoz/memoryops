@@ -13,7 +13,7 @@
 #
 # Prerequisites:
 #  - Set APP_ENV=production in your .env or shell.
-#  - All webhook secrets must be real values (not dev-placeholder).
+#  - APP_SECRET_KEY and WORKSPACE_CREATION_SECRET must be real values (not dev-placeholder).
 #  - Place a reverse proxy (e.g. nginx/Caddy/Traefik) in front of port 8080
 #    and 5173 (mapped to frontend container port 8080) before exposing them to
 #    the internet.
