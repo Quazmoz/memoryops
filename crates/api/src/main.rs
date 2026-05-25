@@ -111,6 +111,9 @@ async fn build_state(
     let trusted_proxy_cidrs = Arc::new(parse_trusted_proxy_cidrs());
 
     let db = connect_pool(&database_url, &config.database).await?;
+    tracing::info!("running database migrations...");
+    common::db::run_migrations(&db).await
+        .map_err(|error| anyhow::anyhow!("failed to run database migrations: {error}"))?;
     ensure_skill_secret_configuration(&db).await?;
     let redis = {
         let cfg = deadpool_redis::Config::from_url(&redis_url);

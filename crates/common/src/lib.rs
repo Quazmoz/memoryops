@@ -14,4 +14,7 @@ pub mod workspace_config;
 
 pub use config::AppConfig;
 pub use error::{AppError, ConfigError, ProviderError};
-pub use state::{build_embedding_provider, build_llm_provider, AppState};
+pub use state::{
+    build_embedding_provider, build_embedding_provider_for_workspace, build_llm_provider,
+    build_llm_provider_for_workspace, AppState,
+};

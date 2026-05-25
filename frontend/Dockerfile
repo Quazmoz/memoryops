@@ -10,7 +10,7 @@ ARG VITE_API_BASE_URL=/api
 ARG VITE_MEMORYOPS_WORKSPACE_ID
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_MEMORYOPS_WORKSPACE_ID=$VITE_MEMORYOPS_WORKSPACE_ID
-RUN npm run build
+RUN npx tsc -b && npx vite build
 
 # Use the unprivileged nginx image so the container runs as uid 101 (nginx)
 # rather than root.  Ports < 1024 require extra capability; we listen on 8080

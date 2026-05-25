@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use axum::{extract::Path, extract::State, Extension, Json};
 use common::{
     audit::spawn_audit_log,

@@ -37,6 +37,7 @@ impl<'a> VectorIndexService<'a> {
                     .wait(true),
             )
             .await
+            .map(|_| ())
             .map_err(|error| AppError::Internal(anyhow!("failed to delete vector points: {error}")))
     }
 

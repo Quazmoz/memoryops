@@ -411,9 +411,30 @@ fn parse_xautoclaim_reply(value: Value) -> anyhow::Result<Vec<StreamId>> {
     match value {
         Value::Nil => Ok(Vec::new()),
         Value::Array(values) if values.len() >= 2 => {
-            from_redis_value(&values[1]).map_err(Into::into)
+            match &values[1] {
+                Value::Array(msgs) => {
+                    let mut result = Vec::with_capacity(msgs.len());
+                    for msg in msgs {
+                        result.push(parse_stream_id(msg)?);
+                    }
+                    Ok(result)
+                }
+                Value::Nil => Ok(Vec::new()),
+                other => Err(anyhow!("unexpected messages part in XAUTOCLAIM reply: {other:?}")),
+            }
         }
         other => Err(anyhow!("unexpected XAUTOCLAIM reply: {other:?}")),
+    }
+}
+
+fn parse_stream_id(value: &Value) -> anyhow::Result<StreamId> {
+    match value {
+        Value::Array(arr) if arr.len() == 2 => {
+            let id: String = from_redis_value(&arr[0])?;
+            let map: std::collections::HashMap<String, Value> = from_redis_value(&arr[1])?;
+            Ok(StreamId { id, map })
+        }
+        other => Err(anyhow!("invalid StreamId value: {other:?}")),
     }
 }
 
