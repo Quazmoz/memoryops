@@ -1,7 +1,7 @@
 pub mod decay;
 pub mod eligibility;
 
-use common::AppState;
+use common::{services::WorkspaceConfigService, AppState};
 use uuid::Uuid;
 
 use crate::{access, store};
@@ -30,7 +30,9 @@ async fn check_one(
         return Ok(());
     };
 
-    let config = common::workspace_config::load_workspace_config(&state.db, workspace_id).await?;
+    let config = WorkspaceConfigService::new(state.db.clone())
+        .load(workspace_id)
+        .await?;
 
     if eligibility::is_eligible_for_promotion(&unit, access_count, &config) {
         store::promote_to_semantic(&state.db, memory_id, workspace_id).await?;

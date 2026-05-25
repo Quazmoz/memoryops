@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use common::{auth::AuthContext, error::AppResult, models::WorkspaceConfig, AppError, AppState};
+use common::{
+    auth::AuthContext, error::AppResult, models::WorkspaceConfig,
+    services::WorkspaceConfigService, AppError, AppState,
+};
 use uuid::Uuid;
 
 pub mod create;
@@ -49,5 +52,7 @@ pub(crate) async fn fetch_workspace_config(
     state: &AppState,
     workspace_id: Uuid,
 ) -> AppResult<WorkspaceConfig> {
-    common::workspace_config::load_workspace_config(&state.db, workspace_id).await
+    WorkspaceConfigService::new(state.db.clone())
+        .load(workspace_id)
+        .await
 }

@@ -1,6 +1,5 @@
 use common::{error::AppResult, AppError, AppState};
-use qdrant_client::qdrant::DeletePointsBuilder;
-use retrieval::store;
+use retrieval::{services::MemoryDeletionService, store};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -183,15 +182,13 @@ async fn soft_delete_if_active(
     workspace_id: Uuid,
     memory_id: Uuid,
 ) -> AppResult<()> {
-    let deleted = store::soft_delete_memory_unit(&state.db, memory_id, workspace_id).await?;
-    if deleted.is_some() {
-        let request = DeletePointsBuilder::new(processor::embedder::COLLECTION_NAME)
-            .points([memory_id.to_string()])
-            .wait(true);
-        if let Err(error) = state.qdrant.delete_points(request).await {
-            tracing::warn!(error = ?error, memory_id = %memory_id, "failed to delete Qdrant point for contradiction resolution");
-        }
-    }
+    MemoryDeletionService::new(
+        state,
+        processor::embedder::COLLECTION_NAME,
+        "MCP contradiction resolution",
+    )
+    .soft_delete_optional(memory_id, workspace_id)
+    .await?;
     Ok(())
 }
 

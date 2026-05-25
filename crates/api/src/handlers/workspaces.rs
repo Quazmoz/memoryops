@@ -18,6 +18,7 @@ use common::{
     auth::AuthContext,
     error::AppResult,
     models::{AuditAction, ContradictionMode, MemoryUnit, Workspace, WorkspaceConfig},
+    services::VectorIndexService,
     AppError, AppState,
 };
 use futures_util::StreamExt;
@@ -27,7 +28,6 @@ use processor::{
     config::fetch_workspace_promotion_config,
     promoter::{run_promotion_pass, PromotionReport},
 };
-use qdrant_client::qdrant::DeletePointsBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
@@ -1031,23 +1031,11 @@ async fn purge_workspace_associations(state: &AppState, workspace_id: Uuid) -> A
     .await
     .map_err(AppError::Database)?;
 
+    let vector_index = VectorIndexService::new(&state.qdrant, COLLECTION_NAME);
     for row in &embedded_ids {
-        if let Err(error) = state
-            .qdrant
-            .delete_points(
-                DeletePointsBuilder::new(COLLECTION_NAME)
-                    .points([row.id.to_string()])
-                    .wait(true),
-            )
-            .await
-        {
-            tracing::warn!(
-                error = ?error,
-                workspace_id = %workspace_id,
-                memory_id = %row.id,
-                "failed to delete workspace point from Qdrant"
-            );
-        }
+        vector_index
+            .delete_point_best_effort(row.id, "workspace purge")
+            .await;
     }
 
     sqlx::query(

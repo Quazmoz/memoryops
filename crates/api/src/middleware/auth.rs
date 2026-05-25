@@ -6,8 +6,8 @@ use axum::{
     response::Response,
 };
 use common::{
-    auth::{spawn_last_used_update, validate_api_key, validate_api_key_cached},
     error::AppResult,
+    services::AuthService,
     AppError, AppState,
 };
 use uuid::Uuid;
@@ -28,17 +28,9 @@ pub async fn require_api_key(
     let api_key = api_key_header
         .to_str()
         .map_err(|_| AppError::Unauthorized)?;
-    let context = match state.redis.get().await {
-        Ok(mut redis) => validate_api_key_cached(&state.db, &mut redis, api_key).await?,
-        Err(error) => {
-            tracing::warn!(
-                error = ?error,
-                "auth cache unavailable; falling back to database API key validation"
-            );
-            validate_api_key(&state.db, api_key).await?
-        }
-    };
-    spawn_last_used_update(state.db.clone(), context.key_id);
+    let context = AuthService::from_state(&state)
+        .authenticate_api_key(api_key)
+        .await?;
     request.extensions_mut().insert(context);
 
     Ok(next.run(request).await)

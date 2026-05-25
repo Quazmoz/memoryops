@@ -124,6 +124,12 @@ jobs:
       - name: Lint OpenAPI contract
         run: npx --yes @stoplight/spectral-cli lint docs/openapi.yaml
 
+      - name: Check backend route parity
+        run: node scripts/check-openapi-routes.mjs
+
+      - name: Check generated frontend API contract
+        run: node scripts/generate-openapi-client.mjs --check
+
   integration-tests:
     name: Ignored integration tests
     runs-on: ubuntu-latest

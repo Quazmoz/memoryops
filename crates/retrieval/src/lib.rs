@@ -3,6 +3,7 @@ pub mod dto;
 pub mod handlers;
 pub mod promotion;
 pub mod search;
+pub mod services;
 pub mod store;
 
 use axum::{

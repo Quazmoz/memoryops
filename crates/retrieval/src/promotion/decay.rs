@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use common::{
     error::AppResult,
     models::{DEFAULT_DECAY_HALF_LIFE_DAYS, DEFAULT_PRUNING_THRESHOLD},
-    workspace_config::load_workspace_config,
+    services::WorkspaceConfigService,
     AppState,
 };
 use uuid::Uuid;
@@ -12,7 +12,9 @@ use crate::store;
 pub const SECONDS_PER_DAY: f64 = 86_400.0;
 
 pub async fn run_decay_pass(state: &AppState, workspace_id: Uuid) -> AppResult<u64> {
-    let config = load_workspace_config(&state.db, workspace_id).await?;
+    let config = WorkspaceConfigService::new(state.db.clone())
+        .load(workspace_id)
+        .await?;
     let half_life_days = config
         .decay_half_life_days
         .unwrap_or(DEFAULT_DECAY_HALF_LIFE_DAYS);

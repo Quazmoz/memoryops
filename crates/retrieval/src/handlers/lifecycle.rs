@@ -12,19 +12,17 @@ use common::{
     models::{AuditAction, MemoryType, MemoryUnit, MemoryVersion},
     AppError, AppState,
 };
-use qdrant_client::{
-    qdrant::{PointsIdsList, SetPayloadPointsBuilder},
-    Payload,
-};
+use qdrant_client::{qdrant::{PointsIdsList, SetPayloadPointsBuilder}, Payload};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use processor::{embedder::Embedder, worker::enqueue_slow_job};
+use processor::worker::enqueue_slow_job;
 
 use crate::{
     dto::MemoryUnitDto,
     search::vector::COLLECTION_NAME,
+    services::MemoryDeletionService,
     store::{self, BulkStoreAction},
 };
 
@@ -71,16 +69,13 @@ pub async fn handle_delete(
         .ok_or_else(|| AppError::NotFound {
             resource: format!("memory:{id}"),
         })?;
-    let deleted = store::soft_delete_memory_unit(&state.db, id, workspace_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            resource: format!("memory:{id}"),
-        })?;
-
-    let embedder = Embedder::from_state(&state);
-    if let Err(error) = embedder.delete_point(id).await {
-        tracing::warn!(error = ?error, memory_id = %id, "failed to delete Qdrant point for soft-deleted memory");
-    }
+    let deleted = MemoryDeletionService::new(
+        &state,
+        COLLECTION_NAME,
+        "retrieval memory delete",
+    )
+    .soft_delete_required(id, workspace_id)
+    .await?;
 
     spawn_audit_log(
         state.db.clone(),

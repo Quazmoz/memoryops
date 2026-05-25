@@ -21,6 +21,9 @@ tags:
   - name: Audit
   - name: DLQ
   - name: Export
+  - name: Tags
+  - name: Skills
+  - name: Contradictions
   - name: Health
 paths:
   /v1/ingest/github/{workspace_id}:
@@ -516,8 +519,9 @@ paths:
       tags: [Workspaces]
       operationId: createWorkspace
       summary: Create a workspace
-      description: Creates a tenant workspace that owns memory, keys, integrations, and configuration.
-      security: []
+      description: Creates a tenant workspace that owns memory, keys, integrations, and configuration. Requires the workspace creation secret in the x-admin-token header.
+      security:
+        - AdminTokenAuth: []
       requestBody:
         required: true
         content:
@@ -530,9 +534,11 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Workspace'
+                $ref: '#/components/schemas/CreateWorkspaceResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v1/workspaces/me:
     get:
       tags: [Workspaces]
@@ -567,6 +573,43 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Workspaces]
+      operationId: deleteWorkspace
+      summary: Delete a workspace
+      description: Soft-deletes the authenticated workspace and removes associated vector points.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '204':
+          description: Workspace deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/stats:
+    get:
+      tags: [Workspaces]
+      operationId: getWorkspaceStats
+      summary: Get workspace statistics
+      description: Returns aggregate memory counts and scoring statistics for the authenticated workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Workspace statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceStats'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/workspaces/{id}/stats/history:
     get:
       tags: [Workspaces]
@@ -596,6 +639,33 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/tags:
+    get:
+      tags: [Tags]
+      operationId: listWorkspaceTags
+      summary: List workspace tags
+      description: Returns tag names and counts for non-deleted memories in the authenticated workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/Limit'
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Workspace tags
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/workspaces/{id}/metrics:
     get:
       tags: [Workspaces]
@@ -656,6 +726,347 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
+  /v1/workspaces/{id}/import:
+    post:
+      tags: [Workspaces]
+      operationId: importWorkspaceMemory
+      summary: Import workspace memories
+      description: Imports newline-delimited JSON memory records into the authenticated workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Import summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportMemoriesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/workspaces/{workspace_id}/forget/user/{user_id}:
+    delete:
+      tags: [Workspaces]
+      operationId: forgetUserData
+      summary: Forget user data
+      description: Soft-deletes or hard-purges memories scoped to a user according to workspace compliance configuration.
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User erasure summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForgetUserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/workspaces/{id}/reindex:
+    post:
+      tags: [Workspaces]
+      operationId: reindexWorkspace
+      summary: Reindex workspace memories
+      description: Enqueues memories missing embeddings for re-embedding. When force is true, embedding IDs are cleared before enqueueing.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: force
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Reindex enqueue summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReindexResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/workspaces/{id}/skills:
+    get:
+      tags: [Skills]
+      operationId: listSkills
+      summary: List workspace skills
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/After'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Workspace skills
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Skill'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Skills]
+      operationId: createSkill
+      summary: Create a workspace skill
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillWriteRequest'
+      responses:
+        '200':
+          description: Skill created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/workspaces/{id}/skills/{name}:
+    get:
+      tags: [Skills]
+      operationId: getSkill
+      summary: Get a workspace skill
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/SkillName'
+      responses:
+        '200':
+          description: Skill
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Skills]
+      operationId: updateSkill
+      summary: Update a workspace skill
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/SkillName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillUpdateRequest'
+      responses:
+        '200':
+          description: Skill updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Skills]
+      operationId: deleteSkill
+      summary: Delete a workspace skill
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/SkillName'
+      responses:
+        '204':
+          description: Skill deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/skills/{name}/secret:
+    get:
+      tags: [Skills]
+      operationId: getSkillSecret
+      summary: Get a skill secret
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/SkillName'
+      responses:
+        '200':
+          description: Skill secret
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillSecret'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/skills/{name}/test:
+    post:
+      tags: [Skills]
+      operationId: testSkill
+      summary: Test a workspace skill
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/SkillName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Skill test response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillTestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/contradictions:
+    get:
+      tags: [Contradictions]
+      operationId: listContradictions
+      summary: List contradiction flags
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Contradiction flags
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContradictionListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/contradictions/count:
+    get:
+      tags: [Contradictions]
+      operationId: getContradictionCount
+      summary: Count open contradiction flags
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Open contradiction count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContradictionCountResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/contradictions/{flag_id}/resolve:
+    post:
+      tags: [Contradictions]
+      operationId: resolveContradiction
+      summary: Resolve a contradiction flag
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/FlagId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveContradictionRequest'
+      responses:
+        '200':
+          description: Resolved contradiction flag
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContradictionItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/contradictions/bulk-dismiss:
+    post:
+      tags: [Contradictions]
+      operationId: bulkDismissContradictions
+      summary: Dismiss contradiction flags in bulk
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkDismissRequest'
+      responses:
+        '200':
+          description: Bulk dismissal summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkDismissResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v1/workspaces/{id}/integrations:
     post:
       tags: [Workspaces]
@@ -887,6 +1298,96 @@ paths:
                 type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/memory/{id}/provenance:
+    get:
+      tags: [Memory]
+      operationId: getMemoryProvenance
+      summary: Get memory provenance graph
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+        - name: workspace_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Provenance graph
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvenanceGraph'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/memory/{id}/feedback:
+    get:
+      tags: [Memory]
+      operationId: listMemoryFeedback
+      summary: List retrieval feedback for a memory
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+        - name: workspace_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Retrieval feedback
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Memory]
+      operationId: submitMemoryFeedback
+      summary: Submit retrieval feedback for a memory
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+        - name: workspace_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitFeedbackRequest'
+      responses:
+        '200':
+          description: Updated memory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryUnit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
   /health:
     get:
       tags: [Health]
@@ -921,12 +1422,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReadinessResponse'
+  /health/system:
+    get:
+      tags: [Health]
+      operationId: systemHealth
+      summary: Structured system health check
+      description: Returns dependency health checks with latency and diagnostic messages.
+      security: []
+      responses:
+        '200':
+          description: System health details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealthResponse'
 components:
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
       in: header
       name: X-API-Key
+    AdminTokenAuth:
+      type: apiKey
+      in: header
+      name: x-admin-token
   parameters:
     After:
       name: after
@@ -982,6 +1501,19 @@ components:
       required: true
       schema:
         type: string
+    SkillName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+    FlagId:
+      name: flag_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   responses:
     BadRequest:
       description: Bad request
@@ -991,6 +1523,12 @@ components:
             $ref: '#/components/schemas/ErrorEnvelope'
     Unauthorized:
       description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Forbidden:
+      description: Authenticated credentials do not allow this operation
       content:
         application/json:
           schema:
@@ -1665,6 +2203,17 @@ components:
         name:
           type: string
           minLength: 1
+        config:
+          $ref: '#/components/schemas/WorkspaceConfig'
+    CreateWorkspaceResponse:
+      type: object
+      required: [workspace_id, api_key]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        api_key:
+          type: string
     Workspace:
       type: object
       required: [id, name, config, created_at, updated_at]
@@ -1683,6 +2232,45 @@ components:
           type: string
           format: date-time
         deleted_at:
+          type: [string, 'null']
+          format: date-time
+    WorkspaceStats:
+      type: object
+      required:
+        - total_memories
+        - episodic_count
+        - semantic_count
+        - pinned_count
+        - deleted_count
+        - avg_importance_score
+        - avg_decay_score
+        - memories_created_7d
+        - memories_created_30d
+      properties:
+        total_memories:
+          type: integer
+        episodic_count:
+          type: integer
+        semantic_count:
+          type: integer
+        pinned_count:
+          type: integer
+        deleted_count:
+          type: integer
+        avg_importance_score:
+          type: number
+          format: double
+        avg_decay_score:
+          type: number
+          format: double
+        memories_created_7d:
+          type: integer
+        memories_created_30d:
+          type: integer
+        oldest_memory_at:
+          type: [string, 'null']
+          format: date-time
+        newest_memory_at:
           type: [string, 'null']
           format: date-time
     WorkspaceConfig:
@@ -1773,6 +2361,322 @@ components:
         soft_deleted:
           type: integer
           minimum: 0
+    TagsResponse:
+      type: object
+      required: [tags]
+      properties:
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/TagSummary'
+        next_cursor:
+          type: [string, 'null']
+    TagSummary:
+      type: object
+      required: [name, count]
+      properties:
+        name:
+          type: string
+        count:
+          type: integer
+    ImportMemoriesResponse:
+      type: object
+      required: [imported, skipped, errors]
+      properties:
+        imported:
+          type: integer
+        skipped:
+          type: integer
+        errors:
+          type: integer
+    ReindexResponse:
+      type: object
+      required: [enqueued]
+      properties:
+        enqueued:
+          type: integer
+        next_cursor:
+          type: [string, 'null']
+          format: uuid
+    SkillWriteRequest:
+      type: object
+      required: [name, description, endpoint_url]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        endpoint_url:
+          type: string
+          format: uri
+        http_method:
+          type: string
+          enum: [GET, POST, PUT]
+        input_schema:
+          type: object
+          additionalProperties: true
+        output_schema:
+          type: object
+          additionalProperties: true
+        auth_header:
+          type: [string, 'null']
+        auth_secret:
+          type: [string, 'null']
+    SkillUpdateRequest:
+      type: object
+      properties:
+        description:
+          type: string
+        endpoint_url:
+          type: string
+          format: uri
+        http_method:
+          type: string
+          enum: [GET, POST, PUT]
+        input_schema:
+          type: object
+          additionalProperties: true
+        output_schema:
+          type: object
+          additionalProperties: true
+        auth_header:
+          type: [string, 'null']
+        auth_secret:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+    Skill:
+      type: object
+      required:
+        - id
+        - workspace_id
+        - name
+        - description
+        - endpoint_url
+        - http_method
+        - input_schema
+        - output_schema
+        - enabled
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        endpoint_url:
+          type: string
+          format: uri
+        http_method:
+          type: string
+        input_schema:
+          type: object
+          additionalProperties: true
+        output_schema:
+          type: object
+          additionalProperties: true
+        auth_header:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SkillSecret:
+      type: object
+      required: [plaintext_secret]
+      properties:
+        auth_header:
+          type: [string, 'null']
+        plaintext_secret:
+          type: string
+    SkillTestResponse:
+      type: object
+      required: [status, latency_ms]
+      properties:
+        status:
+          type: integer
+        latency_ms:
+          type: integer
+        body:
+          description: JSON response body returned by the skill endpoint.
+    ContradictionListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContradictionItem'
+        next_cursor:
+          type: [string, 'null']
+          format: uuid
+    ContradictionItem:
+      type: object
+      required: [id, workspace_id, memory_a, memory_b, similarity, conflict_score, resolution, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        memory_a:
+          $ref: '#/components/schemas/ContradictionMemoryRef'
+        memory_b:
+          $ref: '#/components/schemas/ContradictionMemoryRef'
+        similarity:
+          type: number
+          format: float
+        conflict_score:
+          type: number
+          format: float
+        resolution:
+          type: string
+        resolved_by:
+          type: [string, 'null']
+        resolved_at:
+          type: [string, 'null']
+          format: date-time
+        notes:
+          type: [string, 'null']
+        kept_memory_id:
+          type: [string, 'null']
+          format: uuid
+        discarded_memory_id:
+          type: [string, 'null']
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+    ContradictionMemoryRef:
+      type: object
+      required: [id, content_preview, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        content_preview:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    ContradictionCountResponse:
+      type: object
+      required: [open]
+      properties:
+        open:
+          type: integer
+    ResolveContradictionRequest:
+      type: object
+      required: [resolution]
+      properties:
+        resolution:
+          type: string
+        notes:
+          type: [string, 'null']
+    BulkDismissRequest:
+      type: object
+      required: [flag_ids]
+      properties:
+        flag_ids:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+        notes:
+          type: [string, 'null']
+    BulkDismissResponse:
+      type: object
+      required: [dismissed]
+      properties:
+        dismissed:
+          type: integer
+    ProvenanceGraph:
+      type: object
+      required: [root_id, nodes, edges]
+      properties:
+        root_id:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceEdge'
+    ProvenanceNode:
+      type: object
+      required: [id, node_type, title, metadata]
+      properties:
+        id:
+          type: string
+        node_type:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: [string, 'null']
+        timestamp:
+          type: [string, 'null']
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+    ProvenanceEdge:
+      type: object
+      required: [from, to, edge_type]
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        edge_type:
+          type: string
+    SubmitFeedbackRequest:
+      type: object
+      required: [query_id, rating]
+      properties:
+        query_id:
+          type: string
+        rating:
+          type: integer
+          minimum: -1
+          maximum: 1
+        agent_id:
+          type: [string, 'null']
+        user_id:
+          type: [string, 'null']
+        comment:
+          type: [string, 'null']
+          maxLength: 500
+    FeedbackResponse:
+      type: object
+      additionalProperties: true
+    ForgetUserResponse:
+      type: object
+      required: [user_id, memories_purged, raw_events_purged, mode]
+      properties:
+        user_id:
+          type: string
+        memories_purged:
+          type: integer
+        raw_events_purged:
+          type: integer
+        mode:
+          type: string
+          enum: [soft_delete, hard_purge]
     IntegrationRequest:
       type: object
       required: [source]
@@ -1915,17 +2819,42 @@ components:
               type: string
             qdrant:
               type: string
+    SystemHealthResponse:
+      type: object
+      required: [status, checks, checked_at]
+      properties:
+        status:
+          type: string
+          enum: [ok, warn, error]
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/HealthCheck'
+        checked_at:
+          type: string
+          format: date-time
+    HealthCheck:
+      type: object
+      required: [name, status, latency_ms, message]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [ok, warn, error]
+        latency_ms:
+          type: [integer, 'null']
+        message:
+          type: [string, 'null']
     ErrorEnvelope:
       type: object
       required: [error]
       properties:
         error:
           type: object
-          required: [code, message, request_id]
+          required: [code, message]
           properties:
             code:
               type: string
             message:
-              type: string
-            request_id:
               type: string

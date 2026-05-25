@@ -4,8 +4,8 @@ use common::{
     audit::spawn_audit_log, auth::AuthContext, error::AppResult, models::AuditAction, AppError,
     AppState,
 };
-use processor::embedder::Embedder;
-use retrieval::store::soft_delete_memory_unit;
+use processor::embedder::COLLECTION_NAME;
+use retrieval::services::MemoryDeletionService;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -315,14 +315,9 @@ async fn resolve_keep(
         ));
     }
 
-    // Soft-delete the loser
-    soft_delete_memory_unit(&state.db, loser_id, workspace_id).await?;
-
-    // Remove the loser's Qdrant point (best-effort)
-    let embedder = Embedder::from_state(state);
-    if let Err(error) = embedder.delete_point(loser_id).await {
-        tracing::warn!(error = ?error, memory_id = %loser_id, "failed to delete Qdrant point for discarded memory");
-    }
+    MemoryDeletionService::new(state, COLLECTION_NAME, "API contradiction resolution")
+        .soft_delete_required(loser_id, workspace_id)
+        .await?;
 
     // Update the flag: set resolution + kept/discarded ids
     let row = sqlx::query_as::<_, ContradictionRow>(

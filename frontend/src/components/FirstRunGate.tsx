@@ -30,6 +30,7 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
   const setWorkspace = useAppStore((state) => state.setWorkspace);
   const setWorkspaceId = useAppStore((state) => state.setWorkspaceId);
   const [workspaceName, setWorkspaceName] = useState("MemoryOps Workspace");
+  const [adminToken, setAdminToken] = useState("");
   const [step, setStep] = useState<FirstRunStep>(() =>
     workspaceId.trim().length > 0 ? "key" : "workspace"
   );
@@ -64,7 +65,8 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
 
   const workspaceMutation = useMutation({
     mutationKey: ["first-run", "workspace"],
-    mutationFn: (name: string) => createWorkspace(name.trim()),
+    mutationFn: ({ name, token }: { name: string; token: string }) =>
+      createWorkspace(name.trim(), token.trim()),
     onSuccess: (workspace) => {
       setWorkspaceId(workspace.id);
       if (workspace.api_key) {
@@ -92,8 +94,9 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
   function submitWorkspace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const name = workspaceName.trim();
-    if (name.length > 0) {
-      workspaceMutation.mutate(name);
+    const token = adminToken.trim();
+    if (name.length > 0 && token.length > 0) {
+      workspaceMutation.mutate({ name, token });
     }
   }
 
@@ -165,12 +168,23 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
                     onChange={(event) => setWorkspaceName(event.target.value)}
                   />
                 </label>
+                <label className="grid gap-2 text-sm font-medium text-ink/70">
+                  Admin token
+                  <Input
+                    data-testid="workspace-admin-token-input"
+                    type="password"
+                    autoComplete="current-password"
+                    value={adminToken}
+                    onChange={(event) => setAdminToken(event.target.value)}
+                  />
+                </label>
                 <Button
                   type="submit"
                   data-testid="create-workspace-button"
                   disabled={
                     workspaceMutation.isPending ||
-                    workspaceName.trim().length === 0
+                    workspaceName.trim().length === 0 ||
+                    adminToken.trim().length === 0
                   }
                 >
                   {workspaceMutation.isPending ? (

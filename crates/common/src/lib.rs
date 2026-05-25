@@ -6,6 +6,7 @@ pub mod db;
 pub mod error;
 pub mod models;
 pub mod providers;
+pub mod services;
 pub mod state;
 pub mod telemetry;
 pub mod tokens;

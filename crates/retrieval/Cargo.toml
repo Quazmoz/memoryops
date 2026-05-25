@@ -22,7 +22,6 @@ redis.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
-tiktoken-rs.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
@@ -31,3 +30,4 @@ validator.workspace = true
 
 [dev-dependencies]
 proptest = "1"
+tiktoken-rs.workspace = true

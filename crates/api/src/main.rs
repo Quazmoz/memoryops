@@ -6,14 +6,13 @@ use axum::{
 };
 use chrono::Utc;
 use common::{
-    build_embedding_provider, build_llm_provider, config::AppConfig, telemetry::init_telemetry,
-    AppState,
+    build_embedding_provider, build_llm_provider, config::AppConfig, db::connect_pool,
+    telemetry::init_telemetry, AppState,
 };
 use qdrant_client::Qdrant;
 use retrieval::retrieval_router;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::postgres::PgPoolOptions;
 use tokio::sync::Semaphore;
 
 #[cfg(test)]
@@ -111,12 +110,7 @@ async fn build_state(
         std::env::var("QDRANT_URL").map_err(|_| anyhow::anyhow!("QDRANT_URL not set"))?;
     let trusted_proxy_cidrs = Arc::new(parse_trusted_proxy_cidrs());
 
-    let db = PgPoolOptions::new()
-        .max_connections(config.database.max_connections)
-        .min_connections(config.database.min_connections)
-        .acquire_timeout(Duration::from_secs(config.database.connect_timeout_secs))
-        .connect(&database_url)
-        .await?;
+    let db = connect_pool(&database_url, &config.database).await?;
     ensure_skill_secret_configuration(&db).await?;
     let redis = {
         let cfg = deadpool_redis::Config::from_url(&redis_url);

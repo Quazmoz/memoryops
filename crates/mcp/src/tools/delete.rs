@@ -1,6 +1,5 @@
 use common::{error::AppResult, AppError, AppState};
-use qdrant_client::qdrant::DeletePointsBuilder;
-use retrieval::store;
+use retrieval::{services::MemoryDeletionService, store};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -51,18 +50,13 @@ pub async fn run(
         )));
     }
 
-    store::soft_delete_memory_unit(&state.db, input.memory_id, workspace_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            resource: format!("memory:{}", input.memory_id),
-        })?;
-
-    let request = DeletePointsBuilder::new(processor::embedder::COLLECTION_NAME)
-        .points([input.memory_id.to_string()])
-        .wait(true);
-    if let Err(error) = state.qdrant.delete_points(request).await {
-        tracing::warn!(error = ?error, memory_id = %input.memory_id, "failed to delete Qdrant point for MCP memory_delete");
-    }
+    MemoryDeletionService::new(
+        state,
+        processor::embedder::COLLECTION_NAME,
+        "MCP memory_delete",
+    )
+    .soft_delete_required(input.memory_id, workspace_id)
+    .await?;
 
     Ok(DeleteOutput {
         deleted: true,

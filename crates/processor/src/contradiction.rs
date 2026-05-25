@@ -285,7 +285,9 @@ fn scored_point_uuid(point: &ScoredPoint) -> Option<Uuid> {
 }
 
 pub async fn fetch_workspace_config(db: &PgPool, workspace_id: Uuid) -> AppResult<WorkspaceConfig> {
-    common::workspace_config::load_workspace_config(db, workspace_id).await
+    common::services::WorkspaceConfigService::new(db.clone())
+        .load(workspace_id)
+        .await
 }
 
 #[cfg(test)]

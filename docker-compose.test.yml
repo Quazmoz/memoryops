@@ -27,7 +27,7 @@ services:
       retries: 10
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.13.6
     ports:
       - "16333:6333"
       - "16334:6334"

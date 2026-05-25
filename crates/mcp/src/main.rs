@@ -1,15 +1,14 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use common::{
     build_embedding_provider, build_llm_provider, config::AppConfig,
-    crypto::app_secret_key_from_env, telemetry::init_telemetry, AppState,
+    crypto::app_secret_key_from_env, db::connect_pool, telemetry::init_telemetry, AppState,
 };
 use mcp::{
     server::{McpServer, RuntimeBackend},
     transport, MCP_PROTOCOL_VERSION,
 };
 use qdrant_client::Qdrant;
-use sqlx::postgres::PgPoolOptions;
 use tokio::sync::Semaphore;
 
 #[tokio::main]
@@ -68,12 +67,7 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
     let app_secret_key = app_secret_key_from_env()
         .map_err(|_| anyhow::anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
 
-    let db = PgPoolOptions::new()
-        .max_connections(config.database.max_connections)
-        .min_connections(config.database.min_connections)
-        .acquire_timeout(Duration::from_secs(config.database.connect_timeout_secs))
-        .connect(&database_url)
-        .await?;
+    let db = connect_pool(&database_url, &config.database).await?;
     let redis = {
         let cfg = deadpool_redis::Config::from_url(&redis_url);
         cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))

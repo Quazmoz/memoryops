@@ -6,7 +6,7 @@ use common::{
         Entity, FeedbackEntry, FeedbackResponse, MemoryScope, MemoryType, MemoryUnit,
         MemoryVersion, ScopeVisibility, DEFAULT_DECAY_HALF_LIFE_DAYS, DEFAULT_PRUNING_THRESHOLD,
     },
-    workspace_config,
+    services::WorkspaceConfigService,
     AppError,
 };
 use sqlx::{types::Json, PgPool, Postgres, QueryBuilder};
@@ -1336,7 +1336,9 @@ fn push_as_of_existence_filter(builder: &mut QueryBuilder<'_, Postgres>, as_of: 
 }
 
 async fn fetch_workspace_half_life_days(db: &PgPool, workspace_id: Uuid) -> AppResult<f64> {
-    workspace_config::load_workspace_half_life_days(db, workspace_id).await
+    WorkspaceConfigService::new(db.clone())
+        .half_life_days(workspace_id)
+        .await
 }
 
 fn sort_direction(direction: SortDirection) -> &'static str {

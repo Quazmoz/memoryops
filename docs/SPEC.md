@@ -790,7 +790,7 @@ Full per-component score breakdown (`semantic_similarity`, `importance`, `recenc
 ### 12.1 Conventions
 
 - **Versioning:** All routes prefixed `/v1/`
-- **Auth:** `X-API-Key` header required on all routes except `/v1/ingest/*` and `/health`
+- **Auth:** `X-API-Key` header required on all routes except `/v1/ingest/*`, `/health`, and `POST /v1/workspaces` (which requires `x-admin-token`)
 - **Content-Type:** `application/json` for all request/response bodies
 - **Pagination:** cursor-based on list endpoints (`?after=<cursor>&limit=<n>`, default limit 20, max 100)
 - **Errors:** unified error envelope (see §14)
@@ -804,8 +804,7 @@ Full per-component score breakdown (`semantic_similarity`, `importance`, `recenc
 {
   "error": {
     "code": "memory_not_found",
-    "message": "Memory unit with id 'abc...' not found",
-    "request_id": "req_01hx..."
+    "message": "Memory unit with id 'abc...' not found"
   }
 }
 ```

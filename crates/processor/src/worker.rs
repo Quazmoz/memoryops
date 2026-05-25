@@ -11,8 +11,8 @@ use common::{
     error::AppResult,
     models::{AuditAction, MemoryUnit},
     providers::LlmProvider,
+    services::WorkspaceConfigService,
     telemetry::{LLM_LATENCY, SLOW_PATH_FAILED, SLOW_PATH_PROCESSED},
-    workspace_config::load_workspace_config,
     AppError, AppState,
 };
 use ingestion::STREAM_KEY;
@@ -551,7 +551,9 @@ async fn process_slow_stream_message(
 }
 
 pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> {
-    let workspace_config = load_workspace_config(&state.db, job.workspace_id).await?;
+    let workspace_config = WorkspaceConfigService::new(state.db.clone())
+        .load(job.workspace_id)
+        .await?;
     let llm_provider = build_llm_provider_for_workspace(&state.config, &workspace_config);
     let embedding_provider =
         build_embedding_provider_for_workspace(&state.config, &workspace_config);
@@ -572,7 +574,8 @@ pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> 
     if let Some(updated_memory) = updated {
         let task_state = state.clone();
         tokio::spawn(async move {
-            let config = match load_workspace_config(&task_state.db, updated_memory.workspace_id)
+            let config = match WorkspaceConfigService::new(task_state.db.clone())
+                .load(updated_memory.workspace_id)
                 .await
             {
                 Ok(config) => config,

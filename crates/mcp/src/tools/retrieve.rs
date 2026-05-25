@@ -1,4 +1,4 @@
-use common::{error::AppResult, workspace_config::load_workspace_config, AppError, AppState};
+use common::{error::AppResult, services::WorkspaceConfigService, AppError, AppState};
 use retrieval::{
     dto::{SearchMode, SearchRequest},
     search::hybrid,
@@ -106,7 +106,10 @@ pub async fn run(
         include_workspace_pool: input.include_workspace_pool,
         inherited_workspace_pool_agent_ids: Vec::new(),
     };
-    request.apply_workspace_config(&load_workspace_config(&state.db, workspace_id).await?);
+    let workspace_config = WorkspaceConfigService::new(state.db.clone())
+        .load(workspace_id)
+        .await?;
+    request.apply_workspace_config(&workspace_config);
     let results = hybrid::hybrid_search(state, &request, limit).await?;
     let min_score = input.min_score.max(0.0);
     let token_budget = state.config.retrieval.default_token_budget;

@@ -21,6 +21,7 @@ use uuid::Uuid;
 use crate::{
     dto::{MemoryResult, ScopeFilter, SearchMode, SearchRequest, WorkspacePoolAccess, MAX_LIMIT},
     search::{hybrid, keyword, vector},
+    services::RetrievalService,
     store,
 };
 
@@ -144,11 +145,23 @@ pub async fn handle_retrieve(
     auth: Option<Extension<AuthContext>>,
     Json(request): Json<RetrieveRequest>,
 ) -> AppResult<Json<RetrieveResponse>> {
+    let auth_context = auth.as_ref().map(|extension| &extension.0);
+    let response = RetrievalService::new(&state)
+        .retrieve(auth_context, request)
+        .await?;
+
+    Ok(Json(response))
+}
+
+pub(crate) async fn execute_retrieve(
+    state: &AppState,
+    auth_context: Option<&AuthContext>,
+    request: RetrieveRequest,
+) -> AppResult<RetrieveResponse> {
     if request.query.trim().is_empty() {
         return Err(AppError::Validation("query is required".to_owned()));
     }
 
-    let auth_context = auth.as_ref().map(|extension| &extension.0);
     let workspace_id = resolve_workspace_id(auth_context, Some(request.workspace_id))?;
     let mode = request.mode.unwrap_or_default();
     let include_trace = request.include_trace.unwrap_or(false);
@@ -212,12 +225,12 @@ pub async fn handle_retrieve(
     persist_trace(&state, workspace_id, &trace).await?;
     RETRIEVAL_REQUESTS.add(1, &[]);
 
-    Ok(Json(RetrieveResponse {
+    Ok(RetrieveResponse {
         query_id,
         memories: packed.memories,
         total_tokens: packed.total_tokens,
         trace: if include_trace { Some(trace) } else { None },
-    }))
+    })
 }
 
 #[axum::debug_handler]

@@ -183,7 +183,7 @@ This document tracks all planned features across the platform with current statu
 | POST /v1/memory/merge | 🟢 | M6 | Appends source → target, soft-deletes source |
 | POST /v1/retrieve | 🟢 | M6 | |
 | GET /v1/retrieve/trace/:query_id | 🟢 | M6 | |
-| POST /v1/workspaces | 🟢 | M6 | Bootstrap, no auth required |
+| POST /v1/workspaces | 🟢 | M6 | Bootstrap, requires `x-admin-token` |
 | GET /v1/workspaces/:id | 🟢 | M6 | |
 | PATCH /v1/workspaces/:id/config | 🟢 | M6 | Scoring weights, thresholds, provider config |
 | POST /v1/workspaces/:id/integrations | 🟢 | M6 | |
