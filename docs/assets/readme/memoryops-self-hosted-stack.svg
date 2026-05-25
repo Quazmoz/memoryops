@@ -43,7 +43,7 @@
 <!-- Infrastructure -->
 <rect x="250" y="300" width="200" height="80" class="box" />
 <text x="350" y="335" class="text-main">Postgres</text>
-<text x="350" y="355" class="text-small">Events & State</text>
+<text x="350" y="355" class="text-small">Events &amp; State</text>
 
 <rect x="500" y="300" width="200" height="80" class="box" />
 <text x="600" y="335" class="text-main">Redis</text>
