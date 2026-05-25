@@ -144,6 +144,7 @@ impl Histogram<f64> {
 }
 
 pub static INGEST_EVENTS: Lazy<Counter<u64>> = Lazy::new(Counter::<u64>::new);
+pub static RAW_EVENT_PUBLISH_FAILED: Lazy<Counter<u64>> = Lazy::new(Counter::<u64>::new);
 pub static SLOW_PATH_PROCESSED: Lazy<Counter<u64>> = Lazy::new(Counter::<u64>::new);
 pub static SLOW_PATH_FAILED: Lazy<Counter<u64>> = Lazy::new(Counter::<u64>::new);
 pub static RETRIEVAL_REQUESTS: Lazy<Counter<u64>> = Lazy::new(Counter::<u64>::new);
@@ -154,6 +155,7 @@ pub static TOKEN_PACK_BUDGET_USED: Lazy<Histogram<f64>> = Lazy::new(Histogram::<
 #[derive(Debug, Clone, Serialize)]
 pub struct MetricsValues {
     pub ingest_events_total: Option<u64>,
+    pub raw_event_publish_failures_total: Option<u64>,
     pub slow_path_jobs_processed: Option<u64>,
     pub slow_path_jobs_failed: Option<u64>,
     pub retrieval_requests_total: Option<u64>,
@@ -167,6 +169,7 @@ pub struct MetricsValues {
 pub fn metrics_snapshot() -> MetricsValues {
     MetricsValues {
         ingest_events_total: INGEST_EVENTS.total(),
+        raw_event_publish_failures_total: RAW_EVENT_PUBLISH_FAILED.total(),
         slow_path_jobs_processed: SLOW_PATH_PROCESSED.total(),
         slow_path_jobs_failed: SLOW_PATH_FAILED.total(),
         retrieval_requests_total: RETRIEVAL_REQUESTS.total(),

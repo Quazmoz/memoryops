@@ -72,7 +72,6 @@ struct ErrorEnvelope {
 struct ErrorBody {
     code: &'static str,
     message: String,
-    request_id: String,
 }
 
 impl AppError {
@@ -126,7 +125,6 @@ impl IntoResponse for AppError {
             error: ErrorBody {
                 code,
                 message: self.client_message(),
-                request_id: String::new(),
             },
         };
 

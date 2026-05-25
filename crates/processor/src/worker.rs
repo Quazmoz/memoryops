@@ -9,9 +9,10 @@ use common::{
     audit::spawn_audit_log,
     build_embedding_provider_for_workspace, build_llm_provider_for_workspace,
     error::AppResult,
-    models::{AuditAction, MemoryUnit, WorkspaceConfig},
+    models::{AuditAction, MemoryUnit},
     providers::LlmProvider,
     telemetry::{LLM_LATENCY, SLOW_PATH_FAILED, SLOW_PATH_PROCESSED},
+    workspace_config::load_workspace_config,
     AppError, AppState,
 };
 use ingestion::STREAM_KEY;
@@ -550,9 +551,10 @@ async fn process_slow_stream_message(
 }
 
 pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> {
-    let workspace_config = fetch_workspace_config(&state.db, job.workspace_id).await?;
+    let workspace_config = load_workspace_config(&state.db, job.workspace_id).await?;
     let llm_provider = build_llm_provider_for_workspace(&state.config, &workspace_config);
-    let embedding_provider = build_embedding_provider_for_workspace(&state.config, &workspace_config);
+    let embedding_provider =
+        build_embedding_provider_for_workspace(&state.config, &workspace_config);
     let memory_store = PgSlowMemoryStore { db: &state.db };
     let embedder = QdrantSlowPathEmbedder {
         embedder: Embedder::new(embedding_provider, state.qdrant.clone()),
@@ -570,11 +572,8 @@ pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> 
     if let Some(updated_memory) = updated {
         let task_state = state.clone();
         tokio::spawn(async move {
-            let config = match contradiction::fetch_workspace_config(
-                &task_state.db,
-                updated_memory.workspace_id,
-            )
-            .await
+            let config = match load_workspace_config(&task_state.db, updated_memory.workspace_id)
+                .await
             {
                 Ok(config) => config,
                 Err(error) => {
@@ -592,21 +591,6 @@ pub async fn process_slow(state: &AppState, job: ProcessorJob) -> AppResult<()> 
     }
 
     Ok(())
-}
-
-async fn fetch_workspace_config(db: &PgPool, workspace_id: Uuid) -> AppResult<WorkspaceConfig> {
-    let value = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT config FROM workspaces WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(workspace_id)
-    .fetch_optional(db)
-    .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace:{workspace_id}"),
-    })?;
-
-    Ok(serde_json::from_value::<WorkspaceConfig>(value).unwrap_or_default())
 }
 
 async fn process_slow_with_dependencies(

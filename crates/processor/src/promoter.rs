@@ -512,10 +512,22 @@ fn report_for_cluster_plan(workspace_id: Uuid, plan: &ClusterPlan) -> PromotionR
 }
 
 fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
-    a.iter()
-        .zip(b.iter())
-        .map(|(left, right)| left * right)
-        .sum()
+    let (dot, norm_a, norm_b) = a.iter().zip(b.iter()).fold(
+        (0.0_f32, 0.0_f32, 0.0_f32),
+        |(dot, norm_a, norm_b), (left, right)| {
+            (
+                dot + left * right,
+                norm_a + left * left,
+                norm_b + right * right,
+            )
+        },
+    );
+
+    if norm_a <= f32::EPSILON || norm_b <= f32::EPSILON {
+        return 0.0;
+    }
+
+    dot / (norm_a.sqrt() * norm_b.sqrt())
 }
 
 #[cfg(test)]
@@ -527,6 +539,14 @@ mod tests {
         let vector = [1.0, 0.0, 0.0];
 
         assert!((cosine_sim(&vector, &vector) - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn cosine_sim_normalizes_non_unit_vectors() {
+        let left = [2.0, 0.0, 0.0];
+        let right = [4.0, 0.0, 0.0];
+
+        assert!((cosine_sim(&left, &right) - 1.0).abs() < 0.0001);
     }
 
     #[test]

@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     github::{parser::parse_github_event, signature::verify_signature},
-    queue::publish_raw_event,
+    queue::{publish_raw_event_with_mode, PublishMode},
     store::{find_raw_event_id_by_idempotency_key, insert_raw_event, workspace_exists, NewRawEvent},
     webhook::workspace_webhook_secret,
 };
@@ -90,7 +90,8 @@ pub async fn handle_github_webhook(
                 return;
             }
         };
-        let _ = publish_raw_event(&mut *redis, &queued_event).await;
+        let _ = publish_raw_event_with_mode(&mut *redis, &queued_event, PublishMode::BestEffort)
+            .await;
     });
 
     Ok((

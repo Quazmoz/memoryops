@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    queue::publish_raw_event,
+    queue::{publish_raw_event_with_mode, PublishMode},
     store::{find_raw_event_id_by_idempotency_key, insert_raw_event, NewRawEvent},
 };
 
@@ -45,11 +45,9 @@ pub async fn ingest_observation(
 
     let idempotency_key = idempotency_key(workspace_id, &input.agent_id, &input.content);
 
-    if find_raw_event_id_by_idempotency_key(&state.db, &idempotency_key)
+    if let Some(existing_id) = find_raw_event_id_by_idempotency_key(&state.db, &idempotency_key)
         .await?
-        .is_some()
     {
-        let existing_id = idempotency_key_to_uuid(&idempotency_key);
         return Ok(ObservationOutput {
             id: existing_id,
             status: "queued",
@@ -84,7 +82,8 @@ pub async fn ingest_observation(
                 return;
             }
         };
-        let _ = publish_raw_event(&mut *redis, &queued_event).await;
+        let _ = publish_raw_event_with_mode(&mut *redis, &queued_event, PublishMode::BestEffort)
+            .await;
     });
 
     spawn_audit_log(
@@ -155,10 +154,6 @@ fn build_payload(input: &ObservationInput) -> serde_json::Value {
         "source_ref": input.source_ref,
         "scope_id": input.scope_id,
     })
-}
-
-fn idempotency_key_to_uuid(idempotency_key: &str) -> Uuid {
-    Uuid::new_v5(&Uuid::NAMESPACE_URL, idempotency_key.as_bytes())
 }
 
 #[cfg(test)]

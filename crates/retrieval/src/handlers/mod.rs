@@ -49,16 +49,5 @@ pub(crate) async fn fetch_workspace_config(
     state: &AppState,
     workspace_id: Uuid,
 ) -> AppResult<WorkspaceConfig> {
-    let value = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT config FROM workspaces WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(workspace_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace:{workspace_id}"),
-    })?;
-
-    Ok(serde_json::from_value::<WorkspaceConfig>(value).unwrap_or_default())
+    common::workspace_config::load_workspace_config(&state.db, workspace_id).await
 }

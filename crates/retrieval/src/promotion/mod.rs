@@ -30,7 +30,9 @@ async fn check_one(
         return Ok(());
     };
 
-    if eligibility::is_eligible_for_promotion(&unit, access_count, &state.config) {
+    let config = common::workspace_config::load_workspace_config(&state.db, workspace_id).await?;
+
+    if eligibility::is_eligible_for_promotion(&unit, access_count, &config) {
         store::promote_to_semantic(&state.db, memory_id, workspace_id).await?;
         tracing::info!(memory_id = %memory_id, workspace_id = %workspace_id, "promoted episodic memory to semantic");
     }

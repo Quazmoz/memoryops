@@ -1,8 +1,9 @@
 use chrono::{DateTime, Utc};
 use common::{
     error::AppResult,
-    models::{WorkspaceConfig, DEFAULT_DECAY_HALF_LIFE_DAYS, DEFAULT_PRUNING_THRESHOLD},
-    AppError, AppState,
+    models::{DEFAULT_DECAY_HALF_LIFE_DAYS, DEFAULT_PRUNING_THRESHOLD},
+    workspace_config::load_workspace_config,
+    AppState,
 };
 use uuid::Uuid;
 
@@ -11,7 +12,7 @@ use crate::store;
 pub const SECONDS_PER_DAY: f64 = 86_400.0;
 
 pub async fn run_decay_pass(state: &AppState, workspace_id: Uuid) -> AppResult<u64> {
-    let config = fetch_workspace_config(state, workspace_id).await?;
+    let config = load_workspace_config(&state.db, workspace_id).await?;
     let half_life_days = config
         .decay_half_life_days
         .unwrap_or(DEFAULT_DECAY_HALF_LIFE_DAYS);
@@ -27,38 +28,6 @@ pub async fn run_decay_pass(state: &AppState, workspace_id: Uuid) -> AppResult<u
     .await?;
     tracing::info!(workspace_id = %workspace_id, updated, "applied memory decay scores");
     Ok(updated)
-}
-
-async fn fetch_workspace_config(
-    state: &AppState,
-    workspace_id: Uuid,
-) -> AppResult<WorkspaceConfig> {
-    let config_value = sqlx::query_scalar::<_, serde_json::Value>(
-        r#"
-        SELECT config
-        FROM workspaces
-        WHERE id = $1 AND deleted_at IS NULL
-        "#,
-    )
-    .bind(workspace_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace:{workspace_id}"),
-    })?;
-
-    match serde_json::from_value::<WorkspaceConfig>(config_value) {
-        Ok(config) => Ok(config),
-        Err(error) => {
-            tracing::warn!(
-                workspace_id = %workspace_id,
-                error = ?error,
-                "failed to parse workspace config; using lifecycle defaults"
-            );
-            Ok(WorkspaceConfig::default())
-        }
-    }
 }
 
 pub fn decay_score(importance_score: f32, elapsed_secs: f64, half_life_secs: f64) -> f32 {

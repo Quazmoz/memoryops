@@ -1,19 +1,13 @@
-use common::{
-    config::AppConfig,
-    models::{MemoryType, MemoryUnit},
-};
-
-pub const EPISODIC_TO_SEMANTIC_THRESHOLD: f32 = 0.85;
-pub const ACCESS_COUNT_TRIGGER: u64 = 3;
+use common::models::{MemoryType, MemoryUnit, WorkspaceConfig};
 
 pub fn is_eligible_for_promotion(
     unit: &MemoryUnit,
     access_count: u64,
-    _config: &AppConfig,
+    config: &WorkspaceConfig,
 ) -> bool {
     unit.memory_type == MemoryType::Episodic
-        && unit.importance_score >= EPISODIC_TO_SEMANTIC_THRESHOLD
-        && access_count >= ACCESS_COUNT_TRIGGER
+        && unit.importance_score >= config.promotion_threshold
+        && access_count >= u64::from(config.access_count_trigger)
         && unit.deleted_at.is_none()
         && !unit.pinned
 }
@@ -22,7 +16,6 @@ pub fn is_eligible_for_promotion(
 mod tests {
     use chrono::Utc;
     use common::{
-        config::AppConfig,
         models::{Entity, MemoryScope, ScopeVisibility},
     };
     use sqlx::types::Json;
@@ -78,11 +71,8 @@ mod tests {
         assert!(!is_eligible_for_promotion(&unit, 3, &config));
     }
 
-    fn test_config() -> AppConfig {
-        match AppConfig::from_toml_str(include_str!("../../../../config.toml")) {
-            Ok(config) => config,
-            Err(error) => panic!("checked-in config should deserialize: {error}"),
-        }
+    fn test_config() -> WorkspaceConfig {
+        WorkspaceConfig::default()
     }
 
     fn memory_unit(

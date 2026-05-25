@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -7,11 +6,10 @@ use axum::{
     Json,
 };
 use common::{
-    models::{EventType, RawEvent, Source},
+    models::{RawEvent, Source},
     telemetry::INGEST_EVENTS,
     AppError, AppState,
 };
-use redis::aio::ConnectionLike;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -22,9 +20,9 @@ use crate::{
         parser::ParsedLinearEvent,
         validator::{self, verify_signature},
     },
+    queue::{publish_raw_event_with_mode, PublishMode},
     store::find_raw_event_id_by_idempotency_key,
     webhook::workspace_webhook_secret,
-    STREAM_KEY,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,52 +145,8 @@ async fn insert_and_publish_linear_event(
         .get()
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
-    publish_raw_event_strict(&mut *redis, &event).await?;
+    publish_raw_event_with_mode(&mut *redis, &event, PublishMode::Strict).await?;
     transaction.commit().await.map_err(AppError::Database)?;
 
     Ok(event)
-}
-
-async fn publish_raw_event_strict<C>(redis: &mut C, event: &RawEvent) -> Result<(), AppError>
-where
-    C: ConnectionLike + Send,
-{
-    redis::cmd("XADD")
-        .arg(STREAM_KEY)
-        .arg("*")
-        .arg("event_id")
-        .arg(event.id.to_string())
-        .arg("workspace_id")
-        .arg(event.workspace_id.to_string())
-        .arg("source")
-        .arg(source_as_str(event.source))
-        .arg("event_type")
-        .arg(event_type_as_str(event.event_type))
-        .query_async::<String>(redis)
-        .await
-        .map(|_| ())
-        .map_err(|error| AppError::Internal(anyhow!(error)))
-}
-
-fn source_as_str(source: Source) -> &'static str {
-    match source {
-        Source::GitHub => "github",
-        Source::Slack => "slack",
-        Source::Jira => "jira",
-        Source::Linear => "linear",
-        Source::Observation => "observation",
-    }
-}
-
-fn event_type_as_str(event_type: EventType) -> &'static str {
-    match event_type {
-        EventType::PullRequest => "pull_request",
-        EventType::PullRequestReview => "pull_request_review",
-        EventType::Push => "push",
-        EventType::IssueComment => "issue_comment",
-        EventType::Issue => "issue",
-        EventType::Message => "message",
-        EventType::Reaction => "reaction",
-        EventType::AgentObservation => "agent_observation",
-    }
 }

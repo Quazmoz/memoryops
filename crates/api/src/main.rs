@@ -96,6 +96,7 @@ fn router(state: AppState) -> Router {
         .merge(observation_router)
         .merge(retrieval_router)
         .merge(protected_api_router)
+        .layer(axum_middleware::from_fn(middleware::request_id::request_id))
         .with_state(state)
 }
 

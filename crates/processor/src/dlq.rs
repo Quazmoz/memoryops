@@ -1,5 +1,6 @@
+use anyhow::anyhow;
 use chrono::Utc;
-use common::{error::AppResult, models::RawEvent};
+use common::{error::AppResult, models::RawEvent, AppError};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -27,17 +28,18 @@ pub async fn send_to_dlq(
     .to_string();
     let ttl_seconds = ttl_days.saturating_mul(86_400);
 
-    if let Err(redis_error) = redis::cmd("SETEX")
+    redis::cmd("SETEX")
         .arg(&key)
         .arg(ttl_seconds)
         .arg(&value)
         .query_async::<redis::Value>(&mut *redis)
         .await
-    {
-        tracing::error!(error = ?redis_error, key = %key, "failed to write processor DLQ entry");
-    }
+        .map_err(|redis_error| {
+            tracing::error!(error = ?redis_error, key = %key, "failed to write processor DLQ entry");
+            AppError::Internal(anyhow!(redis_error))
+        })?;
 
-    if let Err(redis_error) = redis::pipe()
+    redis::pipe()
         .cmd("LPUSH")
         .arg(&list_key)
         .arg(&value)
@@ -46,9 +48,10 @@ pub async fn send_to_dlq(
         .arg(ttl_seconds)
         .query_async::<(i64, bool)>(&mut *redis)
         .await
-    {
-        tracing::error!(error = ?redis_error, key = %list_key, "failed to write processor DLQ list entry");
-    }
+        .map_err(|redis_error| {
+            tracing::error!(error = ?redis_error, key = %list_key, "failed to write processor DLQ list entry");
+            AppError::Internal(anyhow!(redis_error))
+        })?;
 
     Ok(())
 }
@@ -75,17 +78,18 @@ pub async fn send_processor_job_to_dlq(
     .to_string();
     let ttl_seconds = ttl_days.saturating_mul(86_400);
 
-    if let Err(redis_error) = redis::cmd("SETEX")
+    redis::cmd("SETEX")
         .arg(&key)
         .arg(ttl_seconds)
         .arg(&value)
         .query_async::<redis::Value>(&mut *redis)
         .await
-    {
-        tracing::error!(error = ?redis_error, key = %key, "failed to write slow processor DLQ entry");
-    }
+        .map_err(|redis_error| {
+            tracing::error!(error = ?redis_error, key = %key, "failed to write slow processor DLQ entry");
+            AppError::Internal(anyhow!(redis_error))
+        })?;
 
-    if let Err(redis_error) = redis::pipe()
+    redis::pipe()
         .cmd("LPUSH")
         .arg(&list_key)
         .arg(&value)
@@ -94,9 +98,10 @@ pub async fn send_processor_job_to_dlq(
         .arg(ttl_seconds)
         .query_async::<(i64, bool)>(&mut *redis)
         .await
-    {
-        tracing::error!(error = ?redis_error, key = %list_key, "failed to write slow processor DLQ list entry");
-    }
+        .map_err(|redis_error| {
+            tracing::error!(error = ?redis_error, key = %list_key, "failed to write slow processor DLQ list entry");
+            AppError::Internal(anyhow!(redis_error))
+        })?;
 
     Ok(())
 }

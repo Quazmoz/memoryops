@@ -10,6 +10,7 @@ use common::{
     auth::AuthContext,
     error::AppResult,
     models::{Entity, MemoryUnit, Source},
+    tokens::estimate_tokens,
     telemetry::{RETRIEVAL_REQUESTS, TOKEN_PACK_BUDGET_USED},
     AppError, AppState,
 };
@@ -451,12 +452,6 @@ fn first_scope_value(values: [Option<&String>; 2]) -> Option<String> {
             Some(trimmed.to_owned())
         }
     })
-}
-
-fn estimate_tokens(content: &str) -> AppResult<usize> {
-    let tokenizer = tiktoken_rs::cl100k_base()
-        .map_err(|error| AppError::Internal(anyhow!("failed to initialize tokenizer: {error}")))?;
-    Ok(tokenizer.encode_with_special_tokens(content).len().max(1))
 }
 
 async fn persist_trace(

@@ -8,6 +8,8 @@ pub mod models;
 pub mod providers;
 pub mod state;
 pub mod telemetry;
+pub mod tokens;
+pub mod workspace_config;
 
 pub use config::AppConfig;
 pub use error::{AppError, ConfigError, ProviderError};

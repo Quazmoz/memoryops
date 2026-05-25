@@ -4,9 +4,9 @@ use common::{
     error::AppResult,
     models::{
         Entity, FeedbackEntry, FeedbackResponse, MemoryScope, MemoryType, MemoryUnit,
-        MemoryVersion, ScopeVisibility, WorkspaceConfig, DEFAULT_DECAY_HALF_LIFE_DAYS,
-        DEFAULT_PRUNING_THRESHOLD,
+        MemoryVersion, ScopeVisibility, DEFAULT_DECAY_HALF_LIFE_DAYS, DEFAULT_PRUNING_THRESHOLD,
     },
+    workspace_config,
     AppError,
 };
 use sqlx::{types::Json, PgPool, Postgres, QueryBuilder};
@@ -1336,28 +1336,7 @@ fn push_as_of_existence_filter(builder: &mut QueryBuilder<'_, Postgres>, as_of: 
 }
 
 async fn fetch_workspace_half_life_days(db: &PgPool, workspace_id: Uuid) -> AppResult<f64> {
-    let value = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT config FROM workspaces WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(workspace_id)
-    .fetch_optional(db)
-    .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace:{workspace_id}"),
-    })?;
-
-    let config = serde_json::from_value::<WorkspaceConfig>(value).unwrap_or_default();
-    let half_life_days = config
-        .decay_half_life_days
-        .map(f64::from)
-        .unwrap_or(f64::from(DEFAULT_DECAY_HALF_LIFE_DAYS));
-
-    if half_life_days > 0.0 {
-        Ok(half_life_days)
-    } else {
-        Ok(f64::from(DEFAULT_DECAY_HALF_LIFE_DAYS))
-    }
+    workspace_config::load_workspace_half_life_days(db, workspace_id).await
 }
 
 fn sort_direction(direction: SortDirection) -> &'static str {
