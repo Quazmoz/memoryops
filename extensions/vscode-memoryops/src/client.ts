@@ -1,5 +1,9 @@
 import { MemoryOpsConfig } from "./config";
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const SLOW_REQUEST_TIMEOUT_MS = 30_000;
+const SLOW_PATHS = ["/v1/retrieve", "/v1/memory/search"];
+
 export interface MemorySearchResult {
   id?: string;
   content?: string;
@@ -116,6 +120,9 @@ export class MemoryOpsClient {
     authenticated: boolean;
     body?: unknown;
   }): Promise<unknown> {
+    const timeoutMs = requestTimeoutMs(path);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const headers: Record<string, string> = {
       Accept: "application/json",
     };
@@ -128,22 +135,38 @@ export class MemoryOpsClient {
       headers["X-API-Key"] = this.config.apiKey;
     }
 
-    const response = await fetch(`${this.config.apiUrl}${path}`, {
-      method: options.method,
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
+    try {
+      const response = await fetch(`${this.config.apiUrl}${path}`, {
+        method: options.method,
+        headers,
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        signal: controller.signal,
+      });
 
-    const text = await response.text();
-    const payload = text.length > 0 ? parseJson(text) : undefined;
+      const text = await response.text();
+      const payload = text.length > 0 ? parseJson(text) : undefined;
 
-    if (!response.ok) {
-      const message = extractErrorMessage(payload) ?? response.statusText;
-      throw new Error(`MemoryOps ${response.status}: ${message}`);
+      if (!response.ok) {
+        const message = extractErrorMessage(payload) ?? response.statusText;
+        throw new Error(`MemoryOps ${response.status}: ${message}`);
+      }
+
+      return payload;
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new Error(`MemoryOps request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-
-    return payload;
   }
+}
+
+function requestTimeoutMs(path: string): number {
+  return SLOW_PATHS.some((slowPath) => path.startsWith(slowPath))
+    ? SLOW_REQUEST_TIMEOUT_MS
+    : DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
 function parseJson(text: string): unknown {
@@ -171,4 +194,8 @@ function extractErrorMessage(payload: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isAbortError(error: unknown): boolean {
+  return isRecord(error) && error.name === "AbortError";
 }

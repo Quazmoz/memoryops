@@ -3,6 +3,7 @@ use std::{collections::HashMap, time::Instant};
 use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -14,6 +15,7 @@ use super::require_workspace;
 
 const DEFAULT_SKILL_LIMIT: i64 = 50;
 const MAX_SKILL_LIMIT: i64 = 100;
+const MAX_SKILL_TEST_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct SkillListQuery {
@@ -653,10 +655,7 @@ pub async fn test_skill(
     match response {
         Ok(resp) => {
             let status = resp.status().as_u16();
-            let body: Value = resp
-                .json()
-                .await
-                .unwrap_or_else(|_| json!({ "error": "response was not JSON" }));
+            let body = read_skill_test_body(resp).await;
             Ok(Json(SkillTestResponse {
                 status,
                 latency_ms,
@@ -669,6 +668,30 @@ pub async fn test_skill(
             body: json!({ "error": error.to_string() }),
         })),
     }
+}
+
+async fn read_skill_test_body(response: reqwest::Response) -> Value {
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                return json!({ "error": format!("failed to read response body: {error}") })
+            }
+        };
+        if bytes.len().saturating_add(chunk.len()) > MAX_SKILL_TEST_RESPONSE_BYTES {
+            return json!({
+                "error": "response body exceeded size limit",
+                "limit_bytes": MAX_SKILL_TEST_RESPONSE_BYTES
+            });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    serde_json::from_slice::<Value>(&bytes)
+        .unwrap_or_else(|_| json!({ "error": "response was not JSON" }))
 }
 
 fn map_skill_insert_error(error: sqlx::Error) -> AppError {

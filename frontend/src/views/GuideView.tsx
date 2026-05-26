@@ -1,11 +1,10 @@
 import { Activity, AlertCircle, AlertTriangle, BookOpen, CheckCircle2, Check, X, Search, Keyboard } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
 
 import { CodeBlock } from "../components/CodeBlock";
-import { getSystemHealth, type SystemHealthResponse } from "../api/health";
-import { listIntegrations } from "../api/integrations";
+import type { SystemHealthResponse } from "../api/health";
 import { HelpTooltip, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
+import { useSystemHealth, useWorkspaceIntegrations } from "../hooks/use-live-query";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
@@ -35,19 +34,8 @@ export function GuideView() {
   const [searchResults, setSearchResults] = useState<(typeof SECTIONS[number])[]>([]);
   const [showSearchResults, setShowSearchResults] = useState(false);
 
-  const healthQuery = useQuery({
-    queryKey: ["system-health"],
-    queryFn: getSystemHealth,
-    refetchInterval: 30_000,
-    enabled: hasAuth,
-  });
-
-  const integrationsQuery = useQuery({
-    queryKey: ["integrations", workspaceId],
-    queryFn: () => listIntegrations(workspaceId),
-    enabled: hasAuth,
-    refetchInterval: 60_000,
-  });
+  const healthQuery = useSystemHealth(hasAuth);
+  const integrationsQuery = useWorkspaceIntegrations(workspaceId, hasAuth);
 
   // Search functionality
   const filteredSections = useMemo(() => {

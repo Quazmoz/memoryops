@@ -1,3 +1,5 @@
+use std::sync::{Arc, OnceLock};
+
 use anyhow::anyhow;
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, SaltString},
@@ -8,6 +10,7 @@ use redis::aio::ConnectionLike;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 use crate::{error::AppResult, models::ApiKey, AppError};
@@ -17,6 +20,8 @@ const WORKSPACE_PREFIX_LEN: usize = 8;
 const STORED_PREFIX_LEN: usize = 13;
 const RANDOM_BYTES_LEN: usize = 32;
 const AUTH_CACHE_TTL_SECS: u64 = 30;
+const LAST_USED_UPDATE_MAX_IN_FLIGHT: usize = 64;
+static LAST_USED_UPDATE_PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthContext {
@@ -224,7 +229,14 @@ fn auth_cache_index_key(key_id: Uuid) -> String {
 }
 
 pub fn spawn_last_used_update(db: PgPool, key_id: Uuid) {
+    let permits = last_used_update_permits();
+    let Ok(permit) = permits.try_acquire_owned() else {
+        tracing::warn!(key_id = %key_id, "API key last-used update queue is full; dropping update");
+        return;
+    };
+
     tokio::spawn(async move {
+        let _permit = permit;
         if let Err(error) = sqlx::query("UPDATE api_keys SET last_used_at = now() WHERE id = $1")
             .bind(key_id)
             .execute(&db)
@@ -233,6 +245,12 @@ pub fn spawn_last_used_update(db: PgPool, key_id: Uuid) {
             tracing::warn!(error = ?error, key_id = %key_id, "failed to update API key last_used_at");
         }
     });
+}
+
+fn last_used_update_permits() -> Arc<Semaphore> {
+    LAST_USED_UPDATE_PERMITS
+        .get_or_init(|| Arc::new(Semaphore::new(LAST_USED_UPDATE_MAX_IN_FLIGHT)))
+        .clone()
 }
 
 async fn find_candidate_keys(db: &PgPool, prefix: &str) -> AppResult<Vec<ApiKey>> {

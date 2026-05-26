@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use axum::{extract::Path, extract::State, http::StatusCode, Extension, Json};
+use axum::{extract::Path, extract::Query, extract::State, http::StatusCode, Extension, Json};
 use chrono::{DateTime, Utc};
 use common::{
     audit::spawn_audit_log,
@@ -9,6 +9,7 @@ use common::{
     AppError, AppState,
 };
 use ingestion::STREAM_KEY;
+use processor::dlq::{dlq_key as dlq_entry_key, dlq_list_key};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -17,8 +18,9 @@ use crate::security::encrypt_secret;
 
 use super::require_workspace;
 
-const DLQ_LIST_PREFIX: &str = "dlq:";
 const MAX_PAYLOAD_SUMMARY_CHARS: usize = 240;
+const DEFAULT_DLQ_LIMIT: i64 = 100;
+const MAX_DLQ_LIMIT: i64 = 500;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateIntegrationRequest {
@@ -43,6 +45,11 @@ pub struct DlqEntryResponse {
     pub error: String,
     pub retry_count: u32,
     pub failed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DlqQuery {
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,9 +216,14 @@ pub async fn list_dlq(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<Uuid>,
+    Query(query): Query<DlqQuery>,
 ) -> AppResult<Json<Vec<DlqEntryResponse>>> {
     require_workspace(&auth, id)?;
-    let values = dlq_values(&state, id).await?;
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_DLQ_LIMIT)
+        .clamp(1, MAX_DLQ_LIMIT);
+    let values = dlq_values(&state, id, limit).await?;
     let entries = values
         .iter()
         .filter_map(|raw| parse_dlq_response(raw))
@@ -237,12 +249,15 @@ pub async fn retry_dlq(
         .get()
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
-    let key = dlq_key(id);
+    let key = dlq_list_key(id);
+    let entry_key = dlq_entry_key(id, job_id);
     redis::pipe()
         .cmd("LREM")
         .arg(&key)
         .arg(1)
         .arg(&raw)
+        .cmd("DEL")
+        .arg(entry_key)
         .cmd("XADD")
         .arg(STREAM_KEY)
         .arg("*")
@@ -250,7 +265,7 @@ pub async fn retry_dlq(
         .arg(job_id.to_string())
         .arg("workspace_id")
         .arg(id.to_string())
-        .query_async::<(i64, String)>(&mut *redis)
+        .query_async::<(i64, i64, String)>(&mut *redis)
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
@@ -274,11 +289,14 @@ pub async fn delete_dlq(
         .get()
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
-    redis::cmd("LREM")
-        .arg(dlq_key(id))
+    redis::pipe()
+        .cmd("LREM")
+        .arg(dlq_list_key(id))
         .arg(1)
         .arg(raw)
-        .query_async::<i64>(&mut *redis)
+        .cmd("DEL")
+        .arg(dlq_entry_key(id, job_id))
+        .query_async::<(i64, i64)>(&mut *redis)
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
@@ -313,16 +331,16 @@ async fn get_integration(
     .map_err(AppError::Database)
 }
 
-async fn dlq_values(state: &AppState, workspace_id: Uuid) -> AppResult<Vec<String>> {
+async fn dlq_values(state: &AppState, workspace_id: Uuid, limit: i64) -> AppResult<Vec<String>> {
     let mut redis = state
         .redis
         .get()
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
     redis::cmd("LRANGE")
-        .arg(dlq_key(workspace_id))
+        .arg(dlq_list_key(workspace_id))
         .arg(0)
-        .arg(-1)
+        .arg(limit.saturating_sub(1))
         .query_async::<Vec<String>>(&mut *redis)
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))
@@ -333,10 +351,16 @@ async fn find_dlq_value(
     workspace_id: Uuid,
     job_id: Uuid,
 ) -> AppResult<Option<String>> {
-    let values = dlq_values(state, workspace_id).await?;
-    Ok(values
-        .into_iter()
-        .find(|raw| dlq_job_id(raw) == Some(job_id)))
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    redis::cmd("GET")
+        .arg(dlq_entry_key(workspace_id, job_id))
+        .query_async::<Option<String>>(&mut *redis)
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))
 }
 
 fn parse_dlq_response(raw: &str) -> Option<DlqEntryResponse> {
@@ -356,19 +380,10 @@ fn parse_dlq_response(raw: &str) -> Option<DlqEntryResponse> {
     })
 }
 
-fn dlq_job_id(raw: &str) -> Option<Uuid> {
-    let entry = serde_json::from_str::<StoredDlqEntry>(raw).ok()?;
-    entry.job_id.or(entry.event_id)
-}
-
 fn summarize_payload(payload: &Value) -> String {
     let mut summary = payload.to_string();
     if summary.len() > MAX_PAYLOAD_SUMMARY_CHARS {
         summary.truncate(MAX_PAYLOAD_SUMMARY_CHARS);
     }
     summary
-}
-
-fn dlq_key(workspace_id: Uuid) -> String {
-    format!("{DLQ_LIST_PREFIX}{workspace_id}")
 }

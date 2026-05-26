@@ -390,6 +390,7 @@ export type AuditResponse = {
   items: AuditEvent[];
   limit: number;
   offset: number;
+  next_cursor?: string | null;
 };
 
 export type IntegrationStatus = "active" | "degraded" | "failing" | string;

@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, Clipboard, ScrollText } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 
 import { listAuditEvents } from "../api/audit";
 import type { AuditEvent } from "../api/types";
@@ -12,6 +12,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Skeleton } from "../components/ui/skeleton";
 import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
+import { LIVE_QUERY_INTERVALS, liveRefetchInterval } from "../hooks/use-live-query";
 import { useAppStore } from "../store/app-store";
 
 const PAGE_SIZE = 50;
@@ -19,16 +20,29 @@ const PAGE_SIZE = 50;
 export function AuditView() {
   const workspaceId = useAppStore((state) => state.workspaceId);
   const apiKey = useAppStore((state) => state.apiKey);
-  const [offset, setOffset] = useState(0);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [cursors, setCursors] = useState<(string | null)[]>([null]);
+  const [cursorWorkspaceId, setCursorWorkspaceId] = useState(workspaceId);
   const authReady = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
+  const paginationReady = cursorWorkspaceId === workspaceId;
+  const cursor = cursors[pageIndex] ?? null;
+
+  useEffect(() => {
+    setCursorWorkspaceId(workspaceId);
+    setPageIndex(0);
+    setCursors([null]);
+  }, [workspaceId]);
+
   const audit = useQuery({
-    queryKey: ["workspace", workspaceId, "audit", offset],
-    queryFn: () => listAuditEvents(workspaceId, PAGE_SIZE, offset),
-    enabled: authReady,
+    queryKey: ["workspace", workspaceId, "audit", cursor],
+    queryFn: () => listAuditEvents(workspaceId, { limit: PAGE_SIZE, cursor }),
+    enabled: authReady && paginationReady,
     staleTime: 30_000,
-    refetchInterval: 30_000,
+    refetchInterval: pageIndex === 0 ? liveRefetchInterval(authReady && paginationReady, LIVE_QUERY_INTERVALS.audit) : false,
+    refetchIntervalInBackground: false,
   });
-  const items = audit.data ?? [];
+  const items = audit.data?.items ?? [];
+  const nextCursor = audit.data?.next_cursor ?? null;
   const columns = useMemo<ColumnDef<AuditEvent>[]>(
     () => [
       {
@@ -124,7 +138,7 @@ export function AuditView() {
           <div className="mt-4 flex items-center justify-end gap-2">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button type="button" variant="secondary" size="sm" onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0 || audit.isFetching}>
+                <Button type="button" variant="secondary" size="sm" onClick={() => setPageIndex((index) => Math.max(0, index - 1))} disabled={pageIndex === 0 || audit.isFetching}>
                   <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                   Prev
                 </Button>
@@ -133,7 +147,7 @@ export function AuditView() {
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button type="button" variant="secondary" size="sm" onClick={() => setOffset(offset + PAGE_SIZE)} disabled={items.length < PAGE_SIZE || audit.isFetching}>
+                <Button type="button" variant="secondary" size="sm" onClick={() => goToNextPage(nextCursor, pageIndex, setCursors, setPageIndex)} disabled={!nextCursor || audit.isFetching}>
                   Next
                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
                 </Button>
@@ -145,6 +159,20 @@ export function AuditView() {
       </Card>
     </div>
   );
+}
+
+function goToNextPage(
+  nextCursor: string | null,
+  pageIndex: number,
+  setCursors: Dispatch<SetStateAction<(string | null)[]>>,
+  setPageIndex: Dispatch<SetStateAction<number>>,
+) {
+  if (!nextCursor) {
+    return;
+  }
+
+  setCursors((current) => [...current.slice(0, pageIndex + 1), nextCursor]);
+  setPageIndex(pageIndex + 1);
 }
 
 function TimeCell({ value }: { value: string }) {

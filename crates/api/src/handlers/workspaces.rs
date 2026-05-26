@@ -1014,24 +1014,40 @@ async fn purge_workspace_associations(state: &AppState, workspace_id: Uuid) -> A
         id: Uuid,
     }
 
-    let embedded_ids = sqlx::query_as::<_, WorkspaceEmbeddingRow>(
-        r#"
-        SELECT id
-        FROM memory_units
-        WHERE workspace_id = $1
-          AND embedding_id IS NOT NULL
-        "#,
-    )
-    .bind(workspace_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(AppError::Database)?;
-
     let vector_index = VectorIndexService::new(&state.qdrant, COLLECTION_NAME);
-    for row in &embedded_ids {
-        vector_index
-            .delete_point_best_effort(row.id, "workspace purge")
-            .await;
+    let mut cursor = None;
+    loop {
+        let embedded_ids = sqlx::query_as::<_, WorkspaceEmbeddingRow>(
+            r#"
+            SELECT id
+            FROM memory_units
+            WHERE workspace_id = $1
+              AND embedding_id IS NOT NULL
+              AND ($2::uuid IS NULL OR id > $2)
+            ORDER BY id ASC
+            LIMIT $3
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(cursor)
+        .bind(WORKSPACE_PURGE_VECTOR_PAGE_SIZE)
+        .fetch_all(&state.db)
+        .await
+        .map_err(AppError::Database)?;
+        if embedded_ids.is_empty() {
+            break;
+        }
+
+        cursor = embedded_ids.last().map(|row| row.id);
+        let ids = embedded_ids.iter().map(|row| row.id).collect::<Vec<_>>();
+        if let Err(error) = vector_index.delete_points(ids.iter().copied()).await {
+            tracing::warn!(
+                error = ?error,
+                workspace_id = %workspace_id,
+                count = ids.len(),
+                "failed to delete workspace vector points"
+            );
+        }
     }
 
     sqlx::query(
@@ -1170,6 +1186,7 @@ fn validate_threshold(
 }
 
 const REINDEX_PAGE_SIZE: i64 = 1000;
+const WORKSPACE_PURGE_VECTOR_PAGE_SIZE: i64 = 1000;
 
 #[derive(Debug, Deserialize)]
 pub struct ReindexQuery {

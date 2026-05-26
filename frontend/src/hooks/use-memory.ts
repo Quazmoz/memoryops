@@ -24,6 +24,7 @@ import type { FeedbackResponse, ListMemoryResponse, MemoryUnit, SearchResponse, 
 import { hasWorkspaceAuth } from "../lib/auth";
 import { validateImportanceScore } from "../lib/validation";
 import { useAppStore } from "../store/app-store";
+import { LIVE_QUERY_INTERVALS, liveRefetchInterval } from "./use-live-query";
 
 export const memoryKeys = {
   workspace: (workspaceId: string) => ["workspace", workspaceId] as const,
@@ -45,12 +46,14 @@ type MemoryCachePatch = UpdateMemoryRequest | Partial<MemoryUnit> | MemoryUnit;
 
 export function useReadiness(workspaceId: string) {
   const apiKey = useAppStore((state) => state.apiKey);
+  const enabled = hasWorkspaceAuth(workspaceId, apiKey);
 
   return useQuery({
     queryKey: memoryKeys.readiness(workspaceId),
     queryFn: getReadiness,
-    refetchInterval: 30_000,
-    enabled: hasWorkspaceAuth(workspaceId, apiKey),
+    refetchInterval: liveRefetchInterval(enabled, LIVE_QUERY_INTERVALS.readiness),
+    refetchIntervalInBackground: false,
+    enabled,
   });
 }
 

@@ -5,16 +5,19 @@ import type { RetrieveRequest } from "../api/types";
 import { getWorkspaceStats, getWorkspaceStatsHistory } from "../api/workspaces";
 import { hasWorkspaceAuth } from "../lib/auth";
 import { useAppStore } from "../store/app-store";
+import { LIVE_QUERY_INTERVALS, liveRefetchInterval } from "./use-live-query";
 
 export function useWorkspaceStats(workspaceId: string) {
   const apiKey = useAppStore((state) => state.apiKey);
+  const enabled = hasWorkspaceAuth(workspaceId, apiKey);
 
   return useQuery({
     queryKey: ["workspace", workspaceId, "stats"],
     queryFn: () => getWorkspaceStats(workspaceId),
-    enabled: hasWorkspaceAuth(workspaceId, apiKey),
+    enabled,
     staleTime: 30_000,
-    refetchInterval: 120_000,
+    refetchInterval: liveRefetchInterval(enabled, LIVE_QUERY_INTERVALS.workspaceStats),
+    refetchIntervalInBackground: false,
     retry: false,
   });
 }
