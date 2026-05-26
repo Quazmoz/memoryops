@@ -1,12 +1,8 @@
 use anyhow::anyhow;
 use axum::{extract::Path, extract::State, Extension, Json};
 use common::{
-    audit::spawn_audit_log,
-    auth::AuthContext,
-    error::AppResult,
-    models::AuditAction,
-    services::WorkspaceConfigService,
-    AppError, AppState,
+    audit::spawn_audit_log, auth::AuthContext, error::AppResult, models::AuditAction,
+    services::WorkspaceConfigService, AppError, AppState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;

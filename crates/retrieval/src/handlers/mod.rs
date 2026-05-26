@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use common::{
-    auth::AuthContext, error::AppResult, models::WorkspaceConfig,
-    services::WorkspaceConfigService, AppError, AppState,
+    auth::AuthContext, error::AppResult, models::WorkspaceConfig, services::WorkspaceConfigService,
+    AppError, AppState,
 };
 use uuid::Uuid;
 

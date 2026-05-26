@@ -920,11 +920,7 @@ fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
         return Err(AppError::Forbidden);
     };
 
-    if bool::from(
-        provided_secret
-            .as_bytes()
-            .ct_eq(expected_secret.as_bytes()),
-    ) {
+    if bool::from(provided_secret.as_bytes().ct_eq(expected_secret.as_bytes())) {
         Ok(())
     } else {
         Err(AppError::Forbidden)
@@ -1187,6 +1183,13 @@ pub struct ReindexResponse {
     pub next_cursor: Option<Uuid>,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct MemoryIdRow {
+    id: Uuid,
+    workspace_id: Uuid,
+    embedding_id: Option<String>,
+}
+
 #[axum::debug_handler]
 pub async fn reindex_workspace(
     State(state): State<AppState>,
@@ -1198,39 +1201,21 @@ pub async fn reindex_workspace(
 
     let force = query.force.unwrap_or(false);
 
-    // If force mode: clear embedding_ids for all non-deleted memories first
-    if force {
-        sqlx::query(
-            "UPDATE memory_units SET embedding_id = NULL WHERE workspace_id = $1 AND deleted_at IS NULL AND ($2::UUID IS NULL OR id > $2)",
-        )
-        .bind(id)
-        .bind(query.after)
-        .execute(&state.db)
-        .await
-        .map_err(AppError::Database)?;
-    }
-
-    // Fetch memories that need embedding (missing embedding_id), with cursor pagination
-    #[derive(sqlx::FromRow)]
-    struct MemoryIdRow {
-        id: Uuid,
-        workspace_id: Uuid,
-    }
-
     let mut rows: Vec<MemoryIdRow> = sqlx::query_as::<_, MemoryIdRow>(
         r#"
-        SELECT id, workspace_id
+        SELECT id, workspace_id, embedding_id
         FROM memory_units
         WHERE workspace_id = $1
           AND deleted_at IS NULL
-          AND embedding_id IS NULL
           AND ($2::UUID IS NULL OR id > $2)
+          AND ($3::BOOLEAN OR embedding_id IS NULL)
         ORDER BY id ASC
-        LIMIT $3
+        LIMIT $4
         "#,
     )
     .bind(id)
     .bind(query.after)
+    .bind(force)
     .bind(REINDEX_PAGE_SIZE + 1)
     .fetch_all(&state.db)
     .await
@@ -1242,20 +1227,7 @@ pub async fn reindex_workspace(
         None
     };
 
-    let enqueued = rows.len();
-    match state.redis.get().await {
-        Ok(mut conn) => {
-            for row in &rows {
-                if let Err(error) = enqueue_slow_job(&mut *conn, row.id, row.workspace_id, 0).await
-                {
-                    tracing::warn!(error = ?error, memory_id = %row.id, "failed to enqueue memory for reindex");
-                }
-            }
-        }
-        Err(error) => {
-            tracing::warn!(error = ?error, "failed to get Redis connection for reindex enqueue")
-        }
-    }
+    let enqueued = enqueue_reindex_rows(&state, &rows, force).await?;
 
     // FIX: was `format!("user:{}", auth.key_id)` — use auth.actor() for
     // consistent audit record format across all handlers.
@@ -1273,6 +1245,87 @@ pub async fn reindex_workspace(
         enqueued,
         next_cursor,
     }))
+}
+
+async fn enqueue_reindex_rows(
+    state: &AppState,
+    rows: &[MemoryIdRow],
+    force: bool,
+) -> AppResult<usize> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    let mut enqueued = 0_usize;
+
+    for row in rows {
+        if force {
+            clear_memory_embedding(&state.db, row.id, row.workspace_id).await?;
+        }
+
+        if let Err(error) = enqueue_slow_job(&mut *conn, row.id, row.workspace_id, 0).await {
+            if force {
+                if let Err(restore_error) =
+                    restore_memory_embedding(&state.db, row.id, row.workspace_id, &row.embedding_id)
+                        .await
+                {
+                    tracing::warn!(error = ?restore_error, memory_id = %row.id, "failed to restore embedding_id after reindex enqueue failure");
+                }
+            }
+            return Err(error);
+        }
+
+        enqueued = enqueued.saturating_add(1);
+    }
+
+    Ok(enqueued)
+}
+
+async fn clear_memory_embedding(db: &PgPool, id: Uuid, workspace_id: Uuid) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE memory_units
+        SET embedding_id = NULL
+        WHERE id = $1
+          AND workspace_id = $2
+          AND deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(AppError::Database)
+}
+
+async fn restore_memory_embedding(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+    embedding_id: &Option<String>,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE memory_units
+        SET embedding_id = $3
+        WHERE id = $1
+          AND workspace_id = $2
+          AND deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .bind(embedding_id.as_deref())
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(AppError::Database)
 }
 
 #[cfg(test)]

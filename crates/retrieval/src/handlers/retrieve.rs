@@ -10,8 +10,8 @@ use common::{
     auth::AuthContext,
     error::AppResult,
     models::{Entity, MemoryUnit, Source},
-    tokens::estimate_tokens,
     telemetry::{RETRIEVAL_REQUESTS, TOKEN_PACK_BUDGET_USED},
+    tokens::estimate_tokens,
     AppError, AppState,
 };
 use serde::{Deserialize, Serialize};
@@ -422,13 +422,12 @@ async fn source_by_event_id<'a>(
         return Ok(HashMap::new());
     }
 
-    let rows = sqlx::query_as::<_, SourceEventRow>(
-        "SELECT id, source FROM raw_events WHERE id = ANY($1)",
-    )
-    .bind(event_ids)
-    .fetch_all(db)
-    .await
-    .map_err(AppError::Database)?;
+    let rows =
+        sqlx::query_as::<_, SourceEventRow>("SELECT id, source FROM raw_events WHERE id = ANY($1)")
+            .bind(event_ids)
+            .fetch_all(db)
+            .await
+            .map_err(AppError::Database)?;
 
     Ok(rows.into_iter().map(|row| (row.id, row.source)).collect())
 }

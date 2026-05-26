@@ -101,7 +101,8 @@ pub async fn vector_search_results(
     let scope = req.resolved_scope_filter();
     let workspace_pool = req.workspace_pool_access();
     let workspace_config = crate::handlers::fetch_workspace_config(state, req.workspace_id).await?;
-    let embedding_provider = build_embedding_provider_for_workspace(&state.config, &workspace_config);
+    let embedding_provider =
+        build_embedding_provider_for_workspace(&state.config, &workspace_config);
     let candidates = vector_search(
         &state.qdrant,
         &embedding_provider,

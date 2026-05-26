@@ -12,7 +12,10 @@ use common::{
     models::{AuditAction, MemoryType, MemoryUnit, MemoryVersion},
     AppError, AppState,
 };
-use qdrant_client::{qdrant::{PointsIdsList, SetPayloadPointsBuilder}, Payload};
+use qdrant_client::{
+    qdrant::{PointsIdsList, SetPayloadPointsBuilder},
+    Payload,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -69,13 +72,9 @@ pub async fn handle_delete(
         .ok_or_else(|| AppError::NotFound {
             resource: format!("memory:{id}"),
         })?;
-    let deleted = MemoryDeletionService::new(
-        &state,
-        COLLECTION_NAME,
-        "retrieval memory delete",
-    )
-    .soft_delete_required(id, workspace_id)
-    .await?;
+    let deleted = MemoryDeletionService::new(&state, COLLECTION_NAME, "retrieval memory delete")
+        .soft_delete_required(id, workspace_id)
+        .await?;
 
     spawn_audit_log(
         state.db.clone(),

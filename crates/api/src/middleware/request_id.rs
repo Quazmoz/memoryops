@@ -25,6 +25,8 @@ pub async fn request_id(mut request: Request<Body>, next: Next) -> Response {
         .headers_mut()
         .insert(REQUEST_ID_HEADER, header_value.clone());
     let mut response = next.run(request).await;
-    response.headers_mut().insert(REQUEST_ID_HEADER, header_value);
+    response
+        .headers_mut()
+        .insert(REQUEST_ID_HEADER, header_value);
     response
 }

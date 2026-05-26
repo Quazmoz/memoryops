@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::anyhow;
 use common::{error::AppResult, AppError};
 use deadpool_redis::Pool as RedisPool;
@@ -34,6 +36,73 @@ pub async fn record_access(redis: &RedisPool, memory_id: Uuid) -> AppResult<u64>
             Ok(0)
         }
     }
+}
+
+pub async fn record_access_batch(redis: &RedisPool, memory_ids: &[Uuid]) -> AppResult<()> {
+    if memory_ids.is_empty() {
+        return Ok(());
+    }
+
+    let mut connection = match redis.get().await {
+        Ok(conn) => conn,
+        Err(error) => {
+            tracing::warn!(error = ?error, count = memory_ids.len(), "failed to get Redis connection for access batch recording");
+            return Ok(());
+        }
+    };
+
+    let mut pipe = redis::pipe();
+    for memory_id in memory_ids {
+        let key = access_key(*memory_id);
+        pipe.cmd("HINCRBY")
+            .arg(&key)
+            .arg("count")
+            .arg(1_i64)
+            .ignore()
+            .cmd("EXPIRE")
+            .arg(&key)
+            .arg(ACCESS_TTL_SECS)
+            .ignore();
+    }
+
+    if let Err(error) = pipe.query_async::<()>(&mut *connection).await {
+        tracing::warn!(error = ?error, count = memory_ids.len(), "failed to batch record memory access");
+    }
+
+    Ok(())
+}
+
+pub async fn get_access_counts(
+    redis: &RedisPool,
+    memory_ids: &[Uuid],
+) -> AppResult<HashMap<Uuid, u64>> {
+    if memory_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut connection = match redis.get().await {
+        Ok(conn) => conn,
+        Err(error) => {
+            tracing::warn!(error = ?error, count = memory_ids.len(), "failed to get Redis connection for access counts");
+            return Ok(memory_ids.iter().map(|id| (*id, 0)).collect());
+        }
+    };
+
+    let mut pipe = redis::pipe();
+    for memory_id in memory_ids {
+        pipe.cmd("HGET").arg(access_key(*memory_id)).arg("count");
+    }
+
+    let counts = pipe
+        .query_async::<Vec<Option<u64>>>(&mut *connection)
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+
+    Ok(memory_ids
+        .iter()
+        .copied()
+        .zip(counts.into_iter().map(|count| count.unwrap_or(0)))
+        .collect())
 }
 
 pub async fn get_access_count(redis: &RedisPool, memory_id: Uuid) -> AppResult<u64> {

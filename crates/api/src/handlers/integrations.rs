@@ -77,7 +77,10 @@ pub async fn create_integration(
     }
 
     let secret_enc = match webhook_secret.as_deref() {
-        Some(secret) => Some(encrypt_secret(state.app_secret_key.as_ref().as_str(), secret)?),
+        Some(secret) => Some(encrypt_secret(
+            state.app_secret_key.as_ref().as_str(),
+            secret,
+        )?),
         None => None,
     };
     sqlx::query(

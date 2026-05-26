@@ -29,8 +29,9 @@ pub fn observation_router() -> Router<AppState> {
     Router::new()
         .route(
             "/v1/ingest/observation",
-            post(observation::handler::handle_ingest_observation)
-                .layer(DefaultBodyLimit::max(observation::handler::MAX_OBSERVATION_BODY_BYTES)),
+            post(observation::handler::handle_ingest_observation).layer(DefaultBodyLimit::max(
+                observation::handler::MAX_OBSERVATION_BODY_BYTES,
+            )),
         )
         .layer(TraceLayer::new_for_http())
 }

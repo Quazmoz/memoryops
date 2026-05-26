@@ -56,7 +56,8 @@ pub async fn handle_jira_webhook(
             .into_response());
     }
 
-    let event = insert_and_publish_jira_event(&state, workspace_id, &parsed, idempotency_key).await?;
+    let event =
+        insert_and_publish_jira_event(&state, workspace_id, &parsed, idempotency_key).await?;
     INGEST_EVENTS.add(1, &[]);
 
     Ok((

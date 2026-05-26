@@ -410,19 +410,19 @@ fn reclaim_idle_ms(state: &AppState) -> usize {
 fn parse_xautoclaim_reply(value: Value) -> anyhow::Result<Vec<StreamId>> {
     match value {
         Value::Nil => Ok(Vec::new()),
-        Value::Array(values) if values.len() >= 2 => {
-            match &values[1] {
-                Value::Array(msgs) => {
-                    let mut result = Vec::with_capacity(msgs.len());
-                    for msg in msgs {
-                        result.push(parse_stream_id(msg)?);
-                    }
-                    Ok(result)
+        Value::Array(values) if values.len() >= 2 => match &values[1] {
+            Value::Array(msgs) => {
+                let mut result = Vec::with_capacity(msgs.len());
+                for msg in msgs {
+                    result.push(parse_stream_id(msg)?);
                 }
-                Value::Nil => Ok(Vec::new()),
-                other => Err(anyhow!("unexpected messages part in XAUTOCLAIM reply: {other:?}")),
+                Ok(result)
             }
-        }
+            Value::Nil => Ok(Vec::new()),
+            other => Err(anyhow!(
+                "unexpected messages part in XAUTOCLAIM reply: {other:?}"
+            )),
+        },
         other => Err(anyhow!("unexpected XAUTOCLAIM reply: {other:?}")),
     }
 }

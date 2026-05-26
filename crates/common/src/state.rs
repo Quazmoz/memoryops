@@ -91,7 +91,10 @@ fn parse_embedding_provider_kind(value: &str) -> Option<EmbeddingProviderKind> {
         "fastembed" | "fast_embed" => Some(EmbeddingProviderKind::FastEmbed),
         "openai" => Some(EmbeddingProviderKind::Openai),
         other => {
-            tracing::warn!(provider = other, "unknown workspace embedding provider override");
+            tracing::warn!(
+                provider = other,
+                "unknown workspace embedding provider override"
+            );
             None
         }
     }

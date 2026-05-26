@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use chrono::Utc;
 use common::{
     audit::spawn_audit_log,
@@ -12,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     queue::{publish_raw_event_with_mode, PublishMode},
-    store::{find_raw_event_id_by_idempotency_key, insert_raw_event, NewRawEvent},
+    store::{insert_raw_event_in_tx, raw_event_needs_publish, InsertRawEventOutcome, NewRawEvent},
 };
 
 const MAX_CONTENT_LEN: usize = 8_000;
@@ -45,20 +46,12 @@ pub async fn ingest_observation(
 
     let idempotency_key = idempotency_key(workspace_id, &input.agent_id, &input.content);
 
-    if let Some(existing_id) = find_raw_event_id_by_idempotency_key(&state.db, &idempotency_key)
-        .await?
-    {
-        return Ok(ObservationOutput {
-            id: existing_id,
-            status: "queued",
-        });
-    }
-
     let payload = build_payload(&input);
     let actor = input.agent_id.clone();
 
-    let event = insert_raw_event(
-        &state.db,
+    let mut transaction = state.db.begin().await.map_err(AppError::Database)?;
+    let event = match insert_raw_event_in_tx(
+        &mut transaction,
         &NewRawEvent {
             workspace_id,
             source: Source::Observation,
@@ -69,22 +62,30 @@ pub async fn ingest_observation(
             occurred_at: Utc::now(),
         },
     )
-    .await?;
-    INGEST_EVENTS.add(1, &[]);
-
-    let redis = state.redis.clone();
-    let queued_event = event.clone();
-    tokio::spawn(async move {
-        let mut redis = match redis.get().await {
-            Ok(redis) => redis,
-            Err(error) => {
-                tracing::error!(error = ?error, event_id = %queued_event.id, "failed to get Redis connection for raw event publish");
-                return;
+    .await?
+    {
+        InsertRawEventOutcome::Existing(event) => {
+            drop(transaction);
+            if raw_event_needs_publish(&state.db, event.id).await? {
+                publish_existing_event(state, &event).await?;
             }
-        };
-        let _ = publish_raw_event_with_mode(&mut *redis, &queued_event, PublishMode::BestEffort)
-            .await;
-    });
+            return Ok(ObservationOutput {
+                id: event.id,
+                status: "queued",
+            });
+        }
+        InsertRawEventOutcome::Inserted(event) => event,
+    };
+
+    transaction.commit().await.map_err(AppError::Database)?;
+
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    publish_raw_event_with_mode(&mut *redis, &event, PublishMode::Strict).await?;
+    INGEST_EVENTS.add(1, &[]);
 
     spawn_audit_log(
         state.db.clone(),
@@ -100,6 +101,18 @@ pub async fn ingest_observation(
         id: event.id,
         status: "queued",
     })
+}
+
+async fn publish_existing_event(
+    state: &AppState,
+    event: &common::models::RawEvent,
+) -> AppResult<()> {
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    publish_raw_event_with_mode(&mut *redis, event, PublishMode::Strict).await
 }
 
 pub fn idempotency_key(workspace_id: Uuid, agent_id: &str, content: &str) -> String {

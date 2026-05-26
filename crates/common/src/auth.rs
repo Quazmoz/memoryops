@@ -37,7 +37,9 @@ pub fn generate_api_key(workspace_id: Uuid) -> AppResult<(String, String)> {
     let mut random_bytes = [0_u8; RANDOM_BYTES_LEN];
     rand::rngs::OsRng
         .try_fill_bytes(&mut random_bytes)
-        .map_err(|error| AppError::Internal(anyhow!("OS random number generator failed: {error}")))?;
+        .map_err(|error| {
+            AppError::Internal(anyhow!("OS random number generator failed: {error}"))
+        })?;
     let random_part = bs58::encode(random_bytes).into_string();
     let plaintext = format!("{API_KEY_PREFIX}_{workspace_prefix}_{random_part}");
     let prefix = plaintext[..STORED_PREFIX_LEN].to_owned();
@@ -48,8 +50,7 @@ pub fn generate_api_key(workspace_id: Uuid) -> AppResult<(String, String)> {
 pub fn hash_secret(secret: &str) -> AppResult<String> {
     let salt = SaltString::generate(&mut OsRng);
     let params = if cfg!(debug_assertions) {
-        argon2::Params::new(1024, 1, 1, None)
-            .map_err(|error| AppError::Internal(anyhow!(error)))?
+        argon2::Params::new(1024, 1, 1, None).map_err(|error| AppError::Internal(anyhow!(error)))?
     } else {
         argon2::Params::default()
     };

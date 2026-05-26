@@ -1070,6 +1070,27 @@ pub async fn increment_access_count(db: &PgPool, id: Uuid, workspace_id: Uuid) -
     .map_err(AppError::Database)
 }
 
+pub async fn increment_access_counts(
+    db: &PgPool,
+    ids: &[Uuid],
+    workspace_id: Uuid,
+) -> AppResult<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "UPDATE memory_units SET access_count = access_count + 1 \
+         WHERE workspace_id = $1 AND id = ANY($2)",
+    )
+    .bind(workspace_id)
+    .bind(ids)
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(AppError::Database)
+}
+
 pub async fn promote_to_semantic(db: &PgPool, id: Uuid, workspace_id: Uuid) -> AppResult<()> {
     sqlx::query(
         r#"
@@ -1083,6 +1104,33 @@ pub async fn promote_to_semantic(db: &PgPool, id: Uuid, workspace_id: Uuid) -> A
     )
     .bind(id)
     .bind(workspace_id)
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(AppError::Database)
+}
+
+pub async fn promote_to_semantic_batch(
+    db: &PgPool,
+    ids: &[Uuid],
+    workspace_id: Uuid,
+) -> AppResult<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE memory_units
+                SET memory_type = 'semantic', version = version + 1, updated_at = now()
+        WHERE workspace_id = $1
+          AND id = ANY($2)
+          AND memory_type = 'episodic'
+          AND deleted_at IS NULL
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(ids)
     .execute(db)
     .await
     .map(|_| ())

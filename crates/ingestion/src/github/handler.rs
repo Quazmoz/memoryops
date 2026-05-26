@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -11,7 +12,10 @@ use uuid::Uuid;
 use crate::{
     github::{parser::parse_github_event, signature::verify_signature},
     queue::{publish_raw_event_with_mode, PublishMode},
-    store::{find_raw_event_id_by_idempotency_key, insert_raw_event, workspace_exists, NewRawEvent},
+    store::{
+        insert_raw_event_in_tx, raw_event_needs_publish, workspace_exists, InsertRawEventOutcome,
+        NewRawEvent,
+    },
     webhook::workspace_webhook_secret,
 };
 
@@ -52,21 +56,9 @@ pub async fn handle_github_webhook(
     let parsed = parse_github_event(event_header, &payload)?;
     let idempotency_key = format!("github:{delivery_id}");
 
-    if find_raw_event_id_by_idempotency_key(&state.db, &idempotency_key)
-        .await?
-        .is_some()
-    {
-        return Ok((
-            StatusCode::OK,
-            Json(IngestResponse {
-                status: "duplicate",
-                event_id: None,
-            }),
-        ));
-    }
-
-    let event = insert_raw_event(
-        &state.db,
+    let mut transaction = state.db.begin().await.map_err(AppError::Database)?;
+    let event = match insert_raw_event_in_tx(
+        &mut transaction,
         &NewRawEvent {
             workspace_id,
             source: Source::GitHub,
@@ -77,22 +69,33 @@ pub async fn handle_github_webhook(
             occurred_at: parsed.occurred_at,
         },
     )
-    .await?;
-    INGEST_EVENTS.add(1, &[]);
-
-    let redis = state.redis.clone();
-    let queued_event = event.clone();
-    tokio::spawn(async move {
-        let mut redis = match redis.get().await {
-            Ok(redis) => redis,
-            Err(error) => {
-                tracing::error!(error = ?error, event_id = %queued_event.id, "failed to get Redis connection for raw event publish");
-                return;
+    .await?
+    {
+        InsertRawEventOutcome::Existing(event) => {
+            drop(transaction);
+            if raw_event_needs_publish(&state.db, event.id).await? {
+                publish_existing_event(&state, &event).await?;
             }
-        };
-        let _ = publish_raw_event_with_mode(&mut *redis, &queued_event, PublishMode::BestEffort)
-            .await;
-    });
+            return Ok((
+                StatusCode::OK,
+                Json(IngestResponse {
+                    status: "duplicate",
+                    event_id: None,
+                }),
+            ));
+        }
+        InsertRawEventOutcome::Inserted(event) => event,
+    };
+
+    transaction.commit().await.map_err(AppError::Database)?;
+
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    publish_raw_event_with_mode(&mut *redis, &event, PublishMode::Strict).await?;
+    INGEST_EVENTS.add(1, &[]);
 
     Ok((
         StatusCode::ACCEPTED,
@@ -101,6 +104,18 @@ pub async fn handle_github_webhook(
             event_id: Some(event.id),
         }),
     ))
+}
+
+async fn publish_existing_event(
+    state: &AppState,
+    event: &common::models::RawEvent,
+) -> Result<(), AppError> {
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    publish_raw_event_with_mode(&mut *redis, event, PublishMode::Strict).await
 }
 
 fn signature_header(headers: &HeaderMap) -> Result<&str, AppError> {

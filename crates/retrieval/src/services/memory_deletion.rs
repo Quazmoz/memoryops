@@ -1,8 +1,5 @@
 use common::{
-    error::AppResult,
-    models::MemoryUnit,
-    services::VectorIndexService,
-    AppError, AppState,
+    error::AppResult, models::MemoryUnit, services::VectorIndexService, AppError, AppState,
 };
 use uuid::Uuid;
 
@@ -32,7 +29,8 @@ impl<'a> MemoryDeletionService<'a> {
         memory_id: Uuid,
         workspace_id: Uuid,
     ) -> AppResult<Option<MemoryUnit>> {
-        let deleted = store::soft_delete_memory_unit(&self.state.db, memory_id, workspace_id).await?;
+        let deleted =
+            store::soft_delete_memory_unit(&self.state.db, memory_id, workspace_id).await?;
         if deleted.is_some() {
             self.vector_index()
                 .delete_point_best_effort(memory_id, self.log_context)

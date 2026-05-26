@@ -5,7 +5,7 @@ use common::{
     models::{EventType, RawEvent, Source},
     AppError,
 };
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -17,6 +17,12 @@ pub struct NewRawEvent {
     pub payload: serde_json::Value,
     pub idempotency_key: String,
     pub occurred_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub enum InsertRawEventOutcome {
+    Inserted(RawEvent),
+    Existing(RawEvent),
 }
 
 pub async fn insert_raw_event(db: &PgPool, event: &NewRawEvent) -> AppResult<RawEvent> {
@@ -70,6 +76,59 @@ pub async fn insert_raw_event(db: &PgPool, event: &NewRawEvent) -> AppResult<Raw
     }
 }
 
+pub async fn insert_raw_event_in_tx(
+    transaction: &mut Transaction<'_, Postgres>,
+    event: &NewRawEvent,
+) -> AppResult<InsertRawEventOutcome> {
+    let inserted = sqlx::query_as::<_, RawEvent>(
+        r#"
+        INSERT INTO raw_events (
+            id,
+            workspace_id,
+            source,
+            event_type,
+            actor,
+            payload,
+            idempotency_key,
+            occurred_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (idempotency_key) DO NOTHING
+        RETURNING id,
+            workspace_id,
+            source,
+            event_type,
+            actor,
+            payload,
+            idempotency_key,
+            occurred_at,
+            ingested_at
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(event.workspace_id)
+    .bind(event.source)
+    .bind(event.event_type)
+    .bind(&event.actor)
+    .bind(&event.payload)
+    .bind(&event.idempotency_key)
+    .bind(event.occurred_at)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(AppError::Database)?;
+
+    if let Some(raw_event) = inserted {
+        return Ok(InsertRawEventOutcome::Inserted(raw_event));
+    }
+
+    let existing = select_raw_event_by_idempotency_key(&mut **transaction, &event.idempotency_key)
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow!("idempotency conflict without existing raw event"))
+        })?;
+    Ok(InsertRawEventOutcome::Existing(existing))
+}
+
 pub(crate) async fn workspace_exists(db: &PgPool, workspace_id: Uuid) -> AppResult<bool> {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND deleted_at IS NULL)",
@@ -91,8 +150,18 @@ pub(crate) async fn find_raw_event_id_by_idempotency_key(
         .map_err(AppError::Database)
 }
 
+pub(crate) async fn raw_event_needs_publish(db: &PgPool, raw_event_id: Uuid) -> AppResult<bool> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT NOT EXISTS(SELECT 1 FROM processing_state WHERE raw_event_id = $1)",
+    )
+    .bind(raw_event_id)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
+}
+
 async fn select_raw_event_by_idempotency_key(
-    db: &PgPool,
+    db: impl sqlx::Executor<'_, Database = Postgres>,
     idempotency_key: &str,
 ) -> AppResult<Option<RawEvent>> {
     sqlx::query_as::<_, RawEvent>(

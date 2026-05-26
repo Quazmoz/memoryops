@@ -60,8 +60,8 @@ pub async fn handle_linear_webhook(
             .into_response());
     }
 
-    let event = insert_and_publish_linear_event(&state, workspace_id, &parsed, idempotency_key)
-        .await?;
+    let event =
+        insert_and_publish_linear_event(&state, workspace_id, &parsed, idempotency_key).await?;
     INGEST_EVENTS.add(1, &[]);
 
     Ok((
@@ -83,7 +83,11 @@ async fn verify_linear_integration(
     let has_signature = headers.get(validator::SIGNATURE_HEADER).is_some();
     let secret = workspace_webhook_secret(state, workspace_id, Source::Linear).await?;
 
-    if let Some(secret) = secret.as_deref().map(str::trim).filter(|secret| !secret.is_empty()) {
+    if let Some(secret) = secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|secret| !secret.is_empty())
+    {
         return verify_signature(headers, body, secret);
     }
 

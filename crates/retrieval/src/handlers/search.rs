@@ -145,13 +145,8 @@ pub async fn handle_memory_search(
     let memory_store = PgMemorySearchStore { db: &state.db };
     let config = super::fetch_workspace_config(&state, options.workspace_id).await?;
     let embedding_provider = build_embedding_provider_for_workspace(&state.config, &config);
-    let response = run_memory_search(
-        &embedding_provider,
-        &state.qdrant,
-        &memory_store,
-        options,
-    )
-    .await?;
+    let response =
+        run_memory_search(&embedding_provider, &state.qdrant, &memory_store, options).await?;
 
     Ok(Json(response))
 }
@@ -254,12 +249,6 @@ pub async fn handle_search(
         SearchMode::Hybrid => hybrid::hybrid_search(&state, &req, limit).await?,
     };
 
-    for result in &results {
-        if let Err(error) = access::record_access(&state.redis, result.memory.id).await {
-            tracing::warn!(error = ?error, memory_id = %result.memory.id, "failed to record memory access");
-        }
-    }
-
     let result_ids = results
         .iter()
         .map(|result| result.memory.id)
@@ -267,6 +256,9 @@ pub async fn handle_search(
     if !result_ids.is_empty() {
         let task_state = state.clone();
         tokio::spawn(async move {
+            if let Err(error) = access::record_access_batch(&task_state.redis, &result_ids).await {
+                tracing::warn!(error = ?error, count = result_ids.len(), "failed to record memory access batch");
+            }
             promotion::check_and_promote(task_state, workspace_id, result_ids).await;
         });
     }

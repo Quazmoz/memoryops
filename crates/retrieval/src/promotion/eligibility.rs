@@ -15,9 +15,7 @@ pub fn is_eligible_for_promotion(
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use common::{
-        models::{Entity, MemoryScope, ScopeVisibility},
-    };
+    use common::models::{Entity, MemoryScope, ScopeVisibility};
     use sqlx::types::Json;
     use uuid::Uuid;
 

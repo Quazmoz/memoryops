@@ -16,8 +16,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    slack::{parser::parse_slack_event, parser::ParsedSlackEvent, validator::verify_signature},
     queue::{publish_raw_event_with_mode, PublishMode},
+    slack::{parser::parse_slack_event, parser::ParsedSlackEvent, validator::verify_signature},
     store::find_raw_event_id_by_idempotency_key,
     webhook::workspace_webhook_secret,
 };
@@ -67,7 +67,8 @@ pub async fn handle_slack_webhook(
             .into_response());
     }
 
-    let event = insert_and_publish_slack_event(&state, workspace_id, &parsed, idempotency_key).await?;
+    let event =
+        insert_and_publish_slack_event(&state, workspace_id, &parsed, idempotency_key).await?;
     INGEST_EVENTS.add(1, &[]);
 
     Ok((

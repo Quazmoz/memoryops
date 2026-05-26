@@ -112,7 +112,8 @@ async fn build_state(
 
     let db = connect_pool(&database_url, &config.database).await?;
     tracing::info!("running database migrations...");
-    common::db::run_migrations(&db).await
+    common::db::run_migrations(&db)
+        .await
         .map_err(|error| anyhow::anyhow!("failed to run database migrations: {error}"))?;
     ensure_skill_secret_configuration(&db).await?;
     let redis = {
@@ -255,7 +256,9 @@ async fn shutdown_signal() {
             Ok(mut signal) => {
                 signal.recv().await;
             }
-            Err(error) => tracing::error!(error = ?error, "failed to install SIGTERM shutdown handler"),
+            Err(error) => {
+                tracing::error!(error = ?error, "failed to install SIGTERM shutdown handler")
+            }
         }
     };
 

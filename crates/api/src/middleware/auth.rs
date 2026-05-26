@@ -5,11 +5,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use common::{
-    error::AppResult,
-    services::AuthService,
-    AppError, AppState,
-};
+use common::{error::AppResult, services::AuthService, AppError, AppState};
 use uuid::Uuid;
 
 pub const API_KEY_HEADER: HeaderName = HeaderName::from_static("x-api-key");
