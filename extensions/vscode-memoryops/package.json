@@ -21,42 +21,140 @@
     "memory",
     "devops"
   ],
-  "activationEvents": [
-    "onCommand:memoryops.testConnection",
-    "onCommand:memoryops.searchMemory",
-    "onCommand:memoryops.retrieveContextForCurrentFile",
-    "onCommand:memoryops.saveSelectionAsObservation",
-    "onCommand:memoryops.openSettings"
-  ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "memoryops",
+          "title": "MemoryOps",
+          "icon": "media/memoryops.svg"
+        }
+      ]
+    },
+    "views": {
+      "memoryops": [
+        {
+          "id": "memoryops.memories",
+          "name": "Memories",
+          "contextualTitle": "MemoryOps Memories"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "memoryops.testConnection",
         "title": "MemoryOps: Test Connection",
-        "category": "MemoryOps"
+        "category": "MemoryOps",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "memoryops.refreshMemories",
+        "title": "MemoryOps: Refresh Memories",
+        "category": "MemoryOps",
+        "icon": "$(refresh)"
       },
       {
         "command": "memoryops.searchMemory",
         "title": "MemoryOps: Search Memory",
-        "category": "MemoryOps"
+        "category": "MemoryOps",
+        "icon": "$(search)"
       },
       {
         "command": "memoryops.retrieveContextForCurrentFile",
         "title": "MemoryOps: Retrieve Context for Current File",
-        "category": "MemoryOps"
+        "category": "MemoryOps",
+        "icon": "$(references)"
       },
       {
         "command": "memoryops.saveSelectionAsObservation",
         "title": "MemoryOps: Save Selection as Observation",
-        "category": "MemoryOps"
+        "category": "MemoryOps",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "memoryops.openMemory",
+        "title": "MemoryOps: Open Memory",
+        "category": "MemoryOps",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "memoryops.pinMemory",
+        "title": "MemoryOps: Pin Memory",
+        "category": "MemoryOps",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "memoryops.unpinMemory",
+        "title": "MemoryOps: Unpin Memory",
+        "category": "MemoryOps",
+        "icon": "$(pinned-dirty)"
+      },
+      {
+        "command": "memoryops.deleteMemory",
+        "title": "MemoryOps: Delete Memory",
+        "category": "MemoryOps",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "memoryops.copyMemory",
+        "title": "MemoryOps: Copy Memory Content",
+        "category": "MemoryOps",
+        "icon": "$(copy)"
       },
       {
         "command": "memoryops.openSettings",
         "title": "MemoryOps: Open Settings",
-        "category": "MemoryOps"
+        "category": "MemoryOps",
+        "icon": "$(settings-gear)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "memoryops.refreshMemories",
+          "when": "view == memoryops.memories",
+          "group": "navigation@1"
+        },
+        {
+          "command": "memoryops.searchMemory",
+          "when": "view == memoryops.memories",
+          "group": "navigation@2"
+        },
+        {
+          "command": "memoryops.retrieveContextForCurrentFile",
+          "when": "view == memoryops.memories",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "memoryops.openMemory",
+          "when": "view == memoryops.memories && viewItem =~ /memoryops.memory/",
+          "group": "inline@1"
+        },
+        {
+          "command": "memoryops.pinMemory",
+          "when": "view == memoryops.memories && viewItem == memoryops.memory.unpinned",
+          "group": "inline@2"
+        },
+        {
+          "command": "memoryops.unpinMemory",
+          "when": "view == memoryops.memories && viewItem == memoryops.memory.pinned",
+          "group": "inline@2"
+        },
+        {
+          "command": "memoryops.copyMemory",
+          "when": "view == memoryops.memories && viewItem =~ /memoryops.memory/",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "memoryops.deleteMemory",
+          "when": "view == memoryops.memories && viewItem =~ /memoryops.memory/",
+          "group": "9_destructive@1"
+        }
+      ]
+    },
     "configuration": {
       "title": "MemoryOps",
       "properties": {
@@ -82,12 +180,34 @@
           "maximum": 20,
           "description": "Default number of memories to request for search/retrieval commands."
         },
+        "memoryops.defaultSearchMode": {
+          "type": "string",
+          "default": "hybrid",
+          "enum": [
+            "hybrid",
+            "keyword",
+            "vector"
+          ],
+          "description": "Default retrieval/search mode for MemoryOps commands."
+        },
         "memoryops.defaultTokenBudget": {
           "type": "number",
           "default": 2048,
           "minimum": 256,
           "maximum": 16000,
           "description": "Default token budget for retrieval context requests."
+        },
+        "memoryops.sidebarPageSize": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Number of recent memories to load in the MemoryOps sidebar."
+        },
+        "memoryops.includeWorkspacePool": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include workspace-published memories when searching and retrieving context."
         },
         "memoryops.defaultAgentId": {
           "type": "string",

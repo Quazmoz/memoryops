@@ -145,8 +145,13 @@ pub async fn handle_memory_search(
     let memory_store = PgMemorySearchStore { db: &state.db };
     let config = super::fetch_workspace_config(&state, options.workspace_id).await?;
     let embedding_provider = build_embedding_provider_for_workspace(&state.config, &config);
-    let response =
-        run_memory_search(&embedding_provider, &state.qdrant, &memory_store, options).await?;
+    let response = run_memory_search(
+        &embedding_provider,
+        &state.qdrant,
+        &memory_store,
+        options,
+    )
+    .await?;
 
     Ok(Json(response))
 }
@@ -249,17 +254,21 @@ pub async fn handle_search(
         SearchMode::Hybrid => hybrid::hybrid_search(&state, &req, limit).await?,
     };
 
+    // Batch record access for all memory IDs
+    let memory_ids: Vec<uuid::Uuid> = results.iter().map(|result| result.memory.id).collect();
+    if let Err(error) = access::record_access_batch(&state.redis, &memory_ids).await {
+        tracing::warn!(error = ?error, count = memory_ids.len(), "failed to batch record memory access");
+    }
+
     let result_ids = results
         .iter()
         .map(|result| result.memory.id)
         .collect::<Vec<_>>();
     if !result_ids.is_empty() {
         let task_state = state.clone();
+        let config = config.clone();
         tokio::spawn(async move {
-            if let Err(error) = access::record_access_batch(&task_state.redis, &result_ids).await {
-                tracing::warn!(error = ?error, count = result_ids.len(), "failed to record memory access batch");
-            }
-            promotion::check_and_promote(task_state, workspace_id, result_ids).await;
+            promotion::check_and_promote(task_state, workspace_id, result_ids, &config).await;
         });
     }
 

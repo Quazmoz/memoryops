@@ -8,16 +8,18 @@ extensions/vscode-memoryops
 
 The extension is not published to the Visual Studio Marketplace yet. It is intended for local development, dogfooding, and iteration before Marketplace packaging.
 
-## Current MVP
+## Current Features
 
-The scaffold currently includes these commands:
+The extension currently includes these commands and sidebar actions:
 
 | Command | Purpose |
 |--------|---------|
 | `MemoryOps: Test Connection` | Checks API readiness and workspace access. |
+| `MemoryOps: Refresh Memories` | Loads recent workspace memories into the MemoryOps sidebar. |
 | `MemoryOps: Search Memory` | Searches the configured MemoryOps workspace from the Command Palette. |
 | `MemoryOps: Retrieve Context for Current File` | Sends the active file/selection as retrieval context and opens returned memory context in a Markdown preview document. |
 | `MemoryOps: Save Selection as Observation` | Sends selected code or notes to `/v1/ingest/observation`. |
+| Sidebar memory actions | Open, pin, unpin, delete, and copy memory content. |
 | `MemoryOps: Open Settings` | Opens MemoryOps extension settings. |
 
 ## Settings
@@ -30,7 +32,10 @@ Configure the extension in VS Code user settings:
   "memoryops.workspaceId": "<workspace-uuid>",
   "memoryops.apiKey": "<mops-api-key>",
   "memoryops.defaultTopK": 5,
+  "memoryops.defaultSearchMode": "hybrid",
   "memoryops.defaultTokenBudget": 2048,
+  "memoryops.sidebarPageSize": 20,
+  "memoryops.includeWorkspacePool": false,
   "memoryops.defaultAgentId": "vscode"
 }
 ```
@@ -59,9 +64,6 @@ This produces a `.vsix` file for local testing. Marketplace publishing is intent
 
 ## Roadmap
 
-- Sidebar/webview for richer memory browsing.
-- Git remote detection for better repo-aware retrieval.
 - Optional VS Code chat participant integration.
-- Memory pin/delete actions from result views.
 - Command and API-client tests.
 - Marketplace packaging metadata, icon, screenshots, and release workflow.
