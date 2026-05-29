@@ -16,11 +16,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    linear::{
-        parser::parse_linear_event,
-        parser::ParsedLinearEvent,
-        validator::{self, verify_signature},
-    },
+    linear::{parser::parse_linear_event, parser::ParsedLinearEvent, validator::verify_signature},
     queue::{publish_raw_event_with_mode, PublishMode},
     store::{insert_raw_event_in_tx, raw_event_needs_publish, InsertRawEventOutcome, NewRawEvent},
     webhook::workspace_webhook_secret,
@@ -78,26 +74,13 @@ async fn verify_linear_integration(
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<(), AppError> {
-    let has_signature = headers.get(validator::SIGNATURE_HEADER).is_some();
-    let secret = workspace_webhook_secret(state, workspace_id, Source::Linear).await?;
-
-    if let Some(secret) = secret
-        .as_deref()
-        .map(str::trim)
+    let secret = workspace_webhook_secret(state, workspace_id, Source::Linear)
+        .await?
+        .map(|secret| secret.trim().to_owned())
         .filter(|secret| !secret.is_empty())
-    {
-        return verify_signature(headers, body, secret);
-    }
+        .ok_or(AppError::Unauthorized)?;
 
-    if !has_signature {
-        tracing::warn!(
-            workspace_id = %workspace_id,
-            "accepting unsigned Linear webhook because no signing secret is configured"
-        );
-        return Ok(());
-    }
-
-    Err(AppError::Unauthorized)
+    verify_signature(headers, body, &secret)
 }
 
 async fn insert_and_publish_linear_event(

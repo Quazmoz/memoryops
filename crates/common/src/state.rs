@@ -216,6 +216,7 @@ pub fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
                 &config.llm.model,
                 api_key,
                 headers,
+                config.llm.timeout_secs,
             ))
         }
         LlmProviderKind::Gemini => {

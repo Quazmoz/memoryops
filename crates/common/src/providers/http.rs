@@ -254,9 +254,10 @@ impl OpenAiCompatibleProvider {
         model: impl Into<String>,
         api_key: Option<String>,
         extra_headers: std::collections::BTreeMap<String, String>,
+        timeout_secs: u64,
     ) -> Self {
         Self {
-            client: Client::new(),
+            client: client_with_timeout(timeout_secs),
             api_key,
             model: model.into(),
             base_url: base_url.into().trim_end_matches('/').to_owned(),

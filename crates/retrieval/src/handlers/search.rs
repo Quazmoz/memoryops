@@ -145,13 +145,8 @@ pub async fn handle_memory_search(
     let memory_store = PgMemorySearchStore { db: &state.db };
     let config = super::fetch_workspace_config(&state, options.workspace_id).await?;
     let embedding_provider = build_embedding_provider_for_workspace(&state.config, &config);
-    let response = run_memory_search(
-        &embedding_provider,
-        &state.qdrant,
-        &memory_store,
-        options,
-    )
-    .await?;
+    let response =
+        run_memory_search(&embedding_provider, &state.qdrant, &memory_store, options).await?;
 
     Ok(Json(response))
 }
@@ -405,6 +400,8 @@ mod tests {
             workspace_id,
             scope: MemoryScope {
                 workspace_id,
+                source: None,
+                actor: None,
                 agent_id: Some("agent-7".to_owned()),
                 user_id: None,
                 repo: Some("Quazmoz/memoryops".to_owned()),

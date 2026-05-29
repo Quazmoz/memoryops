@@ -108,13 +108,13 @@ paths:
       tags: [Webhooks]
       operationId: ingestLinear
       summary: Receive a Linear webhook event
-      description: Accepts supported Linear Issue, Comment, Project, and Cycle events. Validates X-Linear-Signature when a signing secret is configured for the workspace integration.
+      description: Accepts supported Linear Issue, Comment, Project, and Cycle events. Requires and validates X-Linear-Signature against the workspace integration signing secret.
       security: []
       parameters:
         - $ref: '#/components/parameters/WebhookWorkspaceId'
         - name: X-Linear-Signature
           in: header
-          required: false
+          required: true
           schema:
             type: string
       requestBody:
@@ -1236,13 +1236,9 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/DlqJob'
+                type: array
+                items:
+                  $ref: '#/components/schemas/DlqJob'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/workspaces/{id}/dlq/{job_id}/retry:
@@ -1748,6 +1744,10 @@ components:
         workspace_id:
           type: string
           format: uuid
+        source:
+          type: string
+        actor:
+          type: string
         agent_id:
           type: [string, 'null']
         user_id:
@@ -2679,13 +2679,14 @@ components:
           enum: [soft_delete, hard_purge]
     IntegrationRequest:
       type: object
-      required: [source]
+      required: [source, webhook_secret]
       properties:
         source:
           $ref: '#/components/schemas/Source'
         webhook_secret:
-          type: [string, 'null']
-          description: Required for signed integrations. Linear may omit this to accept unsigned webhooks.
+          type: string
+          minLength: 1
+          description: Required signing secret for webhook signature validation.
     IntegrationHealth:
       type: object
       required: [workspace_id, source, events_24h, errors_24h, status]
@@ -2781,19 +2782,19 @@ components:
           type: [string, 'null']
     DlqJob:
       type: object
-      required: [job_id, payload, error, retry_count, failed_at]
+      required: [job_id, payload_summary, error, retry_count, failed_at]
       properties:
         job_id:
           type: string
-        payload:
-          type: object
-          additionalProperties: true
+          format: uuid
+        payload_summary:
+          type: string
         error:
           type: string
         retry_count:
           type: integer
         failed_at:
-          type: string
+          type: [string, 'null']
           format: date-time
     HealthResponse:
       type: object

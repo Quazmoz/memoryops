@@ -28,28 +28,22 @@ pub async fn send_to_dlq(
     .to_string();
     let ttl_seconds = ttl_days.saturating_mul(86_400);
 
-    redis::cmd("SETEX")
+    redis::pipe()
+        .atomic()
+        .cmd("SETEX")
         .arg(&key)
         .arg(ttl_seconds)
         .arg(&value)
-        .query_async::<redis::Value>(&mut *redis)
-        .await
-        .map_err(|redis_error| {
-            tracing::error!(error = ?redis_error, key = %key, "failed to write processor DLQ entry");
-            AppError::Internal(anyhow!(redis_error))
-        })?;
-
-    redis::pipe()
         .cmd("LPUSH")
         .arg(&list_key)
         .arg(&value)
         .cmd("EXPIRE")
         .arg(&list_key)
         .arg(ttl_seconds)
-        .query_async::<(i64, bool)>(&mut *redis)
+        .query_async::<(redis::Value, i64, bool)>(&mut *redis)
         .await
         .map_err(|redis_error| {
-            tracing::error!(error = ?redis_error, key = %list_key, "failed to write processor DLQ list entry");
+            tracing::error!(error = ?redis_error, key = %key, list_key = %list_key, "failed to write processor DLQ entry");
             AppError::Internal(anyhow!(redis_error))
         })?;
 
@@ -78,28 +72,22 @@ pub async fn send_processor_job_to_dlq(
     .to_string();
     let ttl_seconds = ttl_days.saturating_mul(86_400);
 
-    redis::cmd("SETEX")
+    redis::pipe()
+        .atomic()
+        .cmd("SETEX")
         .arg(&key)
         .arg(ttl_seconds)
         .arg(&value)
-        .query_async::<redis::Value>(&mut *redis)
-        .await
-        .map_err(|redis_error| {
-            tracing::error!(error = ?redis_error, key = %key, "failed to write slow processor DLQ entry");
-            AppError::Internal(anyhow!(redis_error))
-        })?;
-
-    redis::pipe()
         .cmd("LPUSH")
         .arg(&list_key)
         .arg(&value)
         .cmd("EXPIRE")
         .arg(&list_key)
         .arg(ttl_seconds)
-        .query_async::<(i64, bool)>(&mut *redis)
+        .query_async::<(redis::Value, i64, bool)>(&mut *redis)
         .await
         .map_err(|redis_error| {
-            tracing::error!(error = ?redis_error, key = %list_key, "failed to write slow processor DLQ list entry");
+            tracing::error!(error = ?redis_error, key = %key, list_key = %list_key, "failed to write slow processor DLQ entry");
             AppError::Internal(anyhow!(redis_error))
         })?;
 

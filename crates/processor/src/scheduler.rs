@@ -3,11 +3,12 @@ use std::collections::HashSet;
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Timelike, Utc, Weekday};
 use common::{
     audit::spawn_audit_log,
+    build_embedding_provider_for_workspace, build_llm_provider_for_workspace,
     error::AppResult,
     models::{
         AuditAction, WorkspaceConfig, DEFAULT_DECAY_HALF_LIFE_DAYS, DEFAULT_PRUNING_THRESHOLD,
     },
-    services::VectorIndexService,
+    services::{VectorIndexService, WorkspaceConfigService},
     AppError, AppState,
 };
 use sqlx::{FromRow, PgPool};
@@ -150,6 +151,7 @@ fn next_sunday_hour_utc_after(now: DateTime<Utc>, hour_utc: u32) -> DateTime<Utc
 
 async fn run_scheduled_promotion_pass(state: &AppState) -> AppResult<()> {
     let mut cursor = None;
+    let config_service = WorkspaceConfigService::new(state.db.clone());
 
     loop {
         let workspace_ids =
@@ -159,14 +161,19 @@ async fn run_scheduled_promotion_pass(state: &AppState) -> AppResult<()> {
         }
 
         for workspace_id in &workspace_ids {
-            let config = fetch_workspace_promotion_config(&state.db, *workspace_id).await?;
+            let promotion_config =
+                fetch_workspace_promotion_config(&state.db, *workspace_id).await?;
+            let workspace_config = config_service.load(*workspace_id).await?;
+            let llm_provider = build_llm_provider_for_workspace(&state.config, &workspace_config);
+            let embedding_provider =
+                build_embedding_provider_for_workspace(&state.config, &workspace_config);
             let report = run_promotion_pass(
                 &state.db,
                 &state.qdrant,
-                state.llm_provider.as_ref(),
-                state.embedding_provider.as_ref(),
+                llm_provider.as_ref(),
+                embedding_provider.as_ref(),
                 *workspace_id,
-                config,
+                promotion_config,
             )
             .await
             .map_err(AppError::Internal)?;

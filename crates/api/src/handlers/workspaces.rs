@@ -16,9 +16,10 @@ use chrono::{DateTime, NaiveDate, Utc};
 use common::{
     audit::spawn_audit_log,
     auth::AuthContext,
+    build_embedding_provider_for_workspace, build_llm_provider_for_workspace,
     error::AppResult,
     models::{AuditAction, ContradictionMode, MemoryUnit, Workspace, WorkspaceConfig},
-    services::VectorIndexService,
+    services::{VectorIndexService, WorkspaceConfigService},
     AppError, AppState,
 };
 use futures_util::StreamExt;
@@ -471,16 +472,22 @@ pub async fn promote(
     let lock_key = format!("promotion:lock:{id}");
     let lock_token = acquire_promotion_lock(&state, &lock_key).await?;
 
-    let config = fetch_workspace_promotion_config(&state.db, id).await?;
+    let promotion_config = fetch_workspace_promotion_config(&state.db, id).await?;
+    let workspace_config = WorkspaceConfigService::new(state.db.clone())
+        .load(id)
+        .await?;
+    let llm_provider = build_llm_provider_for_workspace(&state.config, &workspace_config);
+    let embedding_provider =
+        build_embedding_provider_for_workspace(&state.config, &workspace_config);
     let result = tokio::time::timeout(
         Duration::from_secs(60),
         run_promotion_pass(
             &state.db,
             &state.qdrant,
-            state.llm_provider.as_ref(),
-            state.embedding_provider.as_ref(),
+            llm_provider.as_ref(),
+            embedding_provider.as_ref(),
             id,
-            config,
+            promotion_config,
         ),
     )
     .await;
@@ -1631,6 +1638,8 @@ mod tests {
             workspace_id,
             scope: MemoryScope {
                 workspace_id,
+                source: None,
+                actor: None,
                 agent_id: None,
                 user_id: None,
                 repo: Some("Quazmoz/memoryops".to_owned()),

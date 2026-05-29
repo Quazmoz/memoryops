@@ -8,7 +8,12 @@ use crate::{access, store};
 
 use common::models::WorkspaceConfig;
 
-pub async fn check_and_promote(state: AppState, workspace_id: Uuid, memory_ids: Vec<Uuid>, config: &WorkspaceConfig) {
+pub async fn check_and_promote(
+    state: AppState,
+    workspace_id: Uuid,
+    memory_ids: Vec<Uuid>,
+    config: &WorkspaceConfig,
+) {
     for memory_id in memory_ids {
         if let Err(error) = check_one(&state, workspace_id, memory_id, config).await {
             tracing::warn!(error = ?error, memory_id = %memory_id, "promotion check failed");

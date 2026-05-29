@@ -299,6 +299,8 @@ mod tests {
         let workspace_id = Uuid::now_v7();
         let scope = MemoryScope {
             workspace_id,
+            source: None,
+            actor: None,
             agent_id: Some("agent".to_owned()),
             user_id: None,
             repo: Some("Quazmoz/memoryops".to_owned()),

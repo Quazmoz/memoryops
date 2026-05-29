@@ -87,6 +87,8 @@ mod tests {
             workspace_id,
             scope: MemoryScope {
                 workspace_id,
+                source: None,
+                actor: None,
                 agent_id: None,
                 user_id: None,
                 repo: Some("Quazmoz/memoryops".to_owned()),

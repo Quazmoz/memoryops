@@ -9,7 +9,10 @@ use common::{
     AppError, AppState,
 };
 use ingestion::STREAM_KEY;
-use processor::dlq::{dlq_key as dlq_entry_key, dlq_list_key};
+use processor::{
+    dlq::{dlq_key as dlq_entry_key, dlq_list_key},
+    worker::PROCESSOR_JOBS_STREAM,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -56,6 +59,7 @@ pub struct DlqQuery {
 struct StoredDlqEntry {
     pub job_id: Option<Uuid>,
     pub event_id: Option<Uuid>,
+    pub memory_id: Option<Uuid>,
     pub payload: Option<Value>,
     pub error: Option<String>,
     pub retry_count: Option<u32>,
@@ -77,7 +81,7 @@ pub async fn create_integration(
         .map(str::trim)
         .filter(|secret| !secret.is_empty())
         .map(ToOwned::to_owned);
-    if webhook_secret.is_none() && request.source != Source::Linear {
+    if webhook_secret.is_none() {
         return Err(AppError::Validation(
             "webhook_secret is required".to_owned(),
         ));
@@ -244,6 +248,11 @@ pub async fn retry_dlq(
         .ok_or_else(|| AppError::NotFound {
             resource: format!("dlq:{job_id}"),
         })?;
+    let retry_target = parse_dlq_retry_target(&raw).ok_or_else(|| {
+        AppError::Validation(
+            "DLQ entry does not contain a retryable event_id or memory_id".to_owned(),
+        )
+    })?;
     let mut redis = state
         .redis
         .get()
@@ -251,21 +260,39 @@ pub async fn retry_dlq(
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
     let key = dlq_list_key(id);
     let entry_key = dlq_entry_key(id, job_id);
-    redis::pipe()
-        .cmd("LREM")
+
+    let mut pipe = redis::pipe();
+    pipe.atomic();
+    match retry_target {
+        DlqRetryTarget::RawEvent(event_id) => {
+            pipe.cmd("XADD")
+                .arg(STREAM_KEY)
+                .arg("*")
+                .arg("event_id")
+                .arg(event_id.to_string())
+                .arg("workspace_id")
+                .arg(id.to_string());
+        }
+        DlqRetryTarget::SlowProcessorJob(memory_id) => {
+            pipe.cmd("XADD")
+                .arg(PROCESSOR_JOBS_STREAM)
+                .arg("*")
+                .arg("memory_id")
+                .arg(memory_id.to_string())
+                .arg("workspace_id")
+                .arg(id.to_string())
+                .arg("attempts")
+                .arg("0");
+        }
+    }
+
+    pipe.cmd("LREM")
         .arg(&key)
         .arg(1)
         .arg(&raw)
         .cmd("DEL")
         .arg(entry_key)
-        .cmd("XADD")
-        .arg(STREAM_KEY)
-        .arg("*")
-        .arg("event_id")
-        .arg(job_id.to_string())
-        .arg("workspace_id")
-        .arg(id.to_string())
-        .query_async::<(i64, i64, String)>(&mut *redis)
+        .query_async::<(String, i64, i64)>(&mut *redis)
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
@@ -365,7 +392,7 @@ async fn find_dlq_value(
 
 fn parse_dlq_response(raw: &str) -> Option<DlqEntryResponse> {
     let entry = serde_json::from_str::<StoredDlqEntry>(raw).ok()?;
-    let job_id = entry.job_id.or(entry.event_id)?;
+    let job_id = entry.job_id.or(entry.event_id).or(entry.memory_id)?;
     let payload_summary = entry
         .payload
         .map(|payload| summarize_payload(&payload))
@@ -386,4 +413,109 @@ fn summarize_payload(payload: &Value) -> String {
         summary.truncate(MAX_PAYLOAD_SUMMARY_CHARS);
     }
     summary
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DlqRetryTarget {
+    RawEvent(Uuid),
+    SlowProcessorJob(Uuid),
+}
+
+fn parse_dlq_retry_target(raw: &str) -> Option<DlqRetryTarget> {
+    let entry = serde_json::from_str::<StoredDlqEntry>(raw).ok()?;
+    dlq_retry_target(&entry)
+}
+
+fn dlq_retry_target(entry: &StoredDlqEntry) -> Option<DlqRetryTarget> {
+    if let Some(event_id) = entry.event_id {
+        return Some(DlqRetryTarget::RawEvent(event_id));
+    }
+
+    if let Some(memory_id) = entry
+        .memory_id
+        .or_else(|| memory_id_from_payload(entry.payload.as_ref()))
+    {
+        return Some(DlqRetryTarget::SlowProcessorJob(memory_id));
+    }
+
+    entry.job_id.map(DlqRetryTarget::RawEvent)
+}
+
+fn memory_id_from_payload(payload: Option<&Value>) -> Option<Uuid> {
+    payload?
+        .get("memory_id")?
+        .as_str()
+        .and_then(|value| Uuid::parse_str(value).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dlq_retry_target_uses_raw_event_stream_when_event_id_is_present() {
+        let event_id = Uuid::now_v7();
+        let raw = serde_json::json!({
+            "job_id": event_id,
+            "event_id": event_id,
+            "payload": {}
+        })
+        .to_string();
+
+        assert_eq!(
+            parse_dlq_retry_target(&raw),
+            Some(DlqRetryTarget::RawEvent(event_id))
+        );
+    }
+
+    #[test]
+    fn dlq_retry_target_uses_slow_processor_stream_for_memory_jobs() {
+        let memory_id = Uuid::now_v7();
+        let raw = serde_json::json!({
+            "job_id": memory_id,
+            "memory_id": memory_id,
+            "payload": { "memory_id": memory_id }
+        })
+        .to_string();
+
+        assert_eq!(
+            parse_dlq_retry_target(&raw),
+            Some(DlqRetryTarget::SlowProcessorJob(memory_id))
+        );
+    }
+
+    #[test]
+    fn dlq_retry_target_treats_job_id_only_entries_as_legacy_raw_events() {
+        let event_id = Uuid::now_v7();
+        let raw = serde_json::json!({
+            "job_id": event_id,
+            "payload": { "action": "opened" }
+        })
+        .to_string();
+
+        assert_eq!(
+            parse_dlq_retry_target(&raw),
+            Some(DlqRetryTarget::RawEvent(event_id))
+        );
+    }
+
+    #[test]
+    fn dlq_response_can_display_memory_job_ids() {
+        let memory_id = Uuid::now_v7();
+        let raw = serde_json::json!({
+            "memory_id": memory_id,
+            "payload": { "memory_id": memory_id },
+            "error": "embedding failed",
+            "retry_count": 3
+        })
+        .to_string();
+
+        let Some(response) = parse_dlq_response(&raw) else {
+            panic!("DLQ response should parse");
+        };
+
+        assert_eq!(response.job_id, memory_id);
+        assert_eq!(response.error, "embedding failed");
+        assert_eq!(response.retry_count, 3);
+    }
 }

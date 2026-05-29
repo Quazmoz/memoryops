@@ -20,7 +20,8 @@ use uuid::Uuid;
 use crate::{
     dto::{
         memory_type_as_str, normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto,
-        ScopeFilter, SearchRequest, WorkspacePoolAccess, DEFAULT_OFFSET, MIN_SCORE_THRESHOLD,
+        ScopeFilter, SearchFilters, SearchRequest, WorkspacePoolAccess, DEFAULT_OFFSET,
+        MIN_SCORE_THRESHOLD,
     },
     store,
 };
@@ -196,6 +197,15 @@ async fn materialize_vector_results(
             if !matches_memory_type(unit.memory_type, memory_types) {
                 continue;
             }
+            if !non_type_search_filters_match(
+                unit.scope.source.as_deref(),
+                unit.importance_score,
+                unit.pinned,
+                &unit.tags,
+                req.filters.as_ref(),
+            ) {
+                continue;
+            }
             matches.push(MemoryResult {
                 memory: MemoryUnitDto::from(unit),
                 score,
@@ -310,6 +320,51 @@ fn matches_memory_type(memory_type: MemoryType, filters: Option<&[String]>) -> b
     })
 }
 
+fn source_matches(memory_source: Option<&str>, source_filter: Option<&str>) -> bool {
+    source_filter.is_none_or(|expected| memory_source == Some(expected))
+}
+
+fn non_type_search_filters_match(
+    memory_source: Option<&str>,
+    importance_score: f32,
+    pinned: bool,
+    memory_tags: &[String],
+    filters: Option<&SearchFilters>,
+) -> bool {
+    let Some(filters) = filters else {
+        return true;
+    };
+
+    let source_filter = filters
+        .source
+        .as_deref()
+        .map(str::trim)
+        .filter(|source| !source.is_empty());
+    if !source_matches(memory_source, source_filter) {
+        return false;
+    }
+
+    if let Some(min_importance) = filters.min_importance {
+        if importance_score < min_importance {
+            return false;
+        }
+    }
+
+    if let Some(expected_pinned) = filters.pinned {
+        if pinned != expected_pinned {
+            return false;
+        }
+    }
+
+    if let Some(tags) = &filters.tags {
+        if !tags.iter().all(|tag| memory_tags.contains(tag)) {
+            return false;
+        }
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +391,58 @@ mod tests {
         assert!(debug.contains(&workspace_id.to_string()));
         assert!(debug.contains("agent_id"));
         assert!(debug.contains("repo"));
+    }
+
+    #[test]
+    fn source_match_requires_matching_source_when_filter_is_present() {
+        assert!(source_matches(Some("github"), Some("github")));
+        assert!(!source_matches(Some("slack"), Some("github")));
+        assert!(!source_matches(None, Some("github")));
+        assert!(source_matches(Some("slack"), None));
+    }
+
+    #[test]
+    fn non_type_search_filters_require_importance_pin_and_tags() {
+        let filters = SearchFilters {
+            memory_type: None,
+            source: Some("github".to_owned()),
+            min_importance: Some(0.7),
+            pinned: Some(true),
+            tags: Some(vec!["rust".to_owned(), "api".to_owned()]),
+            agent_id: None,
+            user_id: None,
+            repo: None,
+        };
+        let tags = vec!["rust".to_owned(), "api".to_owned(), "security".to_owned()];
+
+        assert!(non_type_search_filters_match(
+            Some("github"),
+            0.8,
+            true,
+            &tags,
+            Some(&filters),
+        ));
+        assert!(!non_type_search_filters_match(
+            Some("github"),
+            0.6,
+            true,
+            &tags,
+            Some(&filters),
+        ));
+        assert!(!non_type_search_filters_match(
+            Some("github"),
+            0.8,
+            false,
+            &tags,
+            Some(&filters),
+        ));
+        assert!(!non_type_search_filters_match(
+            Some("github"),
+            0.8,
+            true,
+            &["rust".to_owned()],
+            Some(&filters),
+        ));
     }
 
     #[test]
