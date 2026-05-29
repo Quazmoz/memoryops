@@ -22,6 +22,15 @@ pub async fn keyword_search(
     limit: u32,
 ) -> AppResult<Vec<MemoryResult>> {
     let offset = req.offset.unwrap_or(DEFAULT_OFFSET);
+    keyword_search_with_offset(state, req, limit, offset).await
+}
+
+pub(crate) async fn keyword_search_with_offset(
+    state: &AppState,
+    req: &SearchRequest,
+    limit: u32,
+    offset: u32,
+) -> AppResult<Vec<MemoryResult>> {
     let hits = keyword_hits(state, req, limit, offset).await?;
     let ids = hits.iter().map(|hit| hit.id).collect::<Vec<_>>();
     let units = if let Some(as_of) = req.as_of {

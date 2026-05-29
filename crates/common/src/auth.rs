@@ -17,7 +17,14 @@ use crate::{error::AppResult, models::ApiKey, AppError};
 
 const API_KEY_PREFIX: &str = "mops";
 const WORKSPACE_PREFIX_LEN: usize = 8;
-const STORED_PREFIX_LEN: usize = 13;
+const LEGACY_PREFIX_LEN_V1: usize = 8;
+const LEGACY_PREFIX_LEN_V2: usize = 13;
+const GENERATED_PREFIX_LEN: usize = 21;
+const SUPPORTED_PREFIX_LENS: [usize; 3] = [
+    GENERATED_PREFIX_LEN,
+    LEGACY_PREFIX_LEN_V2,
+    LEGACY_PREFIX_LEN_V1,
+];
 const RANDOM_BYTES_LEN: usize = 32;
 const AUTH_CACHE_TTL_SECS: u64 = 30;
 const LAST_USED_UPDATE_MAX_IN_FLIGHT: usize = 64;
@@ -47,7 +54,7 @@ pub fn generate_api_key(workspace_id: Uuid) -> AppResult<(String, String)> {
         })?;
     let random_part = bs58::encode(random_bytes).into_string();
     let plaintext = format!("{API_KEY_PREFIX}_{workspace_prefix}_{random_part}");
-    let prefix = plaintext[..STORED_PREFIX_LEN].to_owned();
+    let prefix = plaintext[..GENERATED_PREFIX_LEN].to_owned();
 
     Ok((plaintext, prefix))
 }
@@ -77,11 +84,7 @@ pub fn verify_secret(secret: &str, hash: &str) -> bool {
 }
 
 pub fn api_key_prefix(secret: &str) -> Option<String> {
-    if !is_valid_api_key_format(secret) {
-        return None;
-    }
-
-    Some(secret[..STORED_PREFIX_LEN].to_owned())
+    api_key_prefixes(secret).and_then(|prefixes| prefixes.into_iter().next())
 }
 
 pub async fn validate_api_key(db: &PgPool, api_key: &str) -> AppResult<AuthContext> {
@@ -126,8 +129,8 @@ pub async fn invalidate_api_key_cache(
 }
 
 async fn validate_api_key_uncached(db: &PgPool, api_key: &str) -> AppResult<AuthContext> {
-    let prefix = api_key_prefix(api_key).ok_or(AppError::Unauthorized)?;
-    let candidates = find_candidate_keys(db, &prefix).await?;
+    let prefixes = api_key_prefixes(api_key).ok_or(AppError::Unauthorized)?;
+    let candidates = find_candidate_keys(db, &prefixes).await?;
 
     for candidate in candidates {
         let secret = api_key.to_owned();
@@ -253,23 +256,38 @@ fn last_used_update_permits() -> Arc<Semaphore> {
         .clone()
 }
 
-async fn find_candidate_keys(db: &PgPool, prefix: &str) -> AppResult<Vec<ApiKey>> {
+async fn find_candidate_keys(db: &PgPool, prefixes: &[String]) -> AppResult<Vec<ApiKey>> {
     sqlx::query_as::<_, ApiKey>(
         r#"
         SELECT id, workspace_id, name, key_hash, prefix, created_at, last_used_at, revoked, revoked_at
         FROM api_keys
-        WHERE prefix = $1
-                    AND revoked = false
+        WHERE prefix = ANY($1)
+          AND revoked = false
+        ORDER BY char_length(prefix) DESC, created_at DESC
         "#,
     )
-    .bind(prefix)
+    .bind(prefixes)
     .fetch_all(db)
     .await
     .map_err(AppError::Database)
 }
 
+fn api_key_prefixes(secret: &str) -> Option<Vec<String>> {
+    if !is_valid_api_key_format(secret) {
+        return None;
+    }
+
+    Some(
+        SUPPORTED_PREFIX_LENS
+            .into_iter()
+            .filter(|prefix_len| secret.len() > *prefix_len)
+            .map(|prefix_len| secret[..prefix_len].to_owned())
+            .collect(),
+    )
+}
+
 fn is_valid_api_key_format(secret: &str) -> bool {
-    if secret.len() <= STORED_PREFIX_LEN || !secret.is_ascii() {
+    if !secret.is_ascii() {
         return false;
     }
 
@@ -303,9 +321,17 @@ mod tests {
         };
 
         assert!(api_key_prefix(&key).is_some());
-        assert_eq!(STORED_PREFIX_LEN, 13);
-        assert_eq!(prefix.len(), STORED_PREFIX_LEN);
-        assert_eq!(api_key_prefix(&key), Some(prefix));
+        assert_eq!(GENERATED_PREFIX_LEN, 21);
+        assert_eq!(prefix.len(), GENERATED_PREFIX_LEN);
+        assert_eq!(api_key_prefix(&key), Some(prefix.clone()));
+        assert_eq!(
+            api_key_prefixes(&key),
+            Some(vec![
+                prefix,
+                key[..LEGACY_PREFIX_LEN_V2].to_owned(),
+                key[..LEGACY_PREFIX_LEN_V1].to_owned(),
+            ])
+        );
     }
 
     #[test]
@@ -318,5 +344,18 @@ mod tests {
 
         assert!(verify_secret(secret, &hash));
         assert!(!verify_secret("mops_01234567_wrong", &hash));
+    }
+
+    #[test]
+    fn legacy_key_prefixes_are_still_supported() {
+        let legacy_key = "mops_01234567_abcdef";
+
+        assert_eq!(
+            api_key_prefixes(legacy_key),
+            Some(vec![
+                legacy_key[..LEGACY_PREFIX_LEN_V2].to_owned(),
+                legacy_key[..LEGACY_PREFIX_LEN_V1].to_owned(),
+            ])
+        );
     }
 }

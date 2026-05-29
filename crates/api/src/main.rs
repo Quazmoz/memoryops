@@ -700,7 +700,7 @@ mod tests {
             INSERT INTO api_keys (
                 id, workspace_id, name, key_hash, prefix, prefix_version, revoked, revoked_at
             )
-            VALUES ($1, $2, $3, $4, $5, 2, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, 3, $6, $7)
             "#,
         )
         .bind(key_id)

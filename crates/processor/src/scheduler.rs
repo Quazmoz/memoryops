@@ -149,24 +149,36 @@ fn next_sunday_hour_utc_after(now: DateTime<Utc>, hour_utc: u32) -> DateTime<Utc
 }
 
 async fn run_scheduled_promotion_pass(state: &AppState) -> AppResult<()> {
-    for workspace_id in fetch_all_workspace_ids(&state.db).await? {
-        let config = fetch_workspace_promotion_config(&state.db, workspace_id).await?;
-        let report = run_promotion_pass(
-            &state.db,
-            &state.qdrant,
-            state.llm_provider.as_ref(),
-            state.embedding_provider.as_ref(),
-            workspace_id,
-            config,
-        )
-        .await
-        .map_err(AppError::Internal)?;
-        tracing::info!(
-            workspace_id = %report.workspace_id,
-            clusters_found = report.clusters_found,
-            units_promoted = report.units_promoted,
-            "promotion pass complete"
-        );
+    let mut cursor = None;
+
+    loop {
+        let workspace_ids =
+            list_workspace_ids_after(&state.db, cursor, WORKSPACE_PAGE_SIZE).await?;
+        if workspace_ids.is_empty() {
+            break;
+        }
+
+        for workspace_id in &workspace_ids {
+            let config = fetch_workspace_promotion_config(&state.db, *workspace_id).await?;
+            let report = run_promotion_pass(
+                &state.db,
+                &state.qdrant,
+                state.llm_provider.as_ref(),
+                state.embedding_provider.as_ref(),
+                *workspace_id,
+                config,
+            )
+            .await
+            .map_err(AppError::Internal)?;
+            tracing::info!(
+                workspace_id = %report.workspace_id,
+                clusters_found = report.clusters_found,
+                units_promoted = report.units_promoted,
+                "promotion pass complete"
+            );
+        }
+
+        cursor = workspace_ids.last().copied();
     }
 
     Ok(())
@@ -520,15 +532,23 @@ async fn list_workspace_lifecycle_settings_after(
         .collect())
 }
 
-async fn fetch_all_workspace_ids(pool: &sqlx::PgPool) -> AppResult<Vec<Uuid>> {
+async fn list_workspace_ids_after(
+    pool: &sqlx::PgPool,
+    cursor: Option<Uuid>,
+    limit: i64,
+) -> AppResult<Vec<Uuid>> {
     sqlx::query_scalar::<_, Uuid>(
         r#"
         SELECT id
         FROM workspaces
         WHERE deleted_at IS NULL
+          AND ($1::uuid IS NULL OR id > $1)
         ORDER BY id ASC
+        LIMIT $2
         "#,
     )
+    .bind(cursor)
+    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(AppError::Database)

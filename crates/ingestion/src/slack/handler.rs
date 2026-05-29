@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::{
     queue::{publish_raw_event_with_mode, PublishMode},
     slack::{parser::parse_slack_event, parser::ParsedSlackEvent, validator::verify_signature},
-    store::find_raw_event_id_by_idempotency_key,
+    store::{insert_raw_event_in_tx, raw_event_needs_publish, InsertRawEventOutcome, NewRawEvent},
     webhook::workspace_webhook_secret,
 };
 
@@ -54,21 +54,19 @@ pub async fn handle_slack_webhook(
     let parsed = parse_slack_event(&payload)?;
     let idempotency_key = parsed.idempotency_key();
 
-    if let Some(event_id) =
-        find_raw_event_id_by_idempotency_key(&state.db, &idempotency_key).await?
-    {
+    let (event, duplicate) =
+        insert_and_publish_slack_event(&state, workspace_id, &parsed, idempotency_key).await?;
+    if duplicate {
         return Ok((
             StatusCode::OK,
             Json(SlackIngestResponse {
                 status: "duplicate".to_owned(),
-                event_id: Some(event_id),
+                event_id: Some(event.id),
             }),
         )
             .into_response());
     }
 
-    let event =
-        insert_and_publish_slack_event(&state, workspace_id, &parsed, idempotency_key).await?;
     INGEST_EVENTS.add(1, &[]);
 
     Ok((
@@ -113,57 +111,45 @@ async fn insert_and_publish_slack_event(
     workspace_id: Uuid,
     parsed: &ParsedSlackEvent,
     idempotency_key: String,
-) -> Result<RawEvent, AppError> {
+) -> Result<(RawEvent, bool), AppError> {
     let mut transaction = state.db.begin().await.map_err(AppError::Database)?;
-    let event = sqlx::query_as::<_, RawEvent>(
-        r#"
-        INSERT INTO raw_events (
-            id,
+    let event = match insert_raw_event_in_tx(
+        &mut transaction,
+        &NewRawEvent {
             workspace_id,
-            source,
-            event_type,
-            actor,
-            payload,
+            source: Source::Slack,
+            event_type: parsed.event_type,
+            actor: parsed.actor.clone(),
+            payload: parsed.payload.clone(),
             idempotency_key,
-            occurred_at,
-            slack_channel,
-            slack_thread_ts
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING id,
-            workspace_id,
-            source,
-            event_type,
-            actor,
-            payload,
-            idempotency_key,
-            occurred_at,
-            ingested_at
-        "#,
+            occurred_at: parsed.occurred_at,
+        },
     )
-    .bind(Uuid::now_v7())
-    .bind(workspace_id)
-    .bind(Source::Slack)
-    .bind(parsed.event_type)
-    .bind(&parsed.actor)
-    .bind(&parsed.payload)
-    .bind(&idempotency_key)
-    .bind(parsed.occurred_at)
-    .bind(&parsed.channel_id)
-    .bind(&parsed.thread_ts)
-    .fetch_one(&mut *transaction)
-    .await
-    .map_err(AppError::Database)?;
+    .await?
+    {
+        InsertRawEventOutcome::Existing(event) => {
+            drop(transaction);
+            if raw_event_needs_publish(&state.db, event.id).await? {
+                publish_event(state, &event).await?;
+            }
+            return Ok((event, true));
+        }
+        InsertRawEventOutcome::Inserted(event) => event,
+    };
 
+    transaction.commit().await.map_err(AppError::Database)?;
+    publish_event(state, &event).await?;
+
+    Ok((event, false))
+}
+
+async fn publish_event(state: &AppState, event: &RawEvent) -> Result<(), AppError> {
     let mut redis = state
         .redis
         .get()
         .await
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
-    publish_raw_event_with_mode(&mut *redis, &event, PublishMode::Strict).await?;
-    transaction.commit().await.map_err(AppError::Database)?;
-
-    Ok(event)
+    publish_raw_event_with_mode(&mut *redis, event, PublishMode::Strict).await
 }
 
 #[cfg(test)]

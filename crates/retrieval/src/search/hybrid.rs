@@ -4,11 +4,11 @@ use common::{error::AppResult, AppState};
 use uuid::Uuid;
 
 use crate::{
-    dto::{rank_from_index, MemoryResult, MemoryUnitDto, SearchRequest},
+    dto::{rank_from_index, MemoryResult, MemoryUnitDto, SearchRequest, DEFAULT_OFFSET},
     store,
 };
 
-use super::{keyword::keyword_search, vector::vector_search_results};
+use super::{keyword::keyword_search_with_offset, vector::vector_search_results_with_offset};
 
 pub const RRF_K: f32 = 60.0;
 pub const RELEVANCE_SCORE_WEIGHT: f32 = 0.10;
@@ -25,17 +25,23 @@ pub async fn hybrid_search(
     req: &SearchRequest,
     limit: u32,
 ) -> AppResult<Vec<MemoryResult>> {
-    let candidate_limit = limit.saturating_mul(2);
+    let offset = req.offset.unwrap_or(DEFAULT_OFFSET);
+    let requested = limit.saturating_add(offset);
+    let candidate_limit = requested.saturating_mul(2).max(limit.saturating_mul(2));
     let (vector_results, keyword_results) = tokio::join!(
-        vector_search_results(state, req, candidate_limit),
-        keyword_search(state, req, candidate_limit)
+        vector_search_results_with_offset(state, req, candidate_limit, 0),
+        keyword_search_with_offset(state, req, candidate_limit, 0)
     );
 
     let vector_results = vector_results?;
     let keyword_results = keyword_results?;
 
     if vector_results.is_empty() {
-        return Ok(keyword_fallback_results(&keyword_results, limit as usize));
+        return Ok(paginate_results(
+            &keyword_results,
+            limit as usize,
+            offset as usize,
+        ));
     }
 
     let vector_ids = vector_results
@@ -76,12 +82,8 @@ pub async fn hybrid_search(
             .total_cmp(&left.score)
             .then_with(|| left.memory.id.as_u128().cmp(&right.memory.id.as_u128()))
     });
-    results.truncate(limit as usize);
-    for (index, result) in results.iter_mut().enumerate() {
-        result.rank = rank_from_index(index);
-    }
 
-    Ok(results)
+    Ok(paginate_results(&results, limit as usize, offset as usize))
 }
 
 pub fn apply_relevance_score(rrf_score: f32, relevance_score: f64) -> f32 {
@@ -127,9 +129,14 @@ pub fn fuse_ranked_ids(vector_ids: &[Uuid], keyword_ids: &[Uuid], limit: usize) 
     fused
 }
 
-pub fn keyword_fallback_results(results: &[MemoryResult], limit: usize) -> Vec<MemoryResult> {
+pub fn paginate_results(
+    results: &[MemoryResult],
+    limit: usize,
+    offset: usize,
+) -> Vec<MemoryResult> {
     results
         .iter()
+        .skip(offset)
         .take(limit)
         .cloned()
         .enumerate()
@@ -138,6 +145,10 @@ pub fn keyword_fallback_results(results: &[MemoryResult], limit: usize) -> Vec<M
             result
         })
         .collect()
+}
+
+pub fn keyword_fallback_results(results: &[MemoryResult], limit: usize) -> Vec<MemoryResult> {
+    paginate_results(results, limit, 0)
 }
 
 fn add_rrf_scores(scores: &mut HashMap<Uuid, f32>, ids: &[Uuid]) {
@@ -214,6 +225,21 @@ mod tests {
         assert_eq!(fallback[0].memory.id, id);
         assert_eq!(fallback[0].rank, 1);
         assert_eq!(fallback[0].score, 0.75);
+    }
+
+    #[test]
+    fn paginate_results_skips_offset_and_resets_ranks() {
+        let first = memory_result(Uuid::from_u128(1), 0.9, 10);
+        let second = memory_result(Uuid::from_u128(2), 0.8, 11);
+        let third = memory_result(Uuid::from_u128(3), 0.7, 12);
+
+        let paged = paginate_results(&[first, second, third], 2, 1);
+
+        assert_eq!(paged.len(), 2);
+        assert_eq!(paged[0].memory.id, Uuid::from_u128(2));
+        assert_eq!(paged[1].memory.id, Uuid::from_u128(3));
+        assert_eq!(paged[0].rank, 1);
+        assert_eq!(paged[1].rank, 2);
     }
 
     fn memory_result(id: Uuid, score: f32, rank: u32) -> MemoryResult {

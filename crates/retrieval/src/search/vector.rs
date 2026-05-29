@@ -20,7 +20,7 @@ use uuid::Uuid;
 use crate::{
     dto::{
         memory_type_as_str, normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto,
-        ScopeFilter, SearchRequest, WorkspacePoolAccess, MIN_SCORE_THRESHOLD,
+        ScopeFilter, SearchRequest, WorkspacePoolAccess, DEFAULT_OFFSET, MIN_SCORE_THRESHOLD,
     },
     store,
 };
@@ -97,66 +97,131 @@ pub async fn vector_search_results(
     req: &SearchRequest,
     limit: u32,
 ) -> AppResult<Vec<MemoryResult>> {
+    let offset = req.offset.unwrap_or(DEFAULT_OFFSET);
+    vector_search_results_with_offset(state, req, limit, offset).await
+}
+
+pub(crate) async fn vector_search_results_with_offset(
+    state: &AppState,
+    req: &SearchRequest,
+    limit: u32,
+    offset: u32,
+) -> AppResult<Vec<MemoryResult>> {
     let memory_types = normalized_memory_types(req)?;
     let scope = req.resolved_scope_filter();
     let workspace_pool = req.workspace_pool_access();
     let workspace_config = crate::handlers::fetch_workspace_config(state, req.workspace_id).await?;
     let embedding_provider =
         build_embedding_provider_for_workspace(&state.config, &workspace_config);
-    let candidates = vector_search(
-        &state.qdrant,
-        &embedding_provider,
-        VectorSearchOptions {
-            workspace_id: req.workspace_id,
-            query: &req.query,
-            scope: scope.as_ref(),
-            memory_types: memory_types.as_deref(),
-            as_of: req.as_of,
-            workspace_pool: &workspace_pool,
-            limit: VECTOR_CANDIDATE_LIMIT.max(u64::from(limit)),
-        },
-    )
-    .await?;
+    let mut candidate_limit = VECTOR_CANDIDATE_LIMIT.max(u64::from(limit.saturating_add(offset)));
+    let mut previous_candidate_count = None;
 
+    loop {
+        let candidates = vector_search(
+            &state.qdrant,
+            &embedding_provider,
+            VectorSearchOptions {
+                workspace_id: req.workspace_id,
+                query: &req.query,
+                scope: scope.as_ref(),
+                memory_types: memory_types.as_deref(),
+                as_of: req.as_of,
+                workspace_pool: &workspace_pool,
+                limit: candidate_limit,
+            },
+        )
+        .await?;
+
+        let candidate_count = candidates.len();
+        let results = materialize_vector_results(
+            &state.db,
+            req,
+            scope.as_ref(),
+            memory_types.as_deref(),
+            &workspace_pool,
+            candidates,
+            limit,
+            offset,
+        )
+        .await?;
+
+        if results.len() >= limit as usize {
+            return Ok(results);
+        }
+        if candidate_count < candidate_limit as usize
+            || previous_candidate_count == Some(candidate_count)
+        {
+            return Ok(results);
+        }
+
+        previous_candidate_count = Some(candidate_count);
+        candidate_limit = candidate_limit.saturating_add(VECTOR_CANDIDATE_LIMIT);
+    }
+}
+
+async fn materialize_vector_results(
+    db: &sqlx::PgPool,
+    req: &SearchRequest,
+    scope: Option<&ScopeFilter>,
+    memory_types: Option<&[String]>,
+    workspace_pool: &WorkspacePoolAccess,
+    candidates: Vec<ScoredCandidate>,
+    limit: u32,
+    offset: u32,
+) -> AppResult<Vec<MemoryResult>> {
     let scored_ids = candidates
         .into_iter()
         .map(|candidate| (candidate.memory_id, candidate.score))
         .collect::<Vec<_>>();
     let ids = scored_ids.iter().map(|(id, _)| *id).collect::<Vec<_>>();
     let units = if let Some(as_of) = req.as_of {
-        store::get_memory_units_by_ids_at(&state.db, &ids, req.workspace_id, as_of).await?
+        store::get_memory_units_by_ids_at(db, &ids, req.workspace_id, as_of).await?
     } else {
-        store::get_memory_units_by_ids(&state.db, &ids, req.workspace_id).await?
+        store::get_memory_units_by_ids(db, &ids, req.workspace_id).await?
     };
     let mut units_by_id = units
         .into_iter()
         .map(|unit| (unit.id, unit))
         .collect::<HashMap<_, _>>();
+    let window_len = usize::try_from(limit.saturating_add(offset)).unwrap_or(usize::MAX);
 
-    let mut results = Vec::with_capacity(scored_ids.len());
+    let mut matches = Vec::with_capacity(scored_ids.len());
     for (id, score) in scored_ids {
         if let Some(unit) = units_by_id.remove(&id) {
-            if let Some(scope) = scope.as_ref() {
-                if !store::scope_matches_workspace_pool(&unit, scope, &workspace_pool) {
+            if let Some(scope) = scope {
+                if !store::scope_matches_workspace_pool(&unit, scope, workspace_pool) {
                     continue;
                 }
             }
-            if !matches_memory_type(unit.memory_type, memory_types.as_deref()) {
+            if !matches_memory_type(unit.memory_type, memory_types) {
                 continue;
             }
-            let rank = rank_from_index(results.len());
-            results.push(MemoryResult {
+            matches.push(MemoryResult {
                 memory: MemoryUnitDto::from(unit),
                 score,
-                rank,
+                rank: 0,
             });
-            if results.len() >= limit as usize {
+            if matches.len() >= window_len {
                 break;
             }
         }
     }
 
-    Ok(results)
+    let skip = offset as usize;
+    if skip >= matches.len() {
+        return Ok(Vec::new());
+    }
+
+    Ok(matches
+        .into_iter()
+        .skip(skip)
+        .take(limit as usize)
+        .enumerate()
+        .map(|(index, mut result)| {
+            result.rank = rank_from_index(index);
+            result
+        })
+        .collect())
 }
 
 pub fn build_vector_filter(

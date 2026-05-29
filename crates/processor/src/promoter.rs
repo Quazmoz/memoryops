@@ -387,17 +387,27 @@ async fn insert_semantic_unit_and_delete_sources(
 }
 
 async fn delete_source_points(qdrant: &QdrantClient, source_ids: &[Uuid]) {
-    for source_id in source_ids {
-        if let Err(error) = qdrant
-            .delete_points(
-                DeletePointsBuilder::new(COLLECTION_NAME)
-                    .points([source_id.to_string()])
-                    .wait(true),
-            )
-            .await
-        {
-            tracing::warn!(error = ?error, memory_id = %source_id, "failed to delete source episode point after promotion");
-        }
+    if source_ids.is_empty() {
+        return;
+    }
+
+    let point_ids = source_ids
+        .iter()
+        .map(|source_id| source_id.to_string())
+        .collect::<Vec<_>>();
+    if let Err(error) = qdrant
+        .delete_points(
+            DeletePointsBuilder::new(COLLECTION_NAME)
+                .points(point_ids)
+                .wait(true),
+        )
+        .await
+    {
+        tracing::warn!(
+            error = ?error,
+            count = source_ids.len(),
+            "failed to delete source episode points after promotion"
+        );
     }
 }
 

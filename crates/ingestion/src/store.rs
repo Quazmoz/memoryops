@@ -64,13 +64,17 @@ pub async fn insert_raw_event(db: &PgPool, event: &NewRawEvent) -> AppResult<Raw
     match result {
         Ok(raw_event) => Ok(raw_event),
         Err(error) if is_unique_violation(&error) => {
-            select_raw_event_by_idempotency_key(db, &event.idempotency_key)
-                .await?
-                .ok_or_else(|| {
-                    AppError::Internal(anyhow!(
-                        "idempotency unique violation without existing raw event"
-                    ))
-                })
+            select_raw_event_by_workspace_and_idempotency_key(
+                db,
+                event.workspace_id,
+                &event.idempotency_key,
+            )
+            .await?
+            .ok_or_else(|| {
+                AppError::Internal(anyhow!(
+                    "idempotency unique violation without existing raw event"
+                ))
+            })
         }
         Err(error) => Err(AppError::Database(error)),
     }
@@ -93,7 +97,7 @@ pub async fn insert_raw_event_in_tx(
             occurred_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (idempotency_key) DO NOTHING
+        ON CONFLICT (workspace_id, idempotency_key) DO NOTHING
         RETURNING id,
             workspace_id,
             source,
@@ -121,11 +125,15 @@ pub async fn insert_raw_event_in_tx(
         return Ok(InsertRawEventOutcome::Inserted(raw_event));
     }
 
-    let existing = select_raw_event_by_idempotency_key(&mut **transaction, &event.idempotency_key)
-        .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow!("idempotency conflict without existing raw event"))
-        })?;
+    let existing = select_raw_event_by_workspace_and_idempotency_key(
+        &mut **transaction,
+        event.workspace_id,
+        &event.idempotency_key,
+    )
+    .await?
+    .ok_or_else(|| {
+        AppError::Internal(anyhow!("idempotency conflict without existing raw event"))
+    })?;
     Ok(InsertRawEventOutcome::Existing(existing))
 }
 
@@ -139,17 +147,6 @@ pub(crate) async fn workspace_exists(db: &PgPool, workspace_id: Uuid) -> AppResu
     .map_err(AppError::Database)
 }
 
-pub(crate) async fn find_raw_event_id_by_idempotency_key(
-    db: &PgPool,
-    idempotency_key: &str,
-) -> AppResult<Option<Uuid>> {
-    sqlx::query_scalar::<_, Uuid>("SELECT id FROM raw_events WHERE idempotency_key = $1 LIMIT 1")
-        .bind(idempotency_key)
-        .fetch_optional(db)
-        .await
-        .map_err(AppError::Database)
-}
-
 pub(crate) async fn raw_event_needs_publish(db: &PgPool, raw_event_id: Uuid) -> AppResult<bool> {
     sqlx::query_scalar::<_, bool>(
         "SELECT NOT EXISTS(SELECT 1 FROM processing_state WHERE raw_event_id = $1)",
@@ -160,8 +157,9 @@ pub(crate) async fn raw_event_needs_publish(db: &PgPool, raw_event_id: Uuid) -> 
     .map_err(AppError::Database)
 }
 
-async fn select_raw_event_by_idempotency_key(
+async fn select_raw_event_by_workspace_and_idempotency_key(
     db: impl sqlx::Executor<'_, Database = Postgres>,
+    workspace_id: Uuid,
     idempotency_key: &str,
 ) -> AppResult<Option<RawEvent>> {
     sqlx::query_as::<_, RawEvent>(
@@ -176,10 +174,12 @@ async fn select_raw_event_by_idempotency_key(
             occurred_at,
             ingested_at
         FROM raw_events
-        WHERE idempotency_key = $1
+                WHERE workspace_id = $1
+                    AND idempotency_key = $2
         LIMIT 1
         "#,
     )
+    .bind(workspace_id)
     .bind(idempotency_key)
     .fetch_optional(db)
     .await
@@ -235,12 +235,17 @@ mod tests {
             Ok(inserted) => inserted,
             Err(error) => panic!("raw event insert should succeed: {error}"),
         };
-        let retrieved =
-            match select_raw_event_by_idempotency_key(&pool, &event.idempotency_key).await {
-                Ok(Some(retrieved)) => retrieved,
-                Ok(None) => panic!("inserted raw event should be retrievable"),
-                Err(error) => panic!("raw event lookup should succeed: {error}"),
-            };
+        let retrieved = match select_raw_event_by_workspace_and_idempotency_key(
+            &pool,
+            workspace_id,
+            &event.idempotency_key,
+        )
+        .await
+        {
+            Ok(Some(retrieved)) => retrieved,
+            Ok(None) => panic!("inserted raw event should be retrievable"),
+            Err(error) => panic!("raw event lookup should succeed: {error}"),
+        };
 
         assert_eq!(retrieved.id, inserted.id);
         assert_eq!(retrieved.workspace_id, workspace_id);
@@ -264,5 +269,27 @@ mod tests {
         };
 
         assert_eq!(second.id, first.id);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn duplicate_idempotency_keys_are_scoped_by_workspace(pool: PgPool) {
+        let first_workspace = Uuid::now_v7();
+        let second_workspace = Uuid::now_v7();
+        insert_workspace(&pool, first_workspace).await;
+        insert_workspace(&pool, second_workspace).await;
+
+        let first = match insert_raw_event(&pool, &new_event(first_workspace, "shared-key")).await {
+            Ok(inserted) => inserted,
+            Err(error) => panic!("first raw event insert should succeed: {error}"),
+        };
+        let second = match insert_raw_event(&pool, &new_event(second_workspace, "shared-key")).await
+        {
+            Ok(inserted) => inserted,
+            Err(error) => panic!("second raw event insert should succeed: {error}"),
+        };
+
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.workspace_id, first_workspace);
+        assert_eq!(second.workspace_id, second_workspace);
     }
 }

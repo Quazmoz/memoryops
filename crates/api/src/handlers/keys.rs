@@ -73,7 +73,7 @@ async fn insert_key_record(
     let created = sqlx::query_as::<_, ApiKeySummary>(
         r#"
         INSERT INTO api_keys (id, workspace_id, name, key_hash, prefix, prefix_version)
-        VALUES ($1, $2, $3, $4, $5, 2)
+        VALUES ($1, $2, $3, $4, $5, 3)
         RETURNING id, name, prefix, created_at, last_used_at, revoked
         "#,
     )
