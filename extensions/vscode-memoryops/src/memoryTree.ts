@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
 
 import { MemoryListResponse, MemorySearchResult, MemoryUnit } from "./client";
+import { firstLine, truncate } from "./markdown";
 
-export type MemoryTreeNode = MemoryItem | MessageItem;
+export type MemoryTreeNode = MemoryItem | MessageItem | LoadMoreItem;
 
 export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNode> {
   private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<MemoryTreeNode | undefined | null | void>();
@@ -10,16 +11,23 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
 
   private memories: MemorySearchResult[] = [];
   private message = "Search or refresh MemoryOps memories.";
+  private mode: "recent" | "search" | "retrieval" | "message" | "error" = "message";
+  private recentTotal = 0;
 
-  setRecentMemories(response: MemoryListResponse): void {
-    this.memories = response.items.map((memory) => ({ ...memory }));
-    this.message = response.items.length > 0
-      ? `Showing ${response.items.length} of ${response.total} memories.`
+  setRecentMemories(response: MemoryListResponse, options: { append?: boolean } = {}): void {
+    const nextMemories = response.items.map((memory) => ({ ...memory }));
+    this.mode = "recent";
+    this.memories = options.append ? mergeMemories(this.memories, nextMemories) : nextMemories;
+    this.recentTotal = response.total;
+    this.message = this.memories.length > 0
+      ? `Showing ${this.memories.length} of ${response.total} memories.`
       : "No memories returned.";
     this.refresh();
   }
 
   setSearchResults(results: MemorySearchResult[], query: string): void {
+    this.mode = "search";
+    this.recentTotal = 0;
     this.memories = results;
     this.message = results.length > 0
       ? `Showing ${results.length} matches for ${query}.`
@@ -28,6 +36,8 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
   }
 
   setRetrievedMemories(memories: MemoryUnit[], title: string): void {
+    this.mode = "retrieval";
+    this.recentTotal = 0;
     this.memories = memories.map((memory) => ({ ...memory }));
     this.message = memories.length > 0
       ? `Showing ${memories.length} retrieved memories.`
@@ -36,6 +46,16 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
   }
 
   setError(message: string): void {
+    this.mode = "error";
+    this.recentTotal = 0;
+    this.memories = [];
+    this.message = message;
+    this.refresh();
+  }
+
+  setMessage(message: string): void {
+    this.mode = "message";
+    this.recentTotal = 0;
     this.memories = [];
     this.message = message;
     this.refresh();
@@ -54,7 +74,25 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
 
   removeMemory(id: string): void {
     this.memories = this.memories.filter((memory) => memory.id !== id);
+    if (this.mode === "recent" && this.recentTotal > 0) {
+      this.recentTotal = Math.max(this.memories.length, this.recentTotal - 1);
+      if (this.memories.length === 0) {
+        this.message = "No memories returned.";
+      }
+    }
     this.refresh();
+  }
+
+  getMemories(): readonly MemorySearchResult[] {
+    return this.memories;
+  }
+
+  getNextRecentOffset(): number | undefined {
+    if (this.mode !== "recent" || this.memories.length >= this.recentTotal) {
+      return undefined;
+    }
+
+    return this.memories.length;
   }
 
   getTreeItem(element: MemoryTreeNode): vscode.TreeItem {
@@ -70,7 +108,11 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
       return [new MessageItem(this.message)];
     }
 
-    return this.memories.map((memory) => new MemoryItem(memory));
+    const items: MemoryTreeNode[] = this.memories.map((memory) => new MemoryItem(memory));
+    if (this.getNextRecentOffset() !== undefined) {
+      items.push(new LoadMoreItem(this.memories.length, this.recentTotal));
+    }
+    return items;
   }
 
   private refresh(): void {
@@ -85,12 +127,31 @@ export class MemoryItem extends vscode.TreeItem {
     this.id = memory.id ? `memoryops.memory.${memory.id}` : undefined;
     this.description = memoryDescription(memory);
     this.tooltip = memoryTooltip(memory);
-    this.contextValue = memory.pinned ? "memoryops.memory.pinned" : "memoryops.memory.unpinned";
-    this.iconPath = new vscode.ThemeIcon(memory.pinned ? "pinned" : "database");
+    this.contextValue = [
+      "memoryops",
+      "memory",
+      memory.pinned ? "pinned" : "unpinned",
+      memory.memory_type ?? "unknown",
+      memory.scope_visibility ?? "scoped",
+      memory.deleted_at ? "deleted" : "active",
+    ].join(".");
+    this.iconPath = new vscode.ThemeIcon(memory.deleted_at ? "trash" : memory.pinned ? "pinned" : "database");
     this.command = {
       command: "memoryops.openMemory",
       title: "Open Memory",
       arguments: [this],
+    };
+  }
+}
+
+export class LoadMoreItem extends vscode.TreeItem {
+  constructor(loaded: number, total: number) {
+    super(`Load more memories (${loaded}/${total})`, vscode.TreeItemCollapsibleState.None);
+    this.contextValue = "memoryops.loadMore";
+    this.iconPath = new vscode.ThemeIcon("chevron-down");
+    this.command = {
+      command: "memoryops.loadMoreMemories",
+      title: "Load More Memories",
     };
   }
 }
@@ -126,6 +187,7 @@ function memoryDescription(memory: MemorySearchResult): string {
   return [
     memory.pinned ? "pinned" : undefined,
     memory.memory_type,
+    memory.scope_visibility,
     memory.score !== undefined ? `score ${formatNumber(memory.score)}` : undefined,
     memory.importance_score !== undefined ? `importance ${formatNumber(memory.importance_score)}` : undefined,
     memory.updated_at ? relativeDate(memory.updated_at) : undefined,
@@ -140,18 +202,11 @@ function memoryTooltip(memory: MemorySearchResult): string {
     memory.pinned !== undefined ? `Pinned: ${memory.pinned ? "yes" : "no"}` : undefined,
     memory.score !== undefined ? `Score: ${formatNumber(memory.score)}` : undefined,
     memory.importance_score !== undefined ? `Importance: ${formatNumber(memory.importance_score)}` : undefined,
+    memory.deleted_at ? `Deleted: ${memory.deleted_at}` : undefined,
     Array.isArray(memory.tags) && memory.tags.length > 0 ? `Tags: ${memory.tags.join(", ")}` : undefined,
     "",
     truncate(memory.content ?? "No content", 1200),
   ].filter((part) => part !== undefined).join("\n");
-}
-
-function firstLine(value: string): string {
-  return value.split(/\r?\n/)[0] ?? value;
-}
-
-function truncate(value: string, maxLength: number): string {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
 }
 
 function formatNumber(value: number): string {
@@ -184,4 +239,19 @@ function relativeDate(value: string): string | undefined {
 
 function isMemory(value: unknown): value is MemorySearchResult {
   return typeof value === "object" && value !== null && ("content" in value || "id" in value);
+}
+
+function mergeMemories(current: MemorySearchResult[], next: MemorySearchResult[]): MemorySearchResult[] {
+  const merged = new Map<string, MemorySearchResult>();
+
+  for (const memory of [...current, ...next]) {
+    if (memory.id) {
+      merged.set(memory.id, memory);
+      continue;
+    }
+
+    merged.set(`anonymous-${merged.size}`, memory);
+  }
+
+  return [...merged.values()];
 }

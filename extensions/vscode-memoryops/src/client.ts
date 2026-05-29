@@ -13,6 +13,8 @@ export interface MemoryUnit {
   memory_type?: string;
   scope_visibility?: string;
   content?: string;
+  score?: number;
+  rank?: number;
   importance_score?: number;
   decay_score?: number;
   relevance_score?: number;
@@ -22,16 +24,74 @@ export interface MemoryUnit {
   source_events?: string[];
   source_episode_ids?: string[];
   corroboration_count?: number;
+  version?: number;
   promoted_at?: string | null;
+  deleted_at?: string | null;
   created_at?: string;
   updated_at?: string;
   [key: string]: unknown;
 }
 
 export interface MemorySearchResult extends MemoryUnit {
-  score?: number;
-  rank?: number;
   source?: string;
+}
+
+export interface MemoryVersion {
+  id?: string;
+  memory_id?: string;
+  workspace_id?: string;
+  version?: number;
+  content?: string;
+  importance_score?: number;
+  tags?: string[];
+  edited_by?: string;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+export interface ProvenanceNode {
+  id?: string;
+  node_type?: string;
+  title?: string;
+  subtitle?: string | null;
+  timestamp?: string | null;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ProvenanceEdge {
+  from?: string;
+  to?: string;
+  edge_type?: string;
+  [key: string]: unknown;
+}
+
+export interface ProvenanceGraph {
+  root_id?: string;
+  nodes: ProvenanceNode[];
+  edges: ProvenanceEdge[];
+  [key: string]: unknown;
+}
+
+export interface FeedbackEntry {
+  id?: string;
+  memory_id?: string;
+  query_id?: string;
+  agent_id?: string | null;
+  user_id?: string | null;
+  rating: number;
+  comment?: string | null;
+  occurred_at?: string;
+  [key: string]: unknown;
+}
+
+export interface FeedbackResponse {
+  items: FeedbackEntry[];
+  total: number;
+  memory_id?: string;
+  avg_rating?: number;
+  relevance_score?: number;
+  [key: string]: unknown;
 }
 
 export interface MemoryListResponse {
@@ -64,6 +124,18 @@ export interface RetrieveOptions {
   includeWorkspacePool?: boolean;
 }
 
+export interface FeedbackListOptions {
+  limit?: number;
+  offset?: number;
+}
+
+export interface MemoryUpdatePatch {
+  content?: string;
+  pinned?: boolean;
+  tags?: string[];
+  importance_score?: number;
+}
+
 export interface RetrievalMemory extends MemoryUnit {
   [key: string]: unknown;
 }
@@ -73,6 +145,7 @@ export interface RetrievalResult {
   memories?: RetrievalMemory[];
   packed_context?: string;
   context?: string;
+  total_tokens?: number;
   [key: string]: unknown;
 }
 
@@ -159,31 +232,77 @@ export class MemoryOpsClient {
     return isRecord(response) ? (response as RetrievalResult) : {};
   }
 
-  async updateMemory(id: string, patch: { pinned?: boolean; tags?: string[]; importance_score?: number }): Promise<MemoryUnit> {
-    const response = await this.request(`/v1/memory/${encodeURIComponent(id)}${queryString({
-      workspace_id: this.config.workspaceId,
-    })}`, {
+  async updateMemory(id: string, patch: MemoryUpdatePatch): Promise<MemoryUnit> {
+    const response = await this.request(this.memoryPath(id), {
       method: "PATCH",
       authenticated: true,
       body: patch,
     });
 
-    if (!isRecord(response)) {
-      throw new Error("MemoryOps returned an unexpected memory response.");
-    }
-
-    return normalizeMemoryUnit(response);
+    return expectMemoryUnit(response, "MemoryOps returned an unexpected memory response.");
   }
 
   async deleteMemory(id: string): Promise<MemoryUnit | undefined> {
-    const response = await this.request(`/v1/memory/${encodeURIComponent(id)}${queryString({
-      workspace_id: this.config.workspaceId,
-    })}`, {
+    const response = await this.request(this.memoryPath(id), {
       method: "DELETE",
       authenticated: true,
     });
 
     return isRecord(response) ? normalizeMemoryUnit(response) : undefined;
+  }
+
+  async promoteMemory(id: string): Promise<MemoryUnit> {
+    const response = await this.request(this.memoryPath(id, "/promote"), {
+      method: "POST",
+      authenticated: true,
+    });
+
+    return expectMemoryUnit(response, "MemoryOps returned an unexpected promoted memory response.");
+  }
+
+  async publishMemory(id: string): Promise<MemoryUnit> {
+    const response = await this.request(this.memoryPath(id, "/publish"), {
+      method: "POST",
+      authenticated: true,
+    });
+
+    return expectMemoryUnit(response, "MemoryOps returned an unexpected published memory response.");
+  }
+
+  async getMemoryHistory(id: string): Promise<MemoryVersion[]> {
+    const response = await this.request(this.memoryPath(id, "/history"), {
+      method: "GET",
+      authenticated: true,
+    });
+
+    if (!isRecord(response)) {
+      return [];
+    }
+
+    return Array.isArray(response.items)
+      ? response.items.filter(isRecord).map(normalizeMemoryVersion)
+      : [];
+  }
+
+  async getMemoryProvenance(id: string): Promise<ProvenanceGraph> {
+    const response = await this.request(this.memoryPath(id, "/provenance"), {
+      method: "GET",
+      authenticated: true,
+    });
+
+    return normalizeProvenanceGraph(response);
+  }
+
+  async getMemoryFeedback(id: string, options: FeedbackListOptions = {}): Promise<FeedbackResponse> {
+    const response = await this.request(this.memoryPath(id, "/feedback", {
+      limit: options.limit,
+      offset: options.offset,
+    }), {
+      method: "GET",
+      authenticated: true,
+    });
+
+    return normalizeFeedbackResponse(response);
   }
 
   async saveObservation(input: {
@@ -259,6 +378,13 @@ export class MemoryOpsClient {
       clearTimeout(timeout);
     }
   }
+
+  private memoryPath(id: string, suffix = "", query: Record<string, unknown> = {}): string {
+    return `/v1/memory/${encodeURIComponent(id)}${suffix}${queryString({
+      workspace_id: this.config.workspaceId,
+      ...query,
+    })}`;
+  }
 }
 
 function requestTimeoutMs(path: string): number {
@@ -305,6 +431,8 @@ function normalizeMemoryUnit(value: Record<string, unknown>): MemoryUnit {
     memory_type: stringOrUndefined(value.memory_type),
     scope_visibility: stringOrUndefined(value.scope_visibility),
     content: stringOrUndefined(value.content),
+    score: numberOrUndefined(value.score),
+    rank: numberOrUndefined(value.rank),
     importance_score: numberOrUndefined(value.importance_score),
     decay_score: numberOrUndefined(value.decay_score),
     relevance_score: numberOrUndefined(value.relevance_score),
@@ -314,10 +442,102 @@ function normalizeMemoryUnit(value: Record<string, unknown>): MemoryUnit {
     source_events: stringArrayOrUndefined(value.source_events),
     source_episode_ids: stringArrayOrUndefined(value.source_episode_ids),
     corroboration_count: numberOrUndefined(value.corroboration_count),
+    version: numberOrUndefined(value.version),
     promoted_at: stringOrNullOrUndefined(value.promoted_at),
+    deleted_at: stringOrNullOrUndefined(value.deleted_at),
     created_at: stringOrUndefined(value.created_at),
     updated_at: stringOrUndefined(value.updated_at),
   };
+}
+
+function normalizeMemoryVersion(value: Record<string, unknown>): MemoryVersion {
+  return {
+    ...value,
+    id: stringOrUndefined(value.id),
+    memory_id: stringOrUndefined(value.memory_id),
+    workspace_id: stringOrUndefined(value.workspace_id),
+    version: numberOrUndefined(value.version),
+    content: stringOrUndefined(value.content),
+    importance_score: numberOrUndefined(value.importance_score),
+    tags: stringArrayOrUndefined(value.tags),
+    edited_by: stringOrUndefined(value.edited_by),
+    created_at: stringOrUndefined(value.created_at),
+  };
+}
+
+function normalizeProvenanceGraph(value: unknown): ProvenanceGraph {
+  if (!isRecord(value)) {
+    return { nodes: [], edges: [] };
+  }
+
+  return {
+    ...value,
+    root_id: stringOrUndefined(value.root_id),
+    nodes: Array.isArray(value.nodes) ? value.nodes.filter(isRecord).map(normalizeProvenanceNode) : [],
+    edges: Array.isArray(value.edges) ? value.edges.filter(isRecord).map(normalizeProvenanceEdge) : [],
+  };
+}
+
+function normalizeProvenanceNode(value: Record<string, unknown>): ProvenanceNode {
+  return {
+    ...value,
+    id: stringOrUndefined(value.id),
+    node_type: stringOrUndefined(value.node_type),
+    title: stringOrUndefined(value.title),
+    subtitle: stringOrNullOrUndefined(value.subtitle),
+    timestamp: stringOrNullOrUndefined(value.timestamp),
+    metadata: isRecord(value.metadata) ? value.metadata : {},
+  };
+}
+
+function normalizeProvenanceEdge(value: Record<string, unknown>): ProvenanceEdge {
+  return {
+    ...value,
+    from: stringOrUndefined(value.from),
+    to: stringOrUndefined(value.to),
+    edge_type: stringOrUndefined(value.edge_type),
+  };
+}
+
+function normalizeFeedbackResponse(value: unknown): FeedbackResponse {
+  if (!isRecord(value)) {
+    return { items: [], total: 0 };
+  }
+
+  const items = Array.isArray(value.items)
+    ? value.items.filter(isRecord).map(normalizeFeedbackEntry)
+    : [];
+
+  return {
+    ...value,
+    items,
+    total: numberOrDefault(value.total, items.length),
+    memory_id: stringOrUndefined(value.memory_id),
+    avg_rating: numberOrUndefined(value.avg_rating),
+    relevance_score: numberOrUndefined(value.relevance_score),
+  };
+}
+
+function normalizeFeedbackEntry(value: Record<string, unknown>): FeedbackEntry {
+  return {
+    ...value,
+    id: stringOrUndefined(value.id),
+    memory_id: stringOrUndefined(value.memory_id),
+    query_id: stringOrUndefined(value.query_id),
+    agent_id: stringOrNullOrUndefined(value.agent_id),
+    user_id: stringOrNullOrUndefined(value.user_id),
+    rating: numberOrDefault(value.rating, 0),
+    comment: stringOrNullOrUndefined(value.comment),
+    occurred_at: stringOrUndefined(value.occurred_at),
+  };
+}
+
+function expectMemoryUnit(response: unknown, message: string): MemoryUnit {
+  if (!isRecord(response)) {
+    throw new Error(message);
+  }
+
+  return normalizeMemoryUnit(response);
 }
 
 function extractErrorMessage(payload: unknown): string | undefined {

@@ -16,9 +16,15 @@ The extension currently includes these commands and sidebar actions:
 |--------|---------|
 | `MemoryOps: Test Connection` | Checks API readiness and workspace access. |
 | `MemoryOps: Refresh Memories` | Loads recent workspace memories into the MemoryOps sidebar. |
+| Sidebar auto-load and paging | Automatically hydrates recent memories when settings are ready and can load more pages from the tree. |
 | `MemoryOps: Search Memory` | Searches the configured MemoryOps workspace from the Command Palette. |
 | `MemoryOps: Retrieve Context for Current File` | Sends the active file/selection as retrieval context and opens returned memory context in a Markdown preview document. |
 | `MemoryOps: Save Selection as Observation` | Sends selected code or notes to `/v1/ingest/observation`. |
+| `MemoryOps: Promote Memory` | Promotes an episodic memory to semantic memory. |
+| `MemoryOps: Publish Memory To Workspace` | Publishes a semantic memory to the workspace pool. |
+| `MemoryOps: View Memory History` | Opens version history for a selected memory. |
+| `MemoryOps: View Memory Provenance` | Opens the provenance graph for a selected memory. |
+| `MemoryOps: View Memory Feedback` | Shows retrieval feedback recorded for a selected memory. |
 | Sidebar memory actions | Open, pin, unpin, delete, and copy memory content. |
 | `MemoryOps: Open Settings` | Opens MemoryOps extension settings. |
 
@@ -48,6 +54,7 @@ Store `memoryops.apiKey` in user settings. Do not commit API keys to repository-
 cd extensions/vscode-memoryops
 npm install
 npm run compile
+npm test
 ```
 
 Then open `extensions/vscode-memoryops` in VS Code and press `F5` to launch an Extension Development Host.
@@ -65,5 +72,5 @@ This produces a `.vsix` file for local testing. Marketplace publishing is intent
 ## Roadmap
 
 - Optional VS Code chat participant integration.
-- Command and API-client tests.
+- Extension Host tests for command wiring and end-to-end sidebar flows.
 - Marketplace packaging metadata, icon, screenshots, and release workflow.

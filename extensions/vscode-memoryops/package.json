@@ -22,6 +22,9 @@
     "devops"
   ],
   "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -79,6 +82,36 @@
         "icon": "$(go-to-file)"
       },
       {
+        "command": "memoryops.promoteMemory",
+        "title": "MemoryOps: Promote Memory",
+        "category": "MemoryOps",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "memoryops.publishMemory",
+        "title": "MemoryOps: Publish Memory To Workspace",
+        "category": "MemoryOps",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "memoryops.viewMemoryHistory",
+        "title": "MemoryOps: View Memory History",
+        "category": "MemoryOps",
+        "icon": "$(history)"
+      },
+      {
+        "command": "memoryops.viewMemoryProvenance",
+        "title": "MemoryOps: View Memory Provenance",
+        "category": "MemoryOps",
+        "icon": "$(symbol-structure)"
+      },
+      {
+        "command": "memoryops.viewMemoryFeedback",
+        "title": "MemoryOps: View Memory Feedback",
+        "category": "MemoryOps",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "memoryops.pinMemory",
         "title": "MemoryOps: Pin Memory",
         "category": "MemoryOps",
@@ -130,27 +163,52 @@
       "view/item/context": [
         {
           "command": "memoryops.openMemory",
-          "when": "view == memoryops.memories && viewItem =~ /memoryops.memory/",
+          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
           "group": "inline@1"
         },
         {
           "command": "memoryops.pinMemory",
-          "when": "view == memoryops.memories && viewItem == memoryops.memory.unpinned",
+          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\.unpinned\\./",
           "group": "inline@2"
         },
         {
           "command": "memoryops.unpinMemory",
-          "when": "view == memoryops.memories && viewItem == memoryops.memory.pinned",
+          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\.pinned\\./",
           "group": "inline@2"
         },
         {
+          "command": "memoryops.promoteMemory",
+          "when": "view == memoryops.memories && viewItem =~ /\\.episodic\\./",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "memoryops.publishMemory",
+          "when": "view == memoryops.memories && viewItem =~ /\\.semantic\\./",
+          "group": "2_manage@2"
+        },
+        {
+          "command": "memoryops.viewMemoryHistory",
+          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
+          "group": "3_inspect@1"
+        },
+        {
+          "command": "memoryops.viewMemoryProvenance",
+          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
+          "group": "3_inspect@2"
+        },
+        {
+          "command": "memoryops.viewMemoryFeedback",
+          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
+          "group": "3_inspect@3"
+        },
+        {
           "command": "memoryops.copyMemory",
-          "when": "view == memoryops.memories && viewItem =~ /memoryops.memory/",
-          "group": "2_edit@1"
+          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
+          "group": "4_edit@1"
         },
         {
           "command": "memoryops.deleteMemory",
-          "when": "view == memoryops.memories && viewItem =~ /memoryops.memory/",
+          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
           "group": "9_destructive@1"
         }
       ]
@@ -220,6 +278,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
+    "test": "npm run compile && node --test out/test/client.test.js out/test/markdown.test.js",
     "watch": "tsc -watch -p ./",
     "package": "vsce package --no-dependencies"
   },
