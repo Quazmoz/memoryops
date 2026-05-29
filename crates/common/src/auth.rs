@@ -131,12 +131,13 @@ pub async fn invalidate_api_key_cache(
 async fn validate_api_key_uncached(db: &PgPool, api_key: &str) -> AppResult<AuthContext> {
     let prefixes = api_key_prefixes(api_key).ok_or(AppError::Unauthorized)?;
     let candidates = find_candidate_keys(db, &prefixes).await?;
+    let secret: Arc<str> = Arc::from(api_key);
 
     for candidate in candidates {
-        let secret = api_key.to_owned();
-        let hash = candidate.key_hash.clone();
+        let secret = Arc::clone(&secret);
+        let hash = candidate.key_hash;
 
-        let is_valid = tokio::task::spawn_blocking(move || verify_secret(&secret, &hash))
+        let is_valid = tokio::task::spawn_blocking(move || verify_secret(secret.as_ref(), &hash))
             .await
             .map_err(|error| AppError::Internal(anyhow!(error)))?;
 

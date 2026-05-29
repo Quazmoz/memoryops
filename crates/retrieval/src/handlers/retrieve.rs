@@ -190,7 +190,7 @@ pub(crate) async fn execute_retrieve(
     search_request.apply_workspace_config(&config);
     let workspace_pool = search_request.workspace_pool_access();
 
-    let search_results = search_candidates(&state, &search_request, mode).await?;
+    let search_results = search_candidates(&state, &search_request, mode, &config).await?;
     let candidates = hydrate_candidates(
         &state,
         workspace_id,
@@ -271,11 +271,16 @@ async fn search_candidates(
     state: &AppState,
     request: &SearchRequest,
     mode: SearchMode,
+    config: &common::models::WorkspaceConfig,
 ) -> AppResult<Vec<MemoryResult>> {
     match mode {
-        SearchMode::Vector => vector::vector_search_results(state, request, MAX_LIMIT).await,
+        SearchMode::Vector => {
+            vector::vector_search_results_with_config(state, request, MAX_LIMIT, config).await
+        }
         SearchMode::Keyword => keyword::keyword_search(state, request, MAX_LIMIT).await,
-        SearchMode::Hybrid => hybrid::hybrid_search(state, request, MAX_LIMIT).await,
+        SearchMode::Hybrid => {
+            hybrid::hybrid_search_with_config(state, request, MAX_LIMIT, config).await
+        }
     }
 }
 
@@ -415,12 +420,14 @@ async fn source_by_event_id<'a>(
     db: &sqlx::PgPool,
     units: impl Iterator<Item = &'a MemoryUnit>,
 ) -> AppResult<HashMap<Uuid, Source>> {
-    let event_ids = units
+    let mut event_ids = units
         .flat_map(|unit| unit.source_events.iter().copied())
         .collect::<Vec<_>>();
     if event_ids.is_empty() {
         return Ok(HashMap::new());
     }
+    event_ids.sort_unstable();
+    event_ids.dedup();
 
     let rows =
         sqlx::query_as::<_, SourceEventRow>("SELECT id, source FROM raw_events WHERE id = ANY($1)")

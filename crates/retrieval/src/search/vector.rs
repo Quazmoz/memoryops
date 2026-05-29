@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use common::{
     build_embedding_provider_for_workspace,
     error::{AppResult, ProviderError},
-    models::MemoryType,
+    models::{MemoryType, WorkspaceConfig},
     providers::EmbeddingProvider,
     AppError, AppState,
 };
@@ -51,16 +51,33 @@ pub async fn vector_search(
     embedding_provider: &Arc<dyn EmbeddingProvider>,
     options: VectorSearchOptions<'_>,
 ) -> AppResult<Vec<ScoredCandidate>> {
-    let embedding = match embedding_provider.embed(options.query).await {
-        Ok(embedding) => embedding,
-        Err(ProviderError::NotConfigured) => {
-            tracing::warn!("embedding provider not configured; skipping vector search");
-            return Ok(Vec::new());
-        }
-        Err(error) => return Err(AppError::Provider(error)),
+    let Some(embedding) = query_embedding(embedding_provider, options.query).await? else {
+        return Ok(Vec::new());
     };
 
-    let request = SearchPointsBuilder::new(COLLECTION_NAME, embedding, options.limit)
+    vector_search_with_embedding(qdrant, &embedding, options).await
+}
+
+async fn query_embedding(
+    embedding_provider: &Arc<dyn EmbeddingProvider>,
+    query: &str,
+) -> AppResult<Option<Vec<f32>>> {
+    match embedding_provider.embed(query).await {
+        Ok(embedding) => Ok(Some(embedding)),
+        Err(ProviderError::NotConfigured) => {
+            tracing::warn!("embedding provider not configured; skipping vector search");
+            Ok(None)
+        }
+        Err(error) => Err(AppError::Provider(error)),
+    }
+}
+
+async fn vector_search_with_embedding(
+    qdrant: &QdrantClient,
+    embedding: &[f32],
+    options: VectorSearchOptions<'_>,
+) -> AppResult<Vec<ScoredCandidate>> {
+    let request = SearchPointsBuilder::new(COLLECTION_NAME, embedding.to_vec(), options.limit)
         .score_threshold(MIN_SCORE_THRESHOLD)
         .filter(build_vector_filter(
             options.workspace_id,
@@ -98,29 +115,42 @@ pub async fn vector_search_results(
     req: &SearchRequest,
     limit: u32,
 ) -> AppResult<Vec<MemoryResult>> {
-    let offset = req.offset.unwrap_or(DEFAULT_OFFSET);
-    vector_search_results_with_offset(state, req, limit, offset).await
+    let workspace_config = crate::handlers::fetch_workspace_config(state, req.workspace_id).await?;
+    vector_search_results_with_config(state, req, limit, &workspace_config).await
 }
 
-pub(crate) async fn vector_search_results_with_offset(
+pub(crate) async fn vector_search_results_with_config(
+    state: &AppState,
+    req: &SearchRequest,
+    limit: u32,
+    workspace_config: &WorkspaceConfig,
+) -> AppResult<Vec<MemoryResult>> {
+    let offset = req.offset.unwrap_or(DEFAULT_OFFSET);
+    vector_search_results_with_offset_and_config(state, req, limit, offset, workspace_config).await
+}
+
+pub(crate) async fn vector_search_results_with_offset_and_config(
     state: &AppState,
     req: &SearchRequest,
     limit: u32,
     offset: u32,
+    workspace_config: &WorkspaceConfig,
 ) -> AppResult<Vec<MemoryResult>> {
     let memory_types = normalized_memory_types(req)?;
     let scope = req.resolved_scope_filter();
     let workspace_pool = req.workspace_pool_access();
-    let workspace_config = crate::handlers::fetch_workspace_config(state, req.workspace_id).await?;
     let embedding_provider =
         build_embedding_provider_for_workspace(&state.config, &workspace_config);
+    let Some(embedding) = query_embedding(&embedding_provider, &req.query).await? else {
+        return Ok(Vec::new());
+    };
     let mut candidate_limit = VECTOR_CANDIDATE_LIMIT.max(u64::from(limit.saturating_add(offset)));
     let mut previous_candidate_count = None;
 
     loop {
-        let candidates = vector_search(
+        let candidates = vector_search_with_embedding(
             &state.qdrant,
-            &embedding_provider,
+            &embedding,
             VectorSearchOptions {
                 workspace_id: req.workspace_id,
                 query: &req.query,
