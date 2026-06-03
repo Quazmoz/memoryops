@@ -23,6 +23,12 @@ import { getRelativeFileName, getSourceRef, getWorkspaceRepoHint } from "./repo"
 let statusBarItem: vscode.StatusBarItem;
 let memoryTreeProvider: MemoryWebviewViewProvider;
 
+// Cached client instance — invalidated when config changes
+let cachedClient: { client: MemoryOpsClient; config: ReturnType<typeof getConfig>; configKey: string } | undefined;
+
+// Track active edit disposables so we don't leak listeners (keyed by memory ID)
+const activeEditDisposables = new Map<string, vscode.Disposable[]>();
+
 interface LoadRecentMemoriesOptions {
   append?: boolean;
   showProgress?: boolean;
@@ -80,6 +86,23 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   statusBarItem?.dispose();
+  // Clean up any lingering edit listeners
+  for (const disposables of activeEditDisposables.values()) {
+    for (const d of disposables) {
+      d.dispose();
+    }
+  }
+  activeEditDisposables.clear();
+}
+
+function disposeEditListeners(memoryId: string): void {
+  const existing = activeEditDisposables.get(memoryId);
+  if (existing) {
+    for (const d of existing) {
+      d.dispose();
+    }
+    activeEditDisposables.delete(memoryId);
+  }
 }
 
 async function testConnection(): Promise<void> {
@@ -556,9 +579,19 @@ async function copyMemory(item?: unknown): Promise<void> {
 
 function getClient(): { client: MemoryOpsClient; config: ReturnType<typeof getConfig>; missing: string[] } {
   const config = getConfig();
+  const configKey = `${config.apiUrl}|${config.workspaceId}|${config.apiKey}`;
+
+  if (!cachedClient || cachedClient.configKey !== configKey) {
+    cachedClient = {
+      client: new MemoryOpsClient(config),
+      config,
+      configKey,
+    };
+  }
+
   return {
-    config,
-    client: new MemoryOpsClient(config),
+    config: cachedClient.config,
+    client: cachedClient.client,
     missing: validateConfig(config),
   };
 }
@@ -705,7 +738,12 @@ async function editMemory(item?: unknown): Promise<void> {
   }
 
   if (option === "📝 Edit Content") {
-    const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memory.id}.md`);
+    const memoryId = memory.id!;
+    const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memoryId}.md`);
+
+    // Dispose any previous edit listeners for this memory
+    disposeEditListeners(memoryId);
+
     try {
       fs.writeFileSync(tmpPath, memory.content ?? "");
     } catch (err) {
@@ -727,7 +765,7 @@ async function editMemory(item?: unknown): Promise<void> {
               cancellable: false,
             },
             async () => {
-              const updated = await client.updateMemory(memory.id!, { content: updatedContent });
+              const updated = await client.updateMemory(memoryId, { content: updatedContent });
               memoryTreeProvider.updateMemory(updated);
             }
           );
@@ -740,13 +778,14 @@ async function editMemory(item?: unknown): Promise<void> {
 
     const closeDisposable = vscode.workspace.onDidCloseTextDocument((doc) => {
       if (doc.fileName === tmpPath) {
-        saveDisposable.dispose();
-        closeDisposable.dispose();
+        disposeEditListeners(memoryId);
         try {
           fs.unlinkSync(tmpPath);
         } catch {}
       }
     });
+
+    activeEditDisposables.set(memoryId, [saveDisposable, closeDisposable]);
   } else if (option === "🏷️ Edit Tags") {
     const currentTags = memory.tags?.join(", ") ?? "";
     const updatedTagsInput = await vscode.window.showInputBox({
@@ -817,7 +856,7 @@ async function submitFeedback(item?: unknown): Promise<void> {
     return;
   }
 
-  const queryId = memory.query_id ?? memory["query_id"];
+  const queryId = memory.query_id ?? (memory as Record<string, unknown>)["queryId"];
   if (typeof queryId !== "string" || !queryId) {
     void vscode.window.showWarningMessage("Feedback can only be submitted for retrieved memories or search results.");
     return;
@@ -1039,7 +1078,10 @@ async function searchMemoryInline(query: string): Promise<void> {
   }
 
   if (!query.trim()) {
-    void refreshMemories({ showProgress: false, promptOnMissingConfig: false });
+    // Skip redundant refresh if we're already showing recent memories
+    if (memoryTreeProvider.getMode() !== "recent") {
+      void refreshMemories({ showProgress: false, promptOnMissingConfig: false });
+    }
     return;
   }
 
@@ -1087,7 +1129,12 @@ async function editMemoryInlineHelper(id: string, field: string): Promise<void> 
   }
 
   if (option === "📝 Edit Content" || option === "content") {
-    const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memory.id}.md`);
+    const memoryId = memory.id!;
+    const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memoryId}.md`);
+
+    // Dispose any previous edit listeners for this memory
+    disposeEditListeners(memoryId);
+
     try {
       fs.writeFileSync(tmpPath, memory.content ?? "");
     } catch (err) {
@@ -1109,7 +1156,7 @@ async function editMemoryInlineHelper(id: string, field: string): Promise<void> 
               cancellable: false,
             },
             async () => {
-              const updated = await client.updateMemory(memory.id!, { content: updatedContent });
+              const updated = await client.updateMemory(memoryId, { content: updatedContent });
               memoryTreeProvider.updateMemory(updated);
             }
           );
@@ -1122,13 +1169,14 @@ async function editMemoryInlineHelper(id: string, field: string): Promise<void> 
 
     const closeDisposable = vscode.workspace.onDidCloseTextDocument((doc) => {
       if (doc.fileName === tmpPath) {
-        saveDisposable.dispose();
-        closeDisposable.dispose();
+        disposeEditListeners(memoryId);
         try {
           fs.unlinkSync(tmpPath);
         } catch {}
       }
     });
+
+    activeEditDisposables.set(memoryId, [saveDisposable, closeDisposable]);
   } else if (option === "🏷️ Edit Tags" || option === "tags") {
     const currentTags = memory.tags?.join(", ") ?? "";
     const updatedTagsInput = await vscode.window.showInputBox({

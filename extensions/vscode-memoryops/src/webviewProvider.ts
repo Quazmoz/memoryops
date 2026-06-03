@@ -31,6 +31,8 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
   getSortDirection(): "asc" | "desc" { return this._sortDirection; }
   setSortDirection(value: "asc" | "desc"): void { this._sortDirection = value; }
 
+  getMode(): "recent" | "search" | "retrieval" | "message" | "error" { return this._mode; }
+
   public setMessage(message: string): void {
     this._mode = "message";
     this._recentTotal = 0;
@@ -87,12 +89,13 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
 
   private _mergeMemories(current: MemorySearchResult[], next: MemorySearchResult[]): MemorySearchResult[] {
     const merged = new Map<string, MemorySearchResult>();
+    let anonymousIndex = 0;
     for (const memory of [...current, ...next]) {
       if (memory.id) {
         merged.set(memory.id, memory);
         continue;
       }
-      merged.set(`anonymous-${merged.size}`, memory);
+      merged.set(`anonymous-${anonymousIndex++}`, memory);
     }
     return [...merged.values()];
   }
@@ -918,6 +921,9 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         const card = document.createElement("div");
         card.className = "card";
         
+        // Escape memory ID for safe HTML attribute interpolation
+        const safeId = escapeAttr(memory.id || "");
+
         // Header
         const isPinned = !!memory.pinned;
         const typeClass = memory.memory_type === "semantic" ? "badge-semantic" : "badge-episodic";
@@ -982,7 +988,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         let promoteBtn = "";
         if (isEpisodic) {
           promoteBtn = \`
-            <button class="action-btn action-btn-accent" onclick="event.stopPropagation(); promoteMemory('\${memory.id}')" title="Promote to Semantic">
+            <button class="action-btn action-btn-accent" onclick="event.stopPropagation(); promoteMemory('\${safeId}')" title="Promote to Semantic">
               <svg class="svg-icon" viewBox="0 0 16 16"><path d="M8 0L3 5h3v6h4V5h3L8 0zm-5 13h10v2H3v-2z"/></svg>
             </button>
           \`;
@@ -991,7 +997,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         let publishBtn = "";
         if (isSemantic && !isWorkspace) {
           publishBtn = \`
-            <button class="action-btn action-btn-accent" onclick="event.stopPropagation(); publishMemory('\${memory.id}')" title="Publish to Workspace Pool">
+            <button class="action-btn action-btn-accent" onclick="event.stopPropagation(); publishMemory('\${safeId}')" title="Publish to Workspace Pool">
               <svg class="svg-icon" viewBox="0 0 16 16"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM7 11.5H5.5a2 2 0 0 1 0-4H7v4zm3.5-4h-2v4h2a2 2 0 0 0 0-4z"/></svg>
             </button>
           \`;
@@ -1003,18 +1009,18 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         if (queryId) {
           feedbackHtml = \`
             <div class="feedback-trigger-row" onclick="event.stopPropagation();">
-              <button class="feedback-trigger-btn thumbs-up" onclick="toggleFeedbackPanel('\${memory.id}', 1)" title="Helpful (+1)">
+              <button class="feedback-trigger-btn thumbs-up" onclick="toggleFeedbackPanel('\${safeId}', 1)" title="Helpful (+1)">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M11 5.08V2c0-1.1-.9-2-2-2H8c-.55 0-1 .45-1 1v2.58l-3.3 3.3a1.98 1.98 0 0 0-.58 1.41V14c0 1.1.9 2 2 2h6c.83 0 1.54-.5 1.84-1.22l2-4.67c.1-.26.16-.54.16-.83v-3.2a2.006 2.006 0 0 0-2-2h-3.16zM0 8h2v8H0V8z"/></svg>
               </button>
-              <button class="feedback-trigger-btn thumbs-down" onclick="toggleFeedbackPanel('\${memory.id}', -1)" title="Not Helpful (-1)">
+              <button class="feedback-trigger-btn thumbs-down" onclick="toggleFeedbackPanel('\${safeId}', -1)" title="Not Helpful (-1)">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M5 10.92V14c0 1.1.9 2 2 2h1c.55 0 1-.45 1-1v-2.58l3.3-3.3c.37-.37.58-.88.58-1.41V2c0-1.1-.9-2-2-2H5c-.83 0-1.54.5-1.84 1.22l-2 4.67c-.1.26-.16.54-.16.83v3.2c0 1.1.9 2 2 2h3.16zM16 8h-2v-8h2v8z"/></svg>
               </button>
             </div>
-            <div class="feedback-comment-box" id="feedback-box-\${memory.id}" onclick="event.stopPropagation();">
-              <textarea class="feedback-comment-input" id="feedback-comment-\${memory.id}" placeholder="Explain your rating (optional)..." rows="2"></textarea>
+            <div class="feedback-comment-box" id="feedback-box-\${safeId}" onclick="event.stopPropagation();">
+              <textarea class="feedback-comment-input" id="feedback-comment-\${safeId}" placeholder="Explain your rating (optional)..." rows="2"></textarea>
               <div class="feedback-submit-row">
-                <button class="feedback-cancel-btn" onclick="closeFeedbackPanel('\${memory.id}')">Cancel</button>
-                <button class="feedback-submit-btn" id="feedback-submit-btn-\${memory.id}">Submit</button>
+                <button class="feedback-cancel-btn" onclick="closeFeedbackPanel('\${safeId}')">Cancel</button>
+                <button class="feedback-submit-btn" id="feedback-submit-btn-\${safeId}">Submit</button>
               </div>
             </div>
           \`;
@@ -1027,16 +1033,16 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
             </div>
             <div class="card-header-right">
               <span class="card-date">\${dateStr}</span>
-              <button class="pin-btn \${isPinned ? "pinned" : ""}" onclick="event.stopPropagation(); togglePin('\${memory.id}', \${!isPinned})" title="\${isPinned ? "Unpin Memory" : "Pin Memory"}">
+              <button class="pin-btn \${isPinned ? "pinned" : ""}" onclick="event.stopPropagation(); togglePin('\${safeId}', \${!isPinned})" title="\${isPinned ? "Unpin Memory" : "Pin Memory"}">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M12.9 8.2v-6h1.1v-1h-12v1h1.1v6l-2.1 2.1v1h5.3v3.7l1.1 1.1 1.1-1.1v-3.7h5.3v-1l-1.9-2.1z"/></svg>
               </button>
             </div>
           </div>
-          <div class="card-content" id="content-\${memory.id}">
+          <div class="card-content" id="content-\${safeId}">
             \${escapeHtml(displayContent)}
             \${needsTruncate ? '<div class="content-fade"></div>' : ""}
           </div>
-          \${needsTruncate ? \`<button class="read-more-btn" id="read-more-btn-\${memory.id}" onclick="event.stopPropagation(); toggleReadMore('\${memory.id}')">Read more</button>\` : ""}
+          \${needsTruncate ? \`<button class="read-more-btn" id="read-more-btn-\${safeId}" onclick="event.stopPropagation(); toggleReadMore('\${safeId}')">Read more</button>\` : ""}
           \${tagsHtml}
           \${meterHtml}
           <div class="card-footer">
@@ -1044,15 +1050,15 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
               \${feedbackHtml}
             </div>
             <div class="footer-right">
-              <button class="action-btn" onclick="event.stopPropagation(); copyContent('\${memory.id}')" title="Copy Content">
+              <button class="action-btn" onclick="event.stopPropagation(); copyContent('\${safeId}')" title="Copy Content">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M4 4h8v1H4V4zm0 2h8v1H4V6zm0 2h8v1H4V8zm-2-6h12v12H2V2zm1 1v10h10V3H3z"/></svg>
               </button>
-              <button class="action-btn" onclick="event.stopPropagation(); editMemoryField('\${memory.id}')" title="Edit Memory">
+              <button class="action-btn" onclick="event.stopPropagation(); editMemoryField('\${safeId}')" title="Edit Memory">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5L13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V12h2.293l6.5-6.5z"/></svg>
               </button>
               \${promoteBtn}
               \${publishBtn}
-              <button class="action-btn action-btn-danger" onclick="event.stopPropagation(); deleteMemory('\${memory.id}')" title="Delete Memory">
+              <button class="action-btn action-btn-danger" onclick="event.stopPropagation(); deleteMemory('\${safeId}')" title="Delete Memory">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6c0-.28.22-.5.5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6c0-.28.22-.5.5-.5zm3-.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 1 0V6c0-.28-.22-.5-.5-.5zM11 2.5V1h-6v1.5H2.5A.5.5 0 0 0 2 3v1h12V3a.5.5 0 0 0-.5-.5H11zM13 5H3v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5z"/></svg>
               </button>
             </div>
@@ -1161,6 +1167,11 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         "'": '&#039;'
       };
       return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+
+    // Escape for safe interpolation into HTML attributes (onclick handlers, id, etc.)
+    function escapeAttr(text) {
+      return escapeHtml(String(text)).replace(/\\/g, '\\\\');
     }
 
     function unescapeHtml(text) {

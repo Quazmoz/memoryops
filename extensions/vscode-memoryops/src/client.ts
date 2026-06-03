@@ -588,7 +588,7 @@ function extractErrorMessage(payload: unknown): string | undefined {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function queryString(params: Record<string, unknown>): string {

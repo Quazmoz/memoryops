@@ -255,11 +255,14 @@ function relativeDate(value: string): string | undefined {
 }
 
 function isMemory(value: unknown): value is MemorySearchResult {
-  return typeof value === "object" && value !== null && ("content" in value || "id" in value);
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && ("content" in value || "id" in value)
+    && ("memory_type" in value || "workspace_id" in value);
 }
 
 function mergeMemories(current: MemorySearchResult[], next: MemorySearchResult[]): MemorySearchResult[] {
   const merged = new Map<string, MemorySearchResult>();
+  let anonymousIndex = 0;
 
   for (const memory of [...current, ...next]) {
     if (memory.id) {
@@ -267,7 +270,7 @@ function mergeMemories(current: MemorySearchResult[], next: MemorySearchResult[]
       continue;
     }
 
-    merged.set(`anonymous-${merged.size}`, memory);
+    merged.set(`anonymous-${anonymousIndex++}`, memory);
   }
 
   return [...merged.values()];

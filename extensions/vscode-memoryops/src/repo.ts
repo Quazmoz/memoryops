@@ -22,8 +22,23 @@ interface GitRemote {
   pushUrl?: string;
 }
 
+// Cache for repo hint to avoid redundant Git extension activation
+const REPO_HINT_TTL_MS = 30_000;
+let repoHintCache: { value: string | undefined; expiresAt: number } | undefined;
+
+// Invalidate cache when workspace folders change
+vscode.workspace.onDidChangeWorkspaceFolders(() => {
+  repoHintCache = undefined;
+});
+
 export async function getWorkspaceRepoHint(document?: vscode.TextDocument): Promise<string | undefined> {
-  return (await getGitRemoteRepoHint(document)) ?? getWorkspaceFolderName(document);
+  if (repoHintCache && Date.now() < repoHintCache.expiresAt) {
+    return repoHintCache.value;
+  }
+
+  const value = (await getGitRemoteRepoHint(document)) ?? getWorkspaceFolderName(document);
+  repoHintCache = { value, expiresAt: Date.now() + REPO_HINT_TTL_MS };
+  return value;
 }
 
 export function getSourceRef(editor: vscode.TextEditor): string {
