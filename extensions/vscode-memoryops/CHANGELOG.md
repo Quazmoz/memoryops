@@ -5,6 +5,12 @@ All notable changes to the MemoryOps VS Code extension will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-06-03
+
+### Fixed
+
+- **Sidebar stuck on "Loading…" and dead toolbar buttons** — the webview now declares a `Content-Security-Policy` with a per-render nonce and runs its script under it. Previously the inline script and inline `onclick` handlers were unguarded, so in stricter editor environments the view could fail to receive state (stuck on "Loading…" after entering API key / workspace ID) and the Refresh / Settings (and card action) buttons did nothing. All handlers now use `addEventListener` + event delegation, and the `message` listener is registered before the `ready` handshake so the first state push can't be dropped.
+
 ## [0.3.0] - 2026-06-03
 
 ### Added
@@ -14,10 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Inline CodeLens hints** — opt-in (`memoryops.enableCodeLens`) lens at the top of files showing an **exact** count of memories that reference the current file; click to surface them. Backed by a new backend `source_ref` list filter (matches memories by the file recorded on their originating observation, ignoring line anchors) rather than a fuzzy filename search. Results are cached per file for 60s.
 - **`MemoryOps: Reconnect`** — drop the cached client and re-establish the connection. Connection failures now offer **Reconnect** / **Open Settings** actions, and the status bar item becomes a one-click reconnect.
 - **`MemoryOps: Show Memories Referencing Current File`** — find memories that reference the active file (exact `source_ref` match, not fuzzy search).
-
-### Fixed
-
-- **Sidebar stuck on "Loading…" and dead toolbar buttons** — the webview now declares a `Content-Security-Policy` with a per-render nonce and runs its script under it. Previously the inline script and inline `onclick` handlers were blocked in stricter editor environments, so the view never received state (stuck on "Loading…" after entering API key / workspace ID) and the Refresh / Settings (and card action) buttons did nothing. All handlers now use `addEventListener` + event delegation, and the `message` listener is registered before the `ready` handshake so the first state push can't be dropped.
 
 ### Changed
 
