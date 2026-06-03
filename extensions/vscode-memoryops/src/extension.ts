@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 
 import { MemoryOpsClient, MemorySearchResult } from "./client";
-import { getConfig, openMemoryOpsSettings, validateConfig } from "./config";
+import { getConfig, openMemoryOpsSettings, setCachedApiKeySecret, validateConfig } from "./config";
 import { MemoryWebviewViewProvider } from "./webviewProvider";
 import { memoryFromCommandArgument, memoryLabel } from "./memoryTree";
 import {
@@ -22,6 +22,7 @@ import { getRelativeFileName, getSourceRef, getWorkspaceRepoHint } from "./repo"
 
 let statusBarItem: vscode.StatusBarItem;
 let memoryTreeProvider: MemoryWebviewViewProvider;
+let outputChannel: vscode.OutputChannel;
 
 // Cached client instance — invalidated when config changes
 let cachedClient: { client: MemoryOpsClient; config: ReturnType<typeof getConfig>; configKey: string } | undefined;
@@ -36,6 +37,9 @@ interface LoadRecentMemoriesOptions {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  outputChannel = vscode.window.createOutputChannel("MemoryOps");
+  context.subscriptions.push(outputChannel);
+
   memoryTreeProvider = new MemoryWebviewViewProvider(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("memoryops.memories", memoryTreeProvider)
@@ -75,19 +79,56 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("memoryops.submitFeedbackInline", submitFeedbackInline),
     vscode.commands.registerCommand("memoryops.mergeMemory", mergeMemory),
     vscode.commands.registerCommand("memoryops.bulkOperations", bulkOperations),
+    vscode.commands.registerCommand("memoryops.setApiKey", async () => {
+      const value = await vscode.window.showInputBox({
+        title: "MemoryOps: Set API Key",
+        prompt: "Enter your MemoryOps workspace API key. It will be stored securely in your OS keychain.",
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (value === undefined) {
+        return;
+      }
+      if (value.trim()) {
+        await context.secrets.store("memoryops.apiKey", value.trim());
+        void vscode.window.showInformationMessage("MemoryOps API key stored securely.");
+      } else {
+        await context.secrets.delete("memoryops.apiKey");
+        void vscode.window.showInformationMessage("MemoryOps API key removed from secure storage.");
+      }
+    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (!event.affectsConfiguration("memoryops")) {
         return;
       }
+      cachedClient = undefined;
       void initializeSidebar();
     }),
   );
 
-  void initializeSidebar();
+  // Listen for secure storage changes (e.g., API key set/cleared)
+  context.subscriptions.push(
+    context.secrets.onDidChange((event) => {
+      if (event.key === "memoryops.apiKey") {
+        void context.secrets.get("memoryops.apiKey").then((secret) => {
+          setCachedApiKeySecret(secret || undefined);
+          cachedClient = undefined;
+          void initializeSidebar();
+        });
+      }
+    })
+  );
+
+  // Read the secure API key before initializing the sidebar
+  void context.secrets.get("memoryops.apiKey").then((secret) => {
+    setCachedApiKeySecret(secret || undefined);
+    void initializeSidebar();
+  });
 }
 
 export function deactivate(): void {
   statusBarItem?.dispose();
+  outputChannel?.dispose();
   // Clean up any lingering edit listeners
   for (const disposables of activeEditDisposables.values()) {
     for (const d of disposables) {
@@ -585,7 +626,7 @@ function getClient(): { client: MemoryOpsClient; config: ReturnType<typeof getCo
 
   if (!cachedClient || cachedClient.configKey !== configKey) {
     cachedClient = {
-      client: new MemoryOpsClient(config),
+      client: new MemoryOpsClient(config, (msg) => outputChannel.appendLine(`[${new Date().toISOString()}] ${msg}`)),
       config,
       configKey,
     };

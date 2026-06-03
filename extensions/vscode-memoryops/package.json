@@ -200,6 +200,31 @@
         "title": "MemoryOps: Bulk Operations",
         "category": "MemoryOps",
         "icon": "$(checklist)"
+      },
+      {
+        "command": "memoryops.setApiKey",
+        "title": "MemoryOps: Set API Key (Secure)",
+        "category": "MemoryOps",
+        "icon": "$(key)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "memoryops.searchMemory",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m"
+      },
+      {
+        "command": "memoryops.saveSelectionAsObservation",
+        "key": "ctrl+alt+shift+s",
+        "mac": "cmd+alt+shift+s",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "memoryops.retrieveContextForCurrentFile",
+        "key": "ctrl+alt+shift+r",
+        "mac": "cmd+alt+shift+r",
+        "when": "editorFocus"
       }
     ],
     "menus": {
@@ -296,6 +321,18 @@
           "when": "view == memoryops.memories && viewItem =~ /\\.semantic\\./",
           "group": "2_manage@3"
         }
+      ],
+      "editor/context": [
+        {
+          "command": "memoryops.saveSelectionAsObservation",
+          "when": "editorHasSelection",
+          "group": "memoryops@1"
+        },
+        {
+          "command": "memoryops.retrieveContextForCurrentFile",
+          "when": "editorFocus",
+          "group": "memoryops@2"
+        }
       ]
     },
     "configuration": {
@@ -314,7 +351,7 @@
         "memoryops.apiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "MemoryOps workspace API key. Store this in user settings, not checked-in workspace settings."
+          "markdownDescription": "Fallback MemoryOps workspace API key. **Prefer using the `MemoryOps: Set API Key (Secure)` command**, which stores the key in your OS keychain via VS Code SecretStorage. This setting is only used when no secure key is stored."
         },
         "memoryops.defaultTopK": {
           "type": "number",

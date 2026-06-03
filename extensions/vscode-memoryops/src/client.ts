@@ -160,7 +160,10 @@ export interface ObservationAccepted {
 }
 
 export class MemoryOpsClient {
-  constructor(private readonly config: MemoryOpsConfig) {}
+  constructor(
+    private readonly config: MemoryOpsConfig,
+    private readonly log?: (message: string) => void,
+  ) {}
 
   async health(): Promise<unknown> {
     return this.request("/health/ready", { method: "GET", authenticated: false });
@@ -398,6 +401,7 @@ export class MemoryOpsClient {
     authenticated: boolean;
     body?: unknown;
   }): Promise<unknown> {
+    this.log?.(`→ ${options.method} ${path}`);
     const timeoutMs = requestTimeoutMs(path);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -413,6 +417,7 @@ export class MemoryOpsClient {
       headers["X-API-Key"] = this.config.apiKey;
     }
 
+    const startTime = Date.now();
     try {
       const response = await fetch(`${this.config.apiUrl}${path}`, {
         method: options.method,
@@ -422,17 +427,25 @@ export class MemoryOpsClient {
       });
 
       const text = await response.text();
+      const elapsed = Date.now() - startTime;
       const payload = text.length > 0 ? parseJson(text) : undefined;
 
       if (!response.ok) {
         const message = extractErrorMessage(payload) ?? response.statusText;
+        this.log?.(`✗ ${options.method} ${path} → ${response.status} ${message} (${elapsed}ms)`);
         throw new Error(`MemoryOps ${response.status}: ${message}`);
       }
 
+      this.log?.(`← ${options.method} ${path} → ${response.status} (${elapsed}ms)`);
       return payload;
     } catch (error) {
       if (isAbortError(error)) {
+        this.log?.(`✗ ${options.method} ${path} → timeout after ${Math.round(timeoutMs / 1000)}s`);
         throw new Error(`MemoryOps request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+      }
+      // Avoid double-logging errors already logged above
+      if (!(error instanceof Error && error.message.startsWith("MemoryOps "))) {
+        this.log?.(`✗ ${options.method} ${path} → ${error instanceof Error ? error.message : String(error)}`);
       }
       throw error;
     } finally {

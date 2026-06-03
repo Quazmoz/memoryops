@@ -12,12 +12,20 @@ export interface MemoryOpsConfig {
   defaultAgentId: string;
 }
 
+// Secret storage cache — set by extension.ts on activation via VS Code SecretStorage API.
+// Takes priority over the plain-text memoryops.apiKey setting when present.
+let cachedApiKeySecret: string | undefined;
+
+export function setCachedApiKeySecret(value: string | undefined): void {
+  cachedApiKeySecret = value;
+}
+
 export function getConfig(): MemoryOpsConfig {
   const config = vscode.workspace.getConfiguration("memoryops");
   return {
     apiUrl: trimTrailingSlash(config.get<string>("apiUrl", "http://localhost:8080")),
     workspaceId: config.get<string>("workspaceId", "").trim(),
-    apiKey: config.get<string>("apiKey", "").trim(),
+    apiKey: (cachedApiKeySecret || config.get<string>("apiKey", "")).trim(),
     defaultTopK: clampNumber(config.get<number>("defaultTopK", 5), 1, 20),
     defaultSearchMode: normalizeSearchMode(config.get<string>("defaultSearchMode", "hybrid")),
     defaultTokenBudget: clampNumber(config.get<number>("defaultTokenBudget", 2048), 256, 16000),
