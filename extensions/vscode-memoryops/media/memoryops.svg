@@ -1,5 +1,11 @@
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M5 7.5C5 5.57 8.13 4 12 4s7 1.57 7 3.5S15.87 11 12 11 5 9.43 5 7.5Z" fill="#C5C5C5"/>
-  <path d="M5 7.5v4C5 13.43 8.13 15 12 15s7-1.57 7-3.5v-4" stroke="#C5C5C5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M5 11.5v4C5 17.43 8.13 19 12 19s7-1.57 7-3.5v-4" stroke="#C5C5C5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<svg width="128" height="128" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="purple-pink" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8b5cf6" />
+      <stop offset="100%" stop-color="#ec4899" />
+    </linearGradient>
+  </defs>
+  <path d="M5 7.5C5 5.57 8.13 4 12 4s7 1.57 7 3.5S15.87 11 12 11 5 9.43 5 7.5Z" fill="url(#purple-pink)"/>
+  <path d="M5 7.5v4C5 13.43 8.13 15 12 15s7-1.57 7-3.5v-4" stroke="url(#purple-pink)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M5 11.5v4C5 17.43 8.13 19 12 19s7-1.57 7-3.5v-4" stroke="url(#purple-pink)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

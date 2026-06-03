@@ -42,7 +42,15 @@ export function validateConfig(config: MemoryOpsConfig): string[] {
 }
 
 export async function openMemoryOpsSettings(): Promise<void> {
-  await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:quazmoz.memoryops-vscode memoryops");
+  try {
+    await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:quazmoz.memoryops-vscode");
+  } catch {
+    try {
+      await vscode.commands.executeCommand("workbench.action.openSettings");
+    } catch {
+      await vscode.commands.executeCommand("workbench.action.openGlobalSettings");
+    }
+  }
 }
 
 function trimTrailingSlash(value: string): string {

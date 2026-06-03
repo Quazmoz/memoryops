@@ -2,8 +2,9 @@
   "name": "memoryops-vscode",
   "displayName": "MemoryOps",
   "description": "Bring governed MemoryOps agent memory into VS Code.",
-  "version": "0.0.1",
+  "version": "0.1.1",
   "publisher": "quazmoz",
+  "icon": "media/memoryops.png",
   "private": true,
   "license": "MIT",
   "engines": {

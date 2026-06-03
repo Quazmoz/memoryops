@@ -786,10 +786,10 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         <input type="text" class="search-input" id="search" placeholder="Search memories..." />
         <button class="search-clear" id="search-clear" title="Clear search">✕</button>
       </div>
-      <button class="icon-button" id="refresh-btn" title="Refresh Memories">
+      <button class="icon-button" id="refresh-btn" title="Refresh Memories" onclick="vscode.postMessage({ type: 'refresh' })">
         <svg class="svg-icon" viewBox="0 0 16 16"><path d="M13.6 2.3C12.2.9 10.2.1 8 .1 3.6.1 0 3.7 0 8.1s3.6 8 8 8c3.2 0 6-1.9 7.2-4.8l-1.3-.5c-1 2.3-3.2 3.8-5.9 3.8-3.6 0-6.5-2.9-6.5-6.5S4.4 1.6 8 1.6c1.8 0 3.4.7 4.6 1.9l-2.1 2.1h5.6V0L13.6 2.3z"/></svg>
       </button>
-      <button class="icon-button" id="settings-btn" title="Open Settings">
+      <button class="icon-button" id="settings-btn" title="Open Settings" onclick="vscode.postMessage({ type: 'openSettings' })">
         <svg class="svg-icon" viewBox="0 0 16 16"><path d="M9.1 1.006A1.5 1.5 0 0 0 7.728.016l-.28-.01a1.5 1.5 0 0 0-1.425.99L5.6 2.222a6.767 6.767 0 0 0-1.572.909l-1.411-.798a1.5 1.5 0 0 0-1.986.386l-.16.232a1.5 1.5 0 0 0 .193 1.983L1.75 6.02a6.772 6.772 0 0 0 .041 1.81l-1.127 1.054a1.5 1.5 0 0 0-.27 1.974l.142.242a1.5 1.5 0 0 0 1.932.482l1.455-.722a6.77 6.77 0 0 0 1.517.997l.386 1.554a1.5 1.5 0 0 0 1.396 1.12l.278.01a1.5 1.5 0 0 0 1.442-.962l.462-1.533c.548-.22 1.056-.523 1.508-.897l1.43.76a1.5 1.5 0 0 0 1.974-.356l.169-.225a1.5 1.5 0 0 0-.154-1.996l-1.077-1.107a6.776 6.776 0 0 0 .012-1.802l1.171-1.006a1.5 1.5 0 0 0 .344-1.963l-.125-.251a1.5 1.5 0 0 0-1.905-.584l-1.48.667A6.772 6.772 0 0 0 9.5 3.328l-.4-2.322zM8 10a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>
       </button>
     </div>
@@ -811,6 +811,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
 
   <script>
     const vscode = acquireVsCodeApi();
+    window.vscode = vscode;
 
     // DOM Cache
     const cardsContainer = document.getElementById("cards-container");
@@ -865,8 +866,6 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
     });
 
     // Event Listeners
-    refreshBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh" }));
-    settingsBtn.addEventListener("click", () => vscode.postMessage({ type: "openSettings" }));
 
     // Realtime Search
     let searchTimeout;
