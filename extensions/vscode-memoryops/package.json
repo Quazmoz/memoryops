@@ -2,18 +2,34 @@
   "name": "memoryops-vscode",
   "displayName": "MemoryOps",
   "description": "Bring governed MemoryOps agent memory into VS Code.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "quazmoz",
+  "author": {
+    "name": "Quazmoz",
+    "url": "https://github.com/Quazmoz"
+  },
   "icon": "media/memoryops.png",
-  "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Quazmoz/memoryops.git"
+  },
+  "homepage": "https://github.com/Quazmoz/memoryops",
+  "bugs": {
+    "url": "https://github.com/Quazmoz/memoryops/issues"
+  },
+  "galleryBanner": {
+    "color": "#1e1b4b",
+    "theme": "dark"
+  },
+  "qna": "marketplace",
   "engines": {
     "vscode": "^1.93.0"
   },
   "categories": [
-    "Other",
     "Machine Learning",
-    "Programming Languages"
+    "Programming Languages",
+    "Other"
   ],
   "keywords": [
     "memoryops",

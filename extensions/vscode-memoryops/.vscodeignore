@@ -1,8 +1,11 @@
 src/**
 .vscode/**
 .gitignore
+.gitkeep
 tsconfig.json
 *.tsbuildinfo
 node_modules/**
 *.vsix
 .DS_Store
+out/test/**
+package-lock.json
