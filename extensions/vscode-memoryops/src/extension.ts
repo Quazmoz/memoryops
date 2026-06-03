@@ -5,6 +5,8 @@ import * as path from "path";
 
 import { MemoryOpsClient, MemorySearchResult } from "./client";
 import { getConfig, openMemoryOpsSettings, setCachedApiKeySecret, validateConfig } from "./config";
+import { registerChatParticipant } from "./chatParticipant";
+import { MemoryCodeLensProvider } from "./codeLensProvider";
 import { MemoryWebviewViewProvider } from "./webviewProvider";
 import { memoryFromCommandArgument, memoryLabel } from "./memoryTree";
 import {
@@ -23,6 +25,10 @@ import { getRelativeFileName, getSourceRef, getWorkspaceRepoHint } from "./repo"
 let statusBarItem: vscode.StatusBarItem;
 let memoryTreeProvider: MemoryWebviewViewProvider;
 let outputChannel: vscode.OutputChannel;
+let codeLensProvider: MemoryCodeLensProvider | undefined;
+
+const WALKTHROUGH_ID = "quazmoz.memoryops-vscode#memoryops.gettingStarted";
+const FIRST_RUN_KEY = "memoryops.hasSeenWalkthrough";
 
 // Cached client instance — invalidated when config changes
 let cachedClient: { client: MemoryOpsClient; config: ReturnType<typeof getConfig>; configKey: string } | undefined;
@@ -79,6 +85,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("memoryops.submitFeedbackInline", submitFeedbackInline),
     vscode.commands.registerCommand("memoryops.mergeMemory", mergeMemory),
     vscode.commands.registerCommand("memoryops.bulkOperations", bulkOperations),
+    vscode.commands.registerCommand("memoryops.reconnect", reconnect),
+    vscode.commands.registerCommand("memoryops.showMemoriesForFile", showMemoriesForFile),
+    vscode.commands.registerCommand("memoryops.openWalkthrough", openWalkthrough),
     vscode.commands.registerCommand("memoryops.setApiKey", async () => {
       const value = await vscode.window.showInputBox({
         title: "MemoryOps: Set API Key",
@@ -102,9 +111,20 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       cachedClient = undefined;
+      codeLensProvider?.refresh();
       void initializeSidebar();
     }),
   );
+
+  // Feature 9: inline CodeLens hints (gated on memoryops.enableCodeLens).
+  codeLensProvider = new MemoryCodeLensProvider(() => getClient());
+  context.subscriptions.push(
+    codeLensProvider,
+    vscode.languages.registerCodeLensProvider({ scheme: "file" }, codeLensProvider),
+  );
+
+  // Feature 8: @memoryops Copilot Chat participant (no-op if chat is unavailable).
+  registerChatParticipant(context, () => getClient());
 
   // Listen for secure storage changes (e.g., API key set/cleared)
   context.subscriptions.push(
@@ -123,7 +143,37 @@ export function activate(context: vscode.ExtensionContext): void {
   void context.secrets.get("memoryops.apiKey").then((secret) => {
     setCachedApiKeySecret(secret || undefined);
     void initializeSidebar();
+    // Feature 5: on first install, open the Getting Started walkthrough so users
+    // who install the extension and "see nothing" are guided through setup.
+    // Runs after the secret loads so a stored key isn't mistaken for missing.
+    maybeShowWalkthroughOnFirstRun(context);
   });
+}
+
+function maybeShowWalkthroughOnFirstRun(context: vscode.ExtensionContext): void {
+  if (context.globalState.get<boolean>(FIRST_RUN_KEY)) {
+    return;
+  }
+  void context.globalState.update(FIRST_RUN_KEY, true);
+
+  // Only nudge users who haven't configured anything yet.
+  if (validateConfig(getConfig()).length === 0) {
+    return;
+  }
+
+  void vscode.commands.executeCommand(
+    "workbench.action.openWalkthrough",
+    WALKTHROUGH_ID,
+    false,
+  );
+}
+
+async function openWalkthrough(): Promise<void> {
+  await vscode.commands.executeCommand(
+    "workbench.action.openWalkthrough",
+    WALKTHROUGH_ID,
+    false,
+  );
 }
 
 export function deactivate(): void {
@@ -171,13 +221,70 @@ async function testConnection(): Promise<void> {
 
     statusBarItem.text = "$(check) MemoryOps";
     statusBarItem.tooltip = "MemoryOps connected";
+    statusBarItem.command = "memoryops.testConnection";
     void refreshMemories({ showProgress: false, promptOnMissingConfig: false });
     void vscode.window.showInformationMessage("MemoryOps connection is healthy.");
   } catch (error) {
     statusBarItem.text = "$(error) MemoryOps";
-    statusBarItem.tooltip = `MemoryOps connection failed: ${errorMessage(error)}`;
+    statusBarItem.tooltip = `MemoryOps connection failed: ${errorMessage(error)} — click to reconnect`;
+    statusBarItem.command = "memoryops.reconnect";
+    void vscode.window
+      .showErrorMessage(`MemoryOps connection failed: ${errorMessage(error)}`, "Reconnect", "Open Settings")
+      .then((action) => {
+        if (action === "Reconnect") {
+          void reconnect();
+        } else if (action === "Open Settings") {
+          void openMemoryOpsSettings();
+        }
+      });
     throw error;
   }
+}
+
+async function reconnect(): Promise<void> {
+  // Drop the cached client so fresh config/secrets are picked up, then re-run
+  // the connection check. Transient failures are retried inside the client.
+  cachedClient = undefined;
+  setDefaultStatusBar();
+  await testConnection();
+}
+
+async function showMemoriesForFile(fileNameArg?: unknown): Promise<void> {
+  const { client, config, missing } = getClient();
+  if (missing.length > 0) {
+    setIncompleteStatusBar(missing);
+    await promptForMissingConfig(missing);
+    return;
+  }
+
+  const document = vscode.window.activeTextEditor?.document;
+  const fileName = typeof fileNameArg === "string" && fileNameArg
+    ? fileNameArg
+    : document
+      ? getRelativeFileName(document)
+      : undefined;
+
+  if (!fileName) {
+    void vscode.window.showWarningMessage("Open a file to find memories that reference it.");
+    return;
+  }
+
+  const repo = await getWorkspaceRepoHint(document);
+  const results = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Finding MemoryOps memories for ${fileName}...`,
+      cancellable: false,
+    },
+    () => client.searchMemory(fileName, config.defaultTopK, {
+      mode: config.defaultSearchMode,
+      repo,
+      includeWorkspacePool: config.includeWorkspacePool,
+    }),
+  );
+
+  memoryTreeProvider.setSearchResults(results, fileName);
+  await showSearchResults(results, `MemoryOps memories referencing ${fileName}`);
 }
 
 async function refreshMemories(options: LoadRecentMemoriesOptions = {}): Promise<void> {

@@ -4,6 +4,12 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const SLOW_REQUEST_TIMEOUT_MS = 30_000;
 const SLOW_PATHS = ["/v1/retrieve", "/v1/memory/search"];
 
+// Only GET/idempotent reads and explicitly safe POSTs are retried. Mutating
+// writes (PATCH/DELETE, and POSTs that create/merge) are never auto-retried to
+// avoid duplicate side effects.
+const RETRYABLE_METHODS = new Set(["GET"]);
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+
 export type SearchMode = "hybrid" | "keyword" | "vector";
 
 export interface MemoryUnit {
@@ -159,6 +165,11 @@ export interface ObservationAccepted {
   status: "queued" | string;
 }
 
+interface HttpError extends Error {
+  status?: number;
+  transient?: boolean;
+}
+
 export class MemoryOpsClient {
   constructor(
     private readonly config: MemoryOpsConfig,
@@ -166,7 +177,7 @@ export class MemoryOpsClient {
   ) {}
 
   async health(): Promise<unknown> {
-    return this.request("/health/ready", { method: "GET", authenticated: false });
+    return this.request("/health/ready", { method: "GET", authenticated: false, idempotent: true });
   }
 
   async getWorkspace(): Promise<unknown> {
@@ -208,6 +219,7 @@ export class MemoryOpsClient {
     const response = await this.request("/v1/memory/search", {
       method: "POST",
       authenticated: true,
+      idempotent: true,
       body: {
         query,
         workspace_id: this.config.workspaceId,
@@ -226,6 +238,7 @@ export class MemoryOpsClient {
     const response = await this.request("/v1/retrieve", {
       method: "POST",
       authenticated: true,
+      idempotent: true,
       body: {
         query,
         workspace_id: this.config.workspaceId,
@@ -400,6 +413,45 @@ export class MemoryOpsClient {
     method: "GET" | "POST" | "PATCH" | "DELETE";
     authenticated: boolean;
     body?: unknown;
+    // Mark a POST as safe to auto-retry (read-only endpoints like search/retrieve).
+    idempotent?: boolean;
+  }): Promise<unknown> {
+    const maxRetries = Math.max(0, this.config.maxRetries ?? 0);
+    const canRetry = RETRYABLE_METHODS.has(options.method) || options.idempotent === true;
+    const attempts = canRetry ? maxRetries + 1 : 1;
+
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await this.performRequest(path, options);
+      } catch (error) {
+        lastError = error;
+        const transient = isTransientError(error);
+        const hasMoreAttempts = attempt < attempts;
+        if (!transient || !hasMoreAttempts) {
+          throw error;
+        }
+        const delayMs = this.backoffDelayMs(attempt);
+        this.log?.(`↻ ${options.method} ${path} → retry ${attempt}/${attempts - 1} in ${delayMs}ms (${error instanceof Error ? error.message : String(error)})`);
+        await sleep(delayMs);
+      }
+    }
+
+    throw lastError;
+  }
+
+  private backoffDelayMs(attempt: number): number {
+    const base = Math.max(0, this.config.retryBackoffMs ?? 0);
+    // Exponential backoff with light jitter, capped to keep the UI responsive.
+    const exponential = base * Math.pow(2, attempt - 1);
+    const jitter = exponential * 0.25 * Math.random();
+    return Math.min(Math.round(exponential + jitter), 8000);
+  }
+
+  private async performRequest(path: string, options: {
+    method: "GET" | "POST" | "PATCH" | "DELETE";
+    authenticated: boolean;
+    body?: unknown;
   }): Promise<unknown> {
     this.log?.(`→ ${options.method} ${path}`);
     const timeoutMs = requestTimeoutMs(path);
@@ -433,7 +485,9 @@ export class MemoryOpsClient {
       if (!response.ok) {
         const message = extractErrorMessage(payload) ?? response.statusText;
         this.log?.(`✗ ${options.method} ${path} → ${response.status} ${message} (${elapsed}ms)`);
-        throw new Error(`MemoryOps ${response.status}: ${message}`);
+        const error = new Error(`MemoryOps ${response.status}: ${message}`) as HttpError;
+        error.status = response.status;
+        throw error;
       }
 
       this.log?.(`← ${options.method} ${path} → ${response.status} (${elapsed}ms)`);
@@ -441,11 +495,17 @@ export class MemoryOpsClient {
     } catch (error) {
       if (isAbortError(error)) {
         this.log?.(`✗ ${options.method} ${path} → timeout after ${Math.round(timeoutMs / 1000)}s`);
-        throw new Error(`MemoryOps request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+        const timeoutError = new Error(`MemoryOps request timed out after ${Math.round(timeoutMs / 1000)}s.`) as HttpError;
+        timeoutError.transient = true;
+        throw timeoutError;
       }
       // Avoid double-logging errors already logged above
       if (!(error instanceof Error && error.message.startsWith("MemoryOps "))) {
         this.log?.(`✗ ${options.method} ${path} → ${error instanceof Error ? error.message : String(error)}`);
+        // Network-level failures (connection refused, DNS, reset) surface here.
+        if (error instanceof Error) {
+          (error as HttpError).transient = true;
+        }
       }
       throw error;
     } finally {
@@ -685,4 +745,26 @@ function stringArrayOrUndefined(value: unknown): string[] | undefined {
 
 function isAbortError(error: unknown): boolean {
   return isRecord(error) && error.name === "AbortError";
+}
+
+function isTransientError(error: unknown): boolean {
+  if (!isRecord(error)) {
+    return false;
+  }
+
+  // Timeouts and network-level failures are flagged transient at the call site.
+  if (error.transient === true) {
+    return true;
+  }
+
+  // Retry only on transient HTTP status codes (5xx, 429, 408, 425).
+  if (typeof error.status === "number") {
+    return RETRYABLE_STATUS.has(error.status);
+  }
+
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

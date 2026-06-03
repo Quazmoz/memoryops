@@ -10,6 +10,9 @@ export interface MemoryOpsConfig {
   sidebarPageSize: number;
   includeWorkspacePool: boolean;
   defaultAgentId: string;
+  maxRetries: number;
+  retryBackoffMs: number;
+  enableCodeLens: boolean;
 }
 
 // Secret storage cache — set by extension.ts on activation via VS Code SecretStorage API.
@@ -32,6 +35,9 @@ export function getConfig(): MemoryOpsConfig {
     sidebarPageSize: clampNumber(config.get<number>("sidebarPageSize", 20), 1, 100),
     includeWorkspacePool: config.get<boolean>("includeWorkspacePool", false),
     defaultAgentId: config.get<string>("defaultAgentId", "vscode").trim() || "vscode",
+    maxRetries: clampNumber(config.get<number>("maxRetries", 3), 0, 10),
+    retryBackoffMs: clampNumber(config.get<number>("retryBackoffMs", 500), 0, 10000),
+    enableCodeLens: config.get<boolean>("enableCodeLens", false),
   };
 }
 

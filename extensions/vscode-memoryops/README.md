@@ -32,6 +32,22 @@ Inspect version history, trace provenance graphs, view retrieval feedback, and s
 
 Select multiple memories and pin, unpin, or delete them in one action.
 
+### 💬 Copilot Chat Participant
+
+Type **`@memoryops`** in GitHub Copilot Chat to query your workspace conversationally. Use `/search` (default) for matching memories or `/retrieve` for packed, token-budgeted context — complete with "Open in editor" buttons and follow-up suggestions.
+
+### 📌 Inline CodeLens Hints
+
+Opt in with `memoryops.enableCodeLens` to see how many memories reference the file you're editing, right at the top of the editor. Click the lens to surface them.
+
+### 🔄 Resilient Connectivity
+
+Read-only requests automatically retry on transient backend hiccups with exponential backoff. When a connection fails you get one-click **Reconnect** from both the notification and the status bar.
+
+### 🚀 Guided Onboarding
+
+A built-in Getting Started walkthrough opens on first install and walks you through connecting, authenticating, and verifying — re-openable any time via `MemoryOps: Open Getting Started Walkthrough`.
+
 ---
 
 ## Getting Started
@@ -66,6 +82,9 @@ Select multiple memories and pin, unpin, or delete them in one action.
 | `memoryops.sidebarPageSize` | `20` | Memories per page in the sidebar (1–100) |
 | `memoryops.includeWorkspacePool` | `false` | Include workspace-published memories in search |
 | `memoryops.defaultAgentId` | `vscode` | Agent identifier for observations saved from VS Code |
+| `memoryops.maxRetries` | `3` | Auto-retries for read-only requests on transient failures (0–10; `0` disables) |
+| `memoryops.retryBackoffMs` | `500` | Base delay (ms) for exponential backoff between retries (0–10000) |
+| `memoryops.enableCodeLens` | `false` | Show an inline CodeLens with the count of memories referencing the current file |
 
 ---
 
@@ -96,6 +115,9 @@ All commands are available from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift
 | `MemoryOps: Pin / Unpin Memory` | Toggle memory pinning |
 | `MemoryOps: Delete Memory` | Delete a memory |
 | `MemoryOps: Copy Memory Content` | Copy memory content to clipboard |
+| `MemoryOps: Show Memories Referencing Current File` | Find memories related to the active file |
+| `MemoryOps: Reconnect` | Re-establish the backend connection |
+| `MemoryOps: Open Getting Started Walkthrough` | Reopen the onboarding walkthrough |
 | `MemoryOps: Open Settings` | Open extension settings |
 
 ---

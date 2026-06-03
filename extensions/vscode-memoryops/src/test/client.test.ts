@@ -13,6 +13,9 @@ const CONFIG = {
   sidebarPageSize: 20,
   includeWorkspacePool: false,
   defaultAgentId: "vscode",
+  maxRetries: 0,
+  retryBackoffMs: 0,
+  enableCodeLens: false,
 };
 
 test("promoteMemory issues a workspace-scoped POST and normalizes the response", async () => {
@@ -200,6 +203,60 @@ test("submitMemoryFeedback sends a POST with feedback fields", async () => {
   }
 });
 
+test("searchMemory retries transient 503s on idempotent reads and eventually succeeds", async () => {
+  let attempts = 0;
+  const restoreFetch = mockFetch(async () => {
+    attempts++;
+    if (attempts < 3) {
+      return jsonResponse({ detail: "temporarily unavailable" }, 503);
+    }
+    return jsonResponse({ results: [{ id: "mem-9", content: "hit", score: 0.9 }] });
+  });
+
+  try {
+    const client = new MemoryOpsClient({ ...CONFIG, maxRetries: 3, retryBackoffMs: 1 });
+    const results = await client.searchMemory("query", 5);
+
+    assert.equal(attempts, 3);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].id, "mem-9");
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("retries are exhausted and the last error is surfaced", async () => {
+  let attempts = 0;
+  const restoreFetch = mockFetch(async () => {
+    attempts++;
+    return jsonResponse({ detail: "still down" }, 503);
+  });
+
+  try {
+    const client = new MemoryOpsClient({ ...CONFIG, maxRetries: 2, retryBackoffMs: 1 });
+    await assert.rejects(() => client.searchMemory("query", 5), /MemoryOps 503/);
+    assert.equal(attempts, 3); // initial attempt + 2 retries
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("mutating writes are never retried even on transient failures", async () => {
+  let attempts = 0;
+  const restoreFetch = mockFetch(async () => {
+    attempts++;
+    return jsonResponse({ detail: "down" }, 503);
+  });
+
+  try {
+    const client = new MemoryOpsClient({ ...CONFIG, maxRetries: 5, retryBackoffMs: 1 });
+    await assert.rejects(() => client.updateMemory("mem-1", { pinned: true }), /MemoryOps 503/);
+    assert.equal(attempts, 1); // no retry for PATCH
+  } finally {
+    restoreFetch();
+  }
+});
+
 function mockFetch(handler: (url: string, init?: RequestInit) => Promise<Response> | Response): () => void {
   const originalFetch = globalThis.fetch;
 
@@ -218,9 +275,9 @@ function mockFetch(handler: (url: string, init?: RequestInit) => Promise<Respons
   };
 }
 
-function jsonResponse(value: unknown): Response {
+function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
-    status: 200,
+    status,
     headers: {
       "Content-Type": "application/json",
     },

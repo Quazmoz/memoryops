@@ -5,6 +5,21 @@ All notable changes to the MemoryOps VS Code extension will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-03
+
+### Added
+
+- **Getting Started walkthrough** — a guided, four-step onboarding (connect backend → authenticate → test connection → explore) that opens automatically on first install when the extension is not yet configured. Re-openable via `MemoryOps: Open Getting Started Walkthrough`.
+- **`@memoryops` Copilot Chat participant** — query your workspace conversationally from Copilot Chat. Supports `/search` (default) and `/retrieve` (packed, token-budgeted context) slash commands, with "Open in editor" buttons and follow-up suggestions. No-op when no chat-capable client is installed.
+- **Inline CodeLens hints** — opt-in (`memoryops.enableCodeLens`) lens at the top of files showing how many memories reference the current file; click to surface them. Results are cached per file for 60s.
+- **`MemoryOps: Reconnect`** — drop the cached client and re-establish the connection. Connection failures now offer **Reconnect** / **Open Settings** actions, and the status bar item becomes a one-click reconnect.
+- **`MemoryOps: Show Memories Referencing Current File`** — find memories related to the active file.
+
+### Changed
+
+- **Automatic retry with exponential backoff** — read-only requests (search, retrieve, list, health) are retried on transient failures (timeouts, network errors, 5xx/429). Mutating writes are never auto-retried. Tunable via `memoryops.maxRetries` and `memoryops.retryBackoffMs`.
+- **Command Palette hygiene** — selection/editor-scoped commands (`Save Selection as Observation`, `Retrieve Context for Current File`, `Insert Retrieval Context`, `Show Memories Referencing Current File`) now only appear when an editor is open / has a selection.
+
 ## [0.2.0] - 2026-06-03
 
 ### Added

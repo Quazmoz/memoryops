@@ -2,7 +2,7 @@
   "name": "memoryops-vscode",
   "displayName": "MemoryOps",
   "description": "Bring governed MemoryOps agent memory into VS Code.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "quazmoz",
   "author": {
     "name": "Quazmoz",
@@ -206,6 +206,24 @@
         "title": "MemoryOps: Set API Key (Secure)",
         "category": "MemoryOps",
         "icon": "$(key)"
+      },
+      {
+        "command": "memoryops.reconnect",
+        "title": "MemoryOps: Reconnect",
+        "category": "MemoryOps",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "memoryops.showMemoriesForFile",
+        "title": "MemoryOps: Show Memories Referencing Current File",
+        "category": "MemoryOps",
+        "icon": "$(references)"
+      },
+      {
+        "command": "memoryops.openWalkthrough",
+        "title": "MemoryOps: Open Getting Started Walkthrough",
+        "category": "MemoryOps",
+        "icon": "$(rocket)"
       }
     ],
     "keybindings": [
@@ -228,6 +246,24 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "memoryops.saveSelectionAsObservation",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "memoryops.retrieveContextForCurrentFile",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "memoryops.insertContext",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "memoryops.showMemoriesForFile",
+          "when": "editorIsOpen"
+        }
+      ],
       "view/title": [
         {
           "command": "memoryops.refreshMemories",
@@ -332,6 +368,11 @@
           "command": "memoryops.retrieveContextForCurrentFile",
           "when": "editorFocus",
           "group": "memoryops@2"
+        },
+        {
+          "command": "memoryops.showMemoriesForFile",
+          "when": "editorFocus",
+          "group": "memoryops@3"
         }
       ]
     },
@@ -393,9 +434,101 @@
           "type": "string",
           "default": "vscode",
           "description": "Agent identifier used when saving observations from VS Code."
+        },
+        "memoryops.maxRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Number of times to automatically retry read-only requests (search, retrieve, list, health) on transient failures (timeouts, network errors, 5xx/429). Set to 0 to disable retries."
+        },
+        "memoryops.retryBackoffMs": {
+          "type": "number",
+          "default": 500,
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "Base delay in milliseconds for exponential backoff between retries. Each retry waits roughly base × 2^(attempt-1) with light jitter, capped at 8s."
+        },
+        "memoryops.enableCodeLens": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show an inline CodeLens at the top of files indicating how many MemoryOps memories reference the current file. Issues a (cached) search request per file."
         }
       }
-    }
+    },
+    "chatParticipants": [
+      {
+        "id": "memoryops.chat",
+        "name": "memoryops",
+        "fullName": "MemoryOps",
+        "description": "Query your MemoryOps workspace memories",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "search",
+            "description": "Search your MemoryOps workspace for matching memories"
+          },
+          {
+            "name": "retrieve",
+            "description": "Retrieve token-budgeted packed context for a prompt"
+          }
+        ]
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "memoryops.gettingStarted",
+        "title": "Get Started with MemoryOps",
+        "description": "Connect VS Code to your MemoryOps backend and start working with governed agent memory.",
+        "steps": [
+          {
+            "id": "memoryops.configure",
+            "title": "Connect your backend",
+            "description": "Set your API URL and workspace ID.\n[Open MemoryOps Settings](command:memoryops.openSettings)",
+            "media": {
+              "markdown": "media/walkthroughs/configure.md"
+            },
+            "completionEvents": [
+              "onSettingChanged:memoryops.workspaceId"
+            ]
+          },
+          {
+            "id": "memoryops.apiKey",
+            "title": "Authenticate securely",
+            "description": "Store your workspace API key in the OS keychain.\n[Set API Key (Secure)](command:memoryops.setApiKey)",
+            "media": {
+              "markdown": "media/walkthroughs/api-key.md"
+            },
+            "completionEvents": [
+              "onCommand:memoryops.setApiKey"
+            ]
+          },
+          {
+            "id": "memoryops.testConnection",
+            "title": "Verify the connection",
+            "description": "Confirm the extension can reach and authenticate with your backend.\n[Test Connection](command:memoryops.testConnection)",
+            "media": {
+              "markdown": "media/walkthroughs/test-connection.md"
+            },
+            "completionEvents": [
+              "onCommand:memoryops.testConnection"
+            ]
+          },
+          {
+            "id": "memoryops.explore",
+            "title": "Start using your memories",
+            "description": "Browse, search, capture, and retrieve memories.\n[Open MemoryOps View](command:workbench.view.extension.memoryops)",
+            "media": {
+              "markdown": "media/walkthroughs/explore.md"
+            },
+            "completionEvents": [
+              "onCommand:memoryops.searchMemory",
+              "onCommand:memoryops.refreshMemories"
+            ]
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
