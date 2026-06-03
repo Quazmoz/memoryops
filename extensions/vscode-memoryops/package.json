@@ -172,6 +172,18 @@
         "title": "MemoryOps: Filter and Sort Sidebar",
         "category": "MemoryOps",
         "icon": "$(filter)"
+      },
+      {
+        "command": "memoryops.mergeMemory",
+        "title": "MemoryOps: Merge Memory",
+        "category": "MemoryOps",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "memoryops.bulkOperations",
+        "title": "MemoryOps: Bulk Operations",
+        "category": "MemoryOps",
+        "icon": "$(checklist)"
       }
     ],
     "menus": {
@@ -195,6 +207,11 @@
           "command": "memoryops.setFilterSort",
           "when": "view == memoryops.memories",
           "group": "navigation@4"
+        },
+        {
+          "command": "memoryops.bulkOperations",
+          "when": "view == memoryops.memories",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -257,6 +274,11 @@
           "command": "memoryops.deleteMemory",
           "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
           "group": "9_destructive@1"
+        },
+        {
+          "command": "memoryops.mergeMemory",
+          "when": "view == memoryops.memories && viewItem =~ /\\.semantic\\./",
+          "group": "2_manage@3"
         }
       ]
     },

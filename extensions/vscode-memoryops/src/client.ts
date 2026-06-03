@@ -136,6 +136,11 @@ export interface MemoryUpdatePatch {
   importance_score?: number;
 }
 
+export interface BulkOperationResult {
+  affected: number;
+  ids: string[];
+}
+
 export interface RetrievalMemory extends MemoryUnit {
   [key: string]: unknown;
 }
@@ -267,6 +272,39 @@ export class MemoryOpsClient {
     });
 
     return expectMemoryUnit(response, "MemoryOps returned an unexpected published memory response.");
+  }
+
+  async mergeMemory(sourceId: string, targetId: string): Promise<MemoryUnit> {
+    const response = await this.request(`/v1/memory/merge${queryString({ workspace_id: this.config.workspaceId })}`, {
+      method: "POST",
+      authenticated: true,
+      body: {
+        source_id: sourceId,
+        target_id: targetId,
+      },
+    });
+
+    return expectMemoryUnit(response, "MemoryOps returned an unexpected merge response.");
+  }
+
+  async bulkOperation(ids: string[], operation: "pin" | "unpin" | "delete"): Promise<BulkOperationResult> {
+    const response = await this.request(`/v1/memory/bulk${queryString({ workspace_id: this.config.workspaceId })}`, {
+      method: "POST",
+      authenticated: true,
+      body: {
+        ids,
+        operation,
+      },
+    });
+
+    if (!isRecord(response)) {
+      return { affected: 0, ids: [] };
+    }
+
+    return {
+      affected: numberOrDefault(response.affected, 0),
+      ids: stringArrayOrUndefined(response.ids) ?? [],
+    };
   }
 
   async getMemoryHistory(id: string): Promise<MemoryVersion[]> {

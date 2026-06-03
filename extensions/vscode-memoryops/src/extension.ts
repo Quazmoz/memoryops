@@ -73,6 +73,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("memoryops.searchMemoryInline", searchMemoryInline),
     vscode.commands.registerCommand("memoryops.editMemoryInline", editMemoryInline),
     vscode.commands.registerCommand("memoryops.submitFeedbackInline", submitFeedbackInline),
+    vscode.commands.registerCommand("memoryops.mergeMemory", mergeMemory),
+    vscode.commands.registerCommand("memoryops.bulkOperations", bulkOperations),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (!event.affectsConfiguration("memoryops")) {
         return;
@@ -848,6 +850,170 @@ async function editMemory(item?: unknown): Promise<void> {
     memoryTreeProvider.updateMemory(updated);
     void vscode.window.showInformationMessage("MemoryOps memory importance score updated.");
   }
+}
+
+async function mergeMemory(item?: unknown): Promise<void> {
+  const source = await resolveMemorySelection(item, "MemoryOps: Merge Memory — Select Source");
+  if (!source?.id) {
+    void vscode.window.showWarningMessage("Select a MemoryOps memory to merge from.");
+    return;
+  }
+
+  if (source.memory_type && source.memory_type !== "semantic") {
+    void vscode.window.showWarningMessage("Only semantic memories can be merged. Promote this memory first.");
+    return;
+  }
+
+  const memories = memoryTreeProvider.getMemories();
+  const candidates = memories.filter((m) => m.id && m.id !== source.id && (!m.memory_type || m.memory_type === "semantic"));
+
+  if (candidates.length === 0) {
+    void vscode.window.showWarningMessage("No other semantic memories available to merge with.");
+    return;
+  }
+
+  const targetPick = await vscode.window.showQuickPick(
+    candidates.map((memory) => ({
+      label: memoryLabel(memory),
+      description: [memory.memory_type, memory.scope_visibility].filter(Boolean).join(" — "),
+      detail: memory.content ? truncate(firstLine(memory.content), 160) : undefined,
+      memory,
+    })),
+    {
+      title: "MemoryOps: Merge Memory — Select Target",
+      placeHolder: "Select the target memory to merge into",
+      matchOnDescription: true,
+      matchOnDetail: true,
+    },
+  );
+
+  if (!targetPick) {
+    return;
+  }
+
+  const target = targetPick.memory;
+
+  const confirmed = await vscode.window.showWarningMessage(
+    `Merge "${truncate(firstLine(source.content ?? source.id ?? "source"), 50)}" into "${truncate(firstLine(target.content ?? target.id ?? "target"), 50)}"? The source memory will be removed.`,
+    { modal: true },
+    "Merge",
+  );
+
+  if (confirmed !== "Merge") {
+    return;
+  }
+
+  const { client, missing } = getClient();
+  if (missing.length > 0) {
+    await promptForMissingConfig(missing);
+    return;
+  }
+
+  const merged = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Merging MemoryOps memories...",
+      cancellable: false,
+    },
+    () => client.mergeMemory(source.id!, target.id!),
+  );
+
+  memoryTreeProvider.removeMemory(source.id);
+  memoryTreeProvider.updateMemory(merged);
+
+  const action = await vscode.window.showInformationMessage("MemoryOps memories merged successfully.", "Open Merged Memory");
+  if (action === "Open Merged Memory") {
+    await openMarkdownDocument(formatMemoryMarkdown(merged));
+  }
+}
+
+async function bulkOperations(): Promise<void> {
+  const { client, missing } = getClient();
+  if (missing.length > 0) {
+    await promptForMissingConfig(missing);
+    return;
+  }
+
+  const memories = memoryTreeProvider.getMemories();
+  if (memories.length === 0) {
+    void vscode.window.showWarningMessage("Load or search MemoryOps memories first.");
+    return;
+  }
+
+  const selections = await vscode.window.showQuickPick(
+    memories.filter((m) => m.id).map((memory) => ({
+      label: memoryLabel(memory),
+      description: [
+        memory.pinned ? "📌 pinned" : undefined,
+        memory.memory_type,
+        memory.scope_visibility,
+      ].filter(Boolean).join(" — "),
+      detail: memory.content ? truncate(firstLine(memory.content), 160) : undefined,
+      memory,
+      picked: false,
+    })),
+    {
+      title: "MemoryOps: Bulk Operations — Select Memories",
+      placeHolder: "Select memories to operate on",
+      canPickMany: true,
+      matchOnDescription: true,
+      matchOnDetail: true,
+    },
+  );
+
+  if (!selections || selections.length === 0) {
+    return;
+  }
+
+  const ids = selections.map((s) => s.memory.id!).filter((id) => id);
+
+  const operation = await vscode.window.showQuickPick(
+    [
+      { label: "📌 Pin Selected", value: "pin" as const },
+      { label: "📍 Unpin Selected", value: "unpin" as const },
+      { label: "🗑️ Delete Selected", value: "delete" as const },
+    ],
+    {
+      title: `MemoryOps: Bulk Operation — ${ids.length} memories selected`,
+      placeHolder: "Choose an operation",
+    },
+  );
+
+  if (!operation) {
+    return;
+  }
+
+  if (operation.value === "delete") {
+    const confirmed = await vscode.window.showWarningMessage(
+      `Delete ${ids.length} MemoryOps memories? This cannot be undone easily.`,
+      { modal: true },
+      "Delete All",
+    );
+    if (confirmed !== "Delete All") {
+      return;
+    }
+  }
+
+  const result = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `MemoryOps: ${operation.label.replace(/^\S+\s/, "")}...`,
+      cancellable: false,
+    },
+    () => client.bulkOperation(ids, operation.value),
+  );
+
+  if (operation.value === "delete") {
+    for (const id of ids) {
+      memoryTreeProvider.removeMemory(id);
+    }
+  } else {
+    void refreshMemories();
+  }
+
+  void vscode.window.showInformationMessage(
+    `MemoryOps bulk ${operation.value}: ${result.affected} memories affected.`,
+  );
 }
 
 async function submitFeedback(item?: unknown): Promise<void> {
