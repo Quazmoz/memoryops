@@ -152,7 +152,9 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
           break;
         }
         case "copy": {
-          vscode.env.clipboard.writeText(data.content);
+          const memory = this._memories.find((m) => m.id === data.id);
+          const content = typeof data.content === "string" ? data.content : memory?.content ?? "";
+          vscode.env.clipboard.writeText(content);
           vscode.window.showInformationMessage("Memory content copied to clipboard.");
           break;
         }
@@ -195,7 +197,14 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
   }
 
   public removeMemory(id: string): void {
+    const before = this._memories.length;
     this._memories = this._memories.filter((m) => m.id !== id);
+    if (this._mode === "recent" && this._memories.length < before) {
+      this._recentTotal = Math.max(this._memories.length, this._recentTotal - 1);
+      this._statusMessage = this._memories.length > 0
+        ? `Showing ${this._memories.length} of ${this._recentTotal} memories.`
+        : "No memories returned.";
+    }
     this.updateWebview();
   }
 
@@ -204,7 +213,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
   }
 
   public refreshList(): void {
-    vscode.commands.executeCommand("memoryops.refreshMemories");
+    vscode.commands.executeCommand("memoryops.refreshMemories", { promptOnMissingConfig: false });
   }
 
   public updateWebview(): void {
@@ -1036,7 +1045,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
               \${feedbackHtml}
             </div>
             <div class="footer-right">
-              <button class="action-btn" onclick="event.stopPropagation(); copyContent(\`\${memory.content ? escapeHtml(memory.content) : ""}\`)" title="Copy Content">
+              <button class="action-btn" onclick="event.stopPropagation(); copyContent('\${memory.id}')" title="Copy Content">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M4 4h8v1H4V4zm0 2h8v1H4V6zm0 2h8v1H4V8zm-2-6h12v12H2V2zm1 1v10h10V3H3z"/></svg>
               </button>
               <button class="action-btn" onclick="event.stopPropagation(); editMemoryField('\${memory.id}')" title="Edit Memory">
@@ -1089,8 +1098,8 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
       vscode.postMessage({ type: "delete", id });
     };
 
-    window.copyContent = function(content) {
-      vscode.postMessage({ type: "copy", content: unescapeHtml(content) });
+    window.copyContent = function(id) {
+      vscode.postMessage({ type: "copy", id });
     };
 
     window.editMemoryField = function(id) {

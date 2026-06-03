@@ -705,8 +705,7 @@ async function editMemory(item?: unknown): Promise<void> {
   }
 
   if (option === "📝 Edit Content") {
-    const tmpDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.tmpdir();
-    const tmpPath = path.join(tmpDir, `.memoryops-edit-${memory.id}.md`);
+    const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memory.id}.md`);
     try {
       fs.writeFileSync(tmpPath, memory.content ?? "");
     } catch (err) {
@@ -1035,6 +1034,7 @@ async function setFilterSort(): Promise<void> {
 async function searchMemoryInline(query: string): Promise<void> {
   const { client, config, missing } = getClient();
   if (missing.length > 0) {
+    memoryTreeProvider.setMessage(`Configure MemoryOps settings to search: ${missing.join(", ")}`);
     return;
   }
 
@@ -1087,8 +1087,7 @@ async function editMemoryInlineHelper(id: string, field: string): Promise<void> 
   }
 
   if (option === "📝 Edit Content" || option === "content") {
-    const tmpDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.tmpdir();
-    const tmpPath = path.join(tmpDir, `.memoryops-edit-${memory.id}.md`);
+    const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memory.id}.md`);
     try {
       fs.writeFileSync(tmpPath, memory.content ?? "");
     } catch (err) {
