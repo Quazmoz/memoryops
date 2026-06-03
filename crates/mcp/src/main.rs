@@ -1,15 +1,14 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use common::{
-    build_embedding_provider, build_llm_provider, config::AppConfig, telemetry::init_telemetry,
-    AppState,
+    build_embedding_provider, build_llm_provider, config::AppConfig,
+    crypto::app_secret_key_from_env, db::connect_pool, telemetry::init_telemetry, AppState,
 };
 use mcp::{
     server::{McpServer, RuntimeBackend},
     transport, MCP_PROTOCOL_VERSION,
 };
 use qdrant_client::Qdrant;
-use sqlx::postgres::PgPoolOptions;
 use tokio::sync::Semaphore;
 
 #[tokio::main]
@@ -65,14 +64,10 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
     let redis_url = std::env::var("REDIS_URL").map_err(|_| anyhow::anyhow!("REDIS_URL not set"))?;
     let qdrant_url =
         std::env::var("QDRANT_URL").map_err(|_| anyhow::anyhow!("QDRANT_URL not set"))?;
-    let github_webhook_secret = webhook_secret_from_env("GITHUB_WEBHOOK_SECRET")?;
+    let app_secret_key = app_secret_key_from_env()
+        .map_err(|_| anyhow::anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
 
-    let db = PgPoolOptions::new()
-        .max_connections(config.database.max_connections)
-        .min_connections(config.database.min_connections)
-        .acquire_timeout(Duration::from_secs(config.database.connect_timeout_secs))
-        .connect(&database_url)
-        .await?;
+    let db = connect_pool(&database_url, &config.database).await?;
     let redis = {
         let cfg = deadpool_redis::Config::from_url(&redis_url);
         cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))
@@ -85,19 +80,12 @@ async fn build_state(config: AppConfig) -> anyhow::Result<AppState> {
         redis,
         qdrant,
         processor_semaphore: Arc::new(Semaphore::new(
-            usize::try_from(config.database.max_connections).unwrap_or(10),
+            config.processor.fast_path_concurrency.max(1),
         )),
         embedding_provider: build_embedding_provider(&config),
         llm_provider: build_llm_provider(&config),
         config: Arc::new(config),
-        github_webhook_secret,
+        app_secret_key: Arc::new(app_secret_key),
         trusted_proxy_cidrs: Arc::new(Vec::new()),
     })
-}
-
-fn webhook_secret_from_env(name: &'static str) -> anyhow::Result<String> {
-    match std::env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(anyhow::anyhow!(format!("{name} must be set"))),
-    }
 }

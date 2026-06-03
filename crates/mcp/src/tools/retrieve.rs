@@ -1,4 +1,4 @@
-use common::{error::AppResult, models::WorkspaceConfig, AppError, AppState};
+use common::{error::AppResult, services::WorkspaceConfigService, AppError, AppState};
 use retrieval::{
     dto::{SearchMode, SearchRequest},
     search::hybrid,
@@ -106,7 +106,10 @@ pub async fn run(
         include_workspace_pool: input.include_workspace_pool,
         inherited_workspace_pool_agent_ids: Vec::new(),
     };
-    request.apply_workspace_config(&load_workspace_config(state, workspace_id).await?);
+    let workspace_config = WorkspaceConfigService::new(state.db.clone())
+        .load(workspace_id)
+        .await?;
+    request.apply_workspace_config(&workspace_config);
     let results = hybrid::hybrid_search(state, &request, limit).await?;
     let min_score = input.min_score.max(0.0);
     let token_budget = state.config.retrieval.default_token_budget;
@@ -145,24 +148,6 @@ async fn submit_feedback_batch(
     }
 
     Ok(())
-}
-
-pub(super) async fn load_workspace_config(
-    state: &AppState,
-    workspace_id: Uuid,
-) -> AppResult<WorkspaceConfig> {
-    let value = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT config FROM workspaces WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(workspace_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace:{workspace_id}"),
-    })?;
-
-    Ok(serde_json::from_value::<WorkspaceConfig>(value).unwrap_or_default())
 }
 
 async fn load_enabled_skills(
@@ -225,7 +210,7 @@ pub fn pack_results(
             .memory
             .token_count
             .and_then(|tokens| usize::try_from(tokens).ok())
-            .unwrap_or_else(|| estimate_tokens(&result.memory.content));
+            .unwrap_or_else(|| estimate_tokens_lossy(&result.memory.content));
         if total_tokens.saturating_add(estimated_tokens) > token_budget {
             continue;
         }
@@ -240,8 +225,11 @@ pub fn pack_results(
     packed
 }
 
-fn estimate_tokens(content: &str) -> usize {
-    (content.len() / 4).max(1)
+fn estimate_tokens_lossy(content: &str) -> usize {
+    common::tokens::estimate_tokens(content).unwrap_or_else(|error| {
+        tracing::warn!(error = ?error, "failed to estimate tokens with shared tokenizer; using byte heuristic");
+        (content.len() / 4).max(1)
+    })
 }
 
 fn default_limit() -> u32 {

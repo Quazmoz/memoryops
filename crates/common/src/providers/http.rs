@@ -10,10 +10,16 @@ use crate::{
 };
 
 fn client_with_timeout(timeout_secs: u64) -> Client {
-    Client::builder()
+    match Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
         .build()
-        .unwrap_or_default()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            tracing::warn!(error = ?error, timeout_secs, "failed to build reqwest client with timeout; using default client");
+            Client::new()
+        }
+    }
 }
 
 pub struct OllamaProvider {
@@ -248,9 +254,10 @@ impl OpenAiCompatibleProvider {
         model: impl Into<String>,
         api_key: Option<String>,
         extra_headers: std::collections::BTreeMap<String, String>,
+        timeout_secs: u64,
     ) -> Self {
         Self {
-            client: Client::new(),
+            client: client_with_timeout(timeout_secs),
             api_key,
             model: model.into(),
             base_url: base_url.into().trim_end_matches('/').to_owned(),

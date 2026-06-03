@@ -30,3 +30,4 @@ validator.workspace = true
 
 [dev-dependencies]
 proptest = "1"
+tiktoken-rs.workspace = true

@@ -1,9 +1,10 @@
-import { Activity, AlertCircle, BookOpen, CheckCircle2 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { Activity, AlertCircle, AlertTriangle, BookOpen, CheckCircle2, Check, X, Search, Keyboard } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
 
 import { CodeBlock } from "../components/CodeBlock";
-import { getSystemHealth, type SystemHealthResponse } from "../api/health";
+import type { SystemHealthResponse } from "../api/health";
 import { HelpTooltip, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
+import { useSystemHealth, useWorkspaceIntegrations } from "../hooks/use-live-query";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
@@ -26,16 +27,48 @@ const SECTIONS = [
 ] as const;
 
 export function GuideView() {
-  const workspaceId = useAppStore((s) => s.workspaceId);
-  const apiKey = useAppStore((s) => s.apiKey);
+  const workspaceId = useAppStore((s: any) => s.workspaceId);
+  const apiKey = useAppStore((s: any) => s.apiKey);
   const hasAuth = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<(typeof SECTIONS[number])[]>([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
 
-  const healthQuery = useQuery({
-    queryKey: ["system-health"],
-    queryFn: getSystemHealth,
-    refetchInterval: 30_000,
-    enabled: hasAuth,
-  });
+  const healthQuery = useSystemHealth(hasAuth);
+  const integrationsQuery = useWorkspaceIntegrations(workspaceId, hasAuth);
+
+  // Search functionality
+  const filteredSections = useMemo(() => {
+    if (!searchQuery.trim()) return SECTIONS;
+    const query = searchQuery.toLowerCase();
+    return SECTIONS.filter((section) =>
+      section.label.toLowerCase().includes(query)
+    );
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (searchQuery.trim()) {
+      setSearchResults([...filteredSections]);
+      setShowSearchResults(true);
+    } else {
+      setSearchResults([]);
+      setShowSearchResults(false);
+    }
+  }, [searchQuery, filteredSections]);
+
+  // Integration status helper
+  const getIntegrationStatus = (source: string) => {
+    if (!integrationsQuery.data) return { status: "unknown", configured: false, integration: undefined as undefined };
+    const integration = integrationsQuery.data.find((i: any) => i.source === source);
+    if (!integration) return { status: "not-configured", configured: false, integration: undefined as undefined };
+    if (integration.status === "active" && integration.errors_24h === 0) {
+      return { status: "healthy", configured: true, integration };
+    }
+    if (integration.status === "active" && integration.errors_24h > 0) {
+      return { status: "degraded", configured: true, integration };
+    }
+    return { status: "failing", configured: true, integration };
+  };
 
   return (
     <div className="mx-auto max-w-7xl">
@@ -45,6 +78,45 @@ export function GuideView() {
       </header>
 
       {hasAuth ? <HealthStrip health={healthQuery.data} loading={healthQuery.isLoading} /> : null}
+
+      {/* Search Bar */}
+      <div className="mb-6 relative">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" aria-hidden="true" />
+          <input
+            type="text"
+            placeholder="Search guide sections..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onFocus={() => setShowSearchResults(searchQuery.trim().length > 0)}
+            onBlur={() => setTimeout(() => setShowSearchResults(false), 200)}
+            className="w-full rounded-lg border border-line bg-white px-10 py-2.5 text-sm text-ink placeholder:text-ink/40 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+          />
+          <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1 text-xs text-ink/40">
+            <Keyboard className="h-3 w-3" aria-hidden="true" />
+            <span>/</span>
+          </div>
+        </div>
+
+        {/* Search Results Dropdown */}
+        {showSearchResults && searchResults.length > 0 && (
+          <div className="absolute z-10 mt-2 w-full rounded-lg border border-line bg-white shadow-lg">
+            <ul className="max-h-64 overflow-y-auto py-1">
+              {searchResults.map((section) => (
+                <li key={section.id}>
+                  <a
+                    href={`#${section.id}`}
+                    onClick={() => setSearchQuery("")}
+                    className="block px-4 py-2 text-sm text-ink/70 hover:bg-soft hover:text-ink"
+                  >
+                    {section.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
 
       <div className="mt-6 grid gap-8 lg:grid-cols-[220px_1fr]">
         <aside className="hidden lg:block">
@@ -75,6 +147,26 @@ export function GuideView() {
               Connect your AI tools — VS Code/Copilot, Claude Desktop, OpenWebUI, or any HTTP client — using a workspace
               ID and API key. All data stays on your infrastructure.
             </p>
+            <div className="my-6 grid gap-4 md:grid-cols-2">
+              <div className="rounded-lg border border-line bg-soft/50 p-4">
+                <h3 className="font-semibold text-ink flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-blue-500" />
+                  Episodic Memory
+                </h3>
+                <p className="mt-2 text-xs text-ink/75 leading-relaxed">
+                  Discrete, point-in-time experiences or events (e.g., git commits, Slack messages, deployment logs, or agent observations). These are highly time-sensitive, subject to mathematical decay, and act as raw inputs to the memory engine.
+                </p>
+              </div>
+              <div className="rounded-lg border border-line bg-soft/50 p-4">
+                <h3 className="font-semibold text-ink flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  Semantic Memory
+                </h3>
+                <p className="mt-2 text-xs text-ink/75 leading-relaxed">
+                  Durable, consolidated facts, rules, and workspace concepts (e.g., architectural guidelines or database connection limits). Version-controlled, immune to decay, and created manually or via the Promotion Pipeline (which clusters related episodic memories).
+                </p>
+              </div>
+            </div>
             <Callout>
               You will need a <strong>Workspace ID</strong> <HelpTooltip label="Workspace ID">Workspace boundary that MemoryOps uses to isolate memories, settings, and retrieval scope.</HelpTooltip> and an <strong>API Key</strong> <HelpTooltip label="API Key">Credential used by clients and tools to authenticate against the selected MemoryOps workspace.</HelpTooltip>. Set them in{" "}
               <a href="/settings" className="text-accent-strong underline underline-offset-2">Settings</a> to have them
@@ -96,7 +188,7 @@ export function GuideView() {
             </p>
           </Section>
 
-          <Section id="vscode" title="VS Code Extension — Coming Soon">
+          <Section id="vscode" title="VS Code Extension — Coming Soon" status={null}>
             <p>
               A first-party <strong>MemoryOps VS Code extension</strong> is planned. The goal is to bring workspace
               memory directly into the editor so coding agents and developers can retrieve relevant project context
@@ -123,7 +215,7 @@ export function GuideView() {
 }`} />
           </Section>
 
-          <Section id="claude-desktop" title="Claude Desktop (MCP)" tooltip="MCP lets MemoryOps expose memory read and write tools directly to compatible agent clients.">
+          <Section id="claude-desktop" title="Claude Desktop (MCP)" tooltip="MCP lets MemoryOps expose memory read and write tools directly to compatible agent clients." status={null}>
             <p>
               MemoryOps exposes an MCP server so Claude Desktop can read and write memories automatically during
               conversations. Add the server to your Claude Desktop configuration file.
@@ -202,7 +294,7 @@ export function GuideView() {
             </p>
           </Section>
 
-          <Section id="openwebui" title="OpenWebUI">
+          <Section id="openwebui" title="OpenWebUI" status={null}>
             <p>
               Add MemoryOps as an OpenWebUI function to enrich every chat message with memories retrieved from your
               workspace.
@@ -254,6 +346,41 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/query \\
               The response includes the new memory's <code className="inline-code">id</code>. Embedding and
               contradiction detection happen asynchronously in the background.
             </p>
+            <div className="mt-6 border-t border-line pt-6">
+              <h3 className="font-semibold text-ink text-sm">The MemoryOps Ingestion Pipeline</h3>
+              <p className="mt-1 text-xs text-ink/70">
+                The Ingestion Pipeline is the secure, high-throughput gateway of the MemoryOps control plane. It acts as an HMAC-validated receiver for developer workflow activity, translating raw tool actions into standardized memories.
+              </p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-lg border border-line bg-soft/30 p-3.5">
+                  <h4 className="text-xs font-semibold text-ink flex items-center gap-1.5">
+                    <span className="h-4 w-4 shrink-0 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[10px] font-bold">1</span>
+                    HMAC Security
+                  </h4>
+                  <p className="mt-1.5 text-xs text-ink/75 leading-relaxed">
+                    Incoming webhooks are verified via strict HMAC signature checks (e.g. <code>X-Hub-Signature-256</code> or <code>X-Slack-Signature</code>) using integration-specific secrets to prevent malicious probes.
+                  </p>
+                </div>
+                <div className="rounded-lg border border-line bg-soft/30 p-3.5">
+                  <h4 className="text-xs font-semibold text-ink flex items-center gap-1.5">
+                    <span className="h-4 w-4 shrink-0 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[10px] font-bold">2</span>
+                    Atomic Idempotency
+                  </h4>
+                  <p className="mt-1.5 text-xs text-ink/75 leading-relaxed">
+                    Duplicate webhook deliveries are rejected automatically. The ingestion transaction guarantees that a raw event is stored in PostgreSQL and enqueued in Redis Streams (<code>XADD</code>) atomically.
+                  </p>
+                </div>
+                <div className="rounded-lg border border-line bg-soft/30 p-3.5">
+                  <h4 className="text-xs font-semibold text-ink flex items-center gap-1.5">
+                    <span className="h-4 w-4 shrink-0 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[10px] font-bold">3</span>
+                    Decoupled Processing
+                  </h4>
+                  <p className="mt-1.5 text-xs text-ink/75 leading-relaxed">
+                    Webhooks immediately return <code>202 Accepted</code>. Asynchronous workers in the <code>processor</code> crate handle parsing, entity extraction, importance scoring, and vector indexing (Qdrant) in the background.
+                  </p>
+                </div>
+              </div>
+            </div>
           </Section>
 
           <Section id="retrieve" title="Search & Retrieve">
@@ -392,10 +519,14 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/import \\
 }`} />
             <p className="mt-4 font-medium text-ink">Common issues</p>
             <ul className="mt-2 grid gap-2 pl-4 text-sm text-ink/80" style={{ listStyleType: "disc" }}>
-              <li><strong>401 Unauthorized</strong> — Check that the <code className="inline-code">x-api-key</code> header is present and correct.</li>
-              <li><strong>Embeddings not updating</strong> — Verify the processor worker is running and Redis is reachable.</li>
-              <li><strong>No search results</strong> — Trigger a re-index from Settings to rebuild the vector index.</li>
-              <li><strong>MCP not connecting</strong> — Ensure <code className="inline-code">memoryops-mcp</code> is on your PATH and the env vars are set.</li>
+              <li><strong>401 Unauthorized</strong> — Check that the <code className="inline-code">x-api-key</code> header is present and correct. Regenerate keys from Settings if needed.</li>
+              <li><strong>Authentication failures</strong> — Verify your API key is valid for the workspace. Check the key hasn't been revoked or expired.</li>
+              <li><strong>Webhook signature mismatches</strong> — Ensure webhook secrets match between MemoryOps and the external service (GitHub, Slack, Jira, Linear). Check for trailing whitespace or encoding issues.</li>
+              <li><strong>Embeddings not updating</strong> — Verify the processor worker is running and Redis is reachable. Check the DLQ for failed embedding jobs.</li>
+              <li><strong>No search results</strong> — Trigger a re-index from Settings to rebuild the vector index. Ensure memories have been ingested and embeddings generated.</li>
+              <li><strong>MCP connection timeouts</strong> — Check the MCP server is running on the correct port (3003 for HTTP). Verify network connectivity and firewall settings.</li>
+              <li><strong>MCP not connecting</strong> — Ensure <code className="inline-code">memoryops-mcp</code> is on your PATH and the env vars are set correctly. Check stdio transport requires cargo in PATH.</li>
+              <li><strong>Rate limiting errors (429)</strong> — You've exceeded the rate limit for your workspace. Wait and retry, or increase limits in workspace config if needed.</li>
             </ul>
           </Section>
         </div>
@@ -404,15 +535,88 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/import \\
   );
 }
 
-function Section({ id, title, tooltip, children }: { id: string; title: string; tooltip?: string; children: React.ReactNode }) {
+type IntegrationStatus = "active" | "degraded" | "failing" | string;
+
+type IntegrationData = {
+  source: string;
+  last_event_at?: string | null;
+  events_24h: number;
+  errors_24h: number;
+  status: IntegrationStatus;
+};
+
+function Section({ id, title, tooltip, status, children }: { id: string; title: string; tooltip?: string; status?: { status: string; configured: boolean; integration: IntegrationData | undefined } | null; children: React.ReactNode }) {
   return (
     <section id={id} className="scroll-mt-6">
-      <h2 className="mb-4 inline-flex items-center gap-1.5 text-xl font-semibold text-ink">
+      <h2 className="mb-4 inline-flex items-center gap-2 text-xl font-semibold text-ink">
         <span>{title}</span>
         {tooltip ? <HelpTooltip label={title}>{tooltip}</HelpTooltip> : null}
+        {status && <IntegrationStatusIndicator status={status.status} configured={status.configured} integration={status.integration} />}
       </h2>
       <div className="prose-like grid gap-3 text-sm leading-relaxed text-ink/80">{children}</div>
     </section>
+  );
+}
+
+function IntegrationStatusIndicator({ status, configured, integration }: { status: string; configured: boolean; integration: IntegrationData | undefined }) {
+  if (status === "unknown" || !configured) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 cursor-help">
+            <X className="h-3 w-3" aria-hidden="true" />
+            Not configured
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>This integration is not configured yet.</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  if (status === "healthy") {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700 cursor-help">
+            <Check className="h-3 w-3" aria-hidden="true" />
+            Healthy
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {integration ? `Last event: ${integration.last_event_at ? new Date(integration.last_event_at).toLocaleString() : 'Never'} • ${integration.events_24h} events in 24h` : 'Configured and healthy'}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  if (status === "degraded") {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 cursor-help">
+            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+            Degraded
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {integration ? `${integration.errors_24h} errors in 24h • Check DLQ for details` : 'Partially configured with errors'}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 cursor-help">
+          <X className="h-3 w-3" aria-hidden="true" />
+          Failing
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        {integration ? 'Integration is failing • Check DLQ and logs' : 'Configuration error'}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

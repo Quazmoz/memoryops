@@ -164,7 +164,7 @@ export function IntegrationsView() {
         </Tooltip>
       </header>
 
-      <div className="flex border-b border-line" role="tablist" aria-label="Integrations sections">
+      <div className="flex overflow-x-auto thin-scrollbar border-b border-line" role="tablist" aria-label="Integrations sections">
         {tabs.map((tab) => (
           <Tooltip key={tab.id}>
             <TooltipTrigger asChild>
@@ -174,7 +174,7 @@ export function IntegrationsView() {
                 aria-selected={activeTab === tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "border-b-2 px-4 pb-2.5 pt-1.5 text-sm font-medium transition-colors",
+                  "shrink-0 whitespace-nowrap border-b-2 px-4 pb-2.5 pt-1.5 text-sm font-medium transition-colors",
                   activeTab === tab.id
                     ? "border-accent text-accent-strong"
                     : "border-transparent text-ink/55 hover:border-line hover:text-ink",

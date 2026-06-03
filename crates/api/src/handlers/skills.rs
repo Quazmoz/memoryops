@@ -3,6 +3,7 @@ use std::{collections::HashMap, time::Instant};
 use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -14,6 +15,7 @@ use super::require_workspace;
 
 const DEFAULT_SKILL_LIMIT: i64 = 50;
 const MAX_SKILL_LIMIT: i64 = 100;
+const MAX_SKILL_TEST_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct SkillListQuery {
@@ -96,10 +98,11 @@ pub async fn create_skill(
     validate_name(&request.name)?;
     validate_description(&request.description)?;
     validate_endpoint_url(&request.endpoint_url)?;
+    validate_endpoint_url_dns(&request.endpoint_url).await?;
     validate_schema(request.input_schema.as_ref(), "input_schema")?;
     validate_schema(request.output_schema.as_ref(), "output_schema")?;
     let auth_header = normalized_optional_text(request.auth_header.as_deref());
-    let auth_secret_enc = encrypted_secret(request.auth_secret.as_deref())?;
+    let auth_secret_enc = encrypted_secret(&state, request.auth_secret.as_deref())?;
     validate_auth_pair(auth_header.as_ref(), auth_secret_enc.as_ref())?;
 
     let skill = sqlx::query_as::<_, SkillResponse>(
@@ -196,6 +199,7 @@ pub async fn update_skill(
     }
     if let Some(endpoint_url) = &request.endpoint_url {
         validate_endpoint_url(endpoint_url)?;
+        validate_endpoint_url_dns(endpoint_url).await?;
     }
     validate_schema(request.input_schema.as_ref(), "input_schema")?;
     validate_schema(request.output_schema.as_ref(), "output_schema")?;
@@ -204,7 +208,7 @@ pub async fn update_skill(
         .auth_header
         .as_deref()
         .and_then(|value| normalized_optional_text(Some(value)));
-    let auth_secret_enc = encrypted_secret(request.auth_secret.as_deref())?;
+    let auth_secret_enc = encrypted_secret(&state, request.auth_secret.as_deref())?;
     if auth_secret_enc.is_some() && auth_header.is_none() {
         let existing_header = sqlx::query_scalar::<_, Option<String>>(
             "SELECT auth_header FROM workspace_skills WHERE workspace_id = $1 AND name = $2",
@@ -305,7 +309,8 @@ pub async fn get_skill_secret(
     let ciphertext = row.auth_secret_enc.ok_or_else(|| AppError::NotFound {
         resource: format!("workspace_skill_secret:{name}"),
     })?;
-    let decrypted = decrypt_secret_legacy_or_current(&ciphertext)?;
+    let decrypted =
+        decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), &ciphertext)?;
     persist_migrated_ciphertext(&state.db, id, &name, &decrypted).await?;
 
     Ok(Json(SkillSecretResponse {
@@ -501,11 +506,11 @@ fn normalized_optional_text(value: Option<&str>) -> Option<String> {
     })
 }
 
-fn encrypted_secret(value: Option<&str>) -> AppResult<Option<String>> {
+fn encrypted_secret(state: &AppState, value: Option<&str>) -> AppResult<Option<String>> {
     let Some(secret) = normalized_optional_text(value) else {
         return Ok(None);
     };
-    encrypt_secret(&secret).map(Some)
+    encrypt_secret(state.app_secret_key.as_ref().as_str(), &secret).map(Some)
 }
 
 async fn persist_migrated_ciphertext(
@@ -594,7 +599,8 @@ pub async fn test_skill(
         skill.auth_header.as_deref(),
         skill.auth_secret_enc.as_deref(),
     ) {
-        let decrypted = decrypt_secret_legacy_or_current(enc)?;
+        let decrypted =
+            decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), enc)?;
         persist_migrated_ciphertext(&state.db, id, &name, &decrypted).await?;
         req_builder = req_builder.header(header_name, decrypted.plaintext);
     }
@@ -649,10 +655,7 @@ pub async fn test_skill(
     match response {
         Ok(resp) => {
             let status = resp.status().as_u16();
-            let body: Value = resp
-                .json()
-                .await
-                .unwrap_or_else(|_| json!({ "error": "response was not JSON" }));
+            let body = read_skill_test_body(resp).await;
             Ok(Json(SkillTestResponse {
                 status,
                 latency_ms,
@@ -665,6 +668,30 @@ pub async fn test_skill(
             body: json!({ "error": error.to_string() }),
         })),
     }
+}
+
+async fn read_skill_test_body(response: reqwest::Response) -> Value {
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                return json!({ "error": format!("failed to read response body: {error}") })
+            }
+        };
+        if bytes.len().saturating_add(chunk.len()) > MAX_SKILL_TEST_RESPONSE_BYTES {
+            return json!({
+                "error": "response body exceeded size limit",
+                "limit_bytes": MAX_SKILL_TEST_RESPONSE_BYTES
+            });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    serde_json::from_slice::<Value>(&bytes)
+        .unwrap_or_else(|_| json!({ "error": "response was not JSON" }))
 }
 
 fn map_skill_insert_error(error: sqlx::Error) -> AppError {

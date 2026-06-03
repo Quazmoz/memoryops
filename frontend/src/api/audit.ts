@@ -1,7 +1,13 @@
 import { apiRequest, queryString } from "./client";
-import type { AuditEvent, AuditResponse } from "./types";
+import type { AuditResponse } from "./types";
 
-export async function listAuditEvents(workspaceId: string, limit: number, offset: number): Promise<AuditEvent[]> {
-  const response = await apiRequest<AuditResponse>(`/v1/workspaces/${workspaceId}/audit${queryString({ limit, offset })}`);
-  return response.items;
+export type AuditListParams = {
+  limit: number;
+  cursor?: string | null;
+};
+
+export async function listAuditEvents(workspaceId: string, params: AuditListParams): Promise<AuditResponse> {
+  return apiRequest<AuditResponse>(
+    `/v1/workspaces/${workspaceId}/audit${queryString({ limit: params.limit, after: params.cursor })}`,
+  );
 }

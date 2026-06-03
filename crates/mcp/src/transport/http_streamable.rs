@@ -1,4 +1,9 @@
-use std::{convert::Infallible, net::SocketAddr, sync::Arc};
+use std::{
+    convert::Infallible,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use axum::{
     extract::State,
@@ -20,11 +25,82 @@ use crate::{auth, server::SharedServer};
 
 const DEFAULT_PORT: u16 = 3003;
 const SESSION_HEADER: &str = "Mcp-Session-Id";
+const DEFAULT_SESSION_TTL_SECS: u64 = 30 * 60;
+const DEFAULT_MAX_SESSIONS: usize = 1024;
 
 #[derive(Clone)]
 struct HttpTransportState {
     server: SharedServer,
-    sessions: Arc<DashMap<Uuid, String>>,
+    sessions: Arc<DashMap<Uuid, SessionRecord>>,
+}
+
+#[derive(Debug, Clone)]
+struct SessionRecord {
+    token: String,
+    last_seen: Instant,
+}
+
+impl HttpTransportState {
+    fn prune_expired_sessions(&self) {
+        let now = Instant::now();
+        let ttl = session_ttl();
+        self.sessions
+            .retain(|_, session| now.duration_since(session.last_seen) <= ttl);
+    }
+
+    fn insert_session(&self, session_id: Uuid, token: String) -> Result<(), &'static str> {
+        self.prune_expired_sessions();
+        if self.sessions.len() >= max_sessions() {
+            return Err("too many active MCP sessions");
+        }
+
+        self.sessions.insert(
+            session_id,
+            SessionRecord {
+                token,
+                last_seen: Instant::now(),
+            },
+        );
+        Ok(())
+    }
+
+    fn validate_session_token(&self, session_id: Uuid, token: &str) -> Result<(), &'static str> {
+        let now = Instant::now();
+        let ttl = session_ttl();
+        let Some(mut session) = self.sessions.get_mut(&session_id) else {
+            return Err("invalid session ID");
+        };
+
+        if now.duration_since(session.last_seen) > ttl {
+            drop(session);
+            self.sessions.remove(&session_id);
+            return Err("invalid session ID");
+        }
+
+        if session.token != token {
+            return Err("invalid session credentials");
+        }
+
+        session.last_seen = now;
+        Ok(())
+    }
+
+    fn touch_session(&self, session_id: Uuid) -> bool {
+        let now = Instant::now();
+        let ttl = session_ttl();
+        let Some(mut session) = self.sessions.get_mut(&session_id) else {
+            return false;
+        };
+
+        if now.duration_since(session.last_seen) > ttl {
+            drop(session);
+            self.sessions.remove(&session_id);
+            return false;
+        }
+
+        session.last_seen = now;
+        true
+    }
 }
 
 /// Runs the MCP HTTP Streamable transport server.
@@ -71,6 +147,8 @@ async fn handle_mcp_post(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> axum::response::Response {
+    state.prune_expired_sessions();
+
     let token = match auth::header_bearer_token(&headers) {
         Some(token) => token,
         None => {
@@ -84,11 +162,8 @@ async fn handle_mcp_post(
     };
 
     if let Some(session_id) = session_id {
-        let Some(stored_token) = state.sessions.get(&session_id) else {
-            return bad_request("invalid session ID");
-        };
-        if stored_token.value() != &token {
-            return bad_request("invalid session credentials");
+        if let Err(message) = state.validate_session_token(session_id, &token) {
+            return bad_request(message);
         }
 
         if body.get("id").is_none() {
@@ -111,7 +186,9 @@ async fn handle_mcp_post(
     }
 
     let new_session_id = Uuid::now_v7();
-    state.sessions.insert(new_session_id, token.to_owned());
+    if let Err(message) = state.insert_session(new_session_id, token.to_owned()) {
+        return service_unavailable(message);
+    }
 
     if body.get("id").is_none() {
         let _ = state
@@ -138,7 +215,7 @@ async fn handle_mcp_get(
         Err(message) => return bad_request(message),
     };
 
-    if !state.sessions.contains_key(&session_id) {
+    if !state.touch_session(session_id) {
         return bad_request("invalid session ID");
     }
 
@@ -215,4 +292,30 @@ fn json_response(
 
 fn bad_request(message: &str) -> axum::response::Response {
     (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))).into_response()
+}
+
+fn service_unavailable(message: &str) -> axum::response::Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "error": message })),
+    )
+        .into_response()
+}
+
+fn session_ttl() -> Duration {
+    Duration::from_secs(
+        std::env::var("MCP_SESSION_TTL_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_SESSION_TTL_SECS),
+    )
+}
+
+fn max_sessions() -> usize {
+    std::env::var("MCP_MAX_SESSIONS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_SESSIONS)
 }

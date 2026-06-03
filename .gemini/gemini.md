@@ -13,7 +13,7 @@ with Postgres, Redis, and Qdrant as backing services.
 | Var | Notes |
 |-----|-------|
 | `APP_SECRET_KEY` | **Required, no default.** Min 32-char random string. Used for AES-256-GCM secret encryption. Generate with: `openssl rand -base64 32` |
-| `GITHUB_WEBHOOK_SECRET` | Defaults to `dev-placeholder` in dev — safe to omit locally |
+| Webhook signing secrets | Registered per workspace with the integrations API |
 | `VITE_MEMORYOPS_WORKSPACE_ID` | Optional at startup. Set after creating a workspace via `POST /v1/workspaces` then rebuild frontend |
 
 ## Startup sequence
@@ -100,6 +100,6 @@ docker compose ps
 
 ## Notes
 - The API binary serves both migrations and the HTTP server — no separate migration step needed.
-- `APP_ENV=development` relaxes some webhook secret validation. Don't use production keys locally.
+- `APP_ENV=development` relaxes local startup defaults where supported. Webhook signing secrets are configured per workspace.
 - The `mcp` service uses HTTP transport on port 3003 by default (`MCP_TRANSPORT=http`).
 - AI provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are only needed if `config.toml` points to those providers. Local dev defaults to whatever is configured in `config.toml`.

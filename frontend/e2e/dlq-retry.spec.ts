@@ -12,13 +12,12 @@ test('DLQ entry can be retried from Integration view', async ({ page }) => {
   // Seed a DLQ entry directly via API (POST an intentionally malformed payload
   // to the ingest endpoint — it will fail processing and end up in the DLQ)
   try {
-    await fetch(`${API_BASE}/v1/ingest/github`, {
+    await fetch(`${API_BASE}/v1/ingest/github/${workspaceId}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Hub-Signature-256': 'sha256=badhash',
         'X-GitHub-Event': 'push',
-        'X-Workspace-Id': workspaceId,
       },
       body: JSON.stringify({ invalid: true }),
     });

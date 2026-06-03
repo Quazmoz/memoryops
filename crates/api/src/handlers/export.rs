@@ -42,6 +42,7 @@ pub async fn export_workspace(
                     embedding_id,
                     token_count,
                     decay_score,
+                    relevance_score,
                     pinned,
                     tags,
                     version,
@@ -110,6 +111,7 @@ fn export_line(memory: &MemoryUnit) -> Result<String, serde_json::Error> {
     let mut value = serde_json::to_value(memory)?;
     if let Value::Object(object) = &mut value {
         object.remove("embedding_id");
+        object.remove("relevance_score");
     }
     serde_json::to_string(&value)
 }

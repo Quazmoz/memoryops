@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600">
+<defs>
+<style>
+.bg { fill: #0d1117; }
+.box { fill: #161b22; stroke: #30363d; stroke-width: 2; rx: 8; ry: 8; }
+.lane { fill: #0d1117; stroke: #30363d; stroke-width: 1; stroke-dasharray: 5,5; rx: 8; }
+.text-title { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 24px; font-weight: bold; }
+.text-main { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: middle; }
+.text-small { fill: #8b949e; font-family: -apple-system, sans-serif; font-size: 14px; text-anchor: middle; }
+.text-left { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: start; }
+.arrow { stroke: #58a6ff; stroke-width: 2; fill: none; }
+.arrow-head { fill: #58a6ff; }
+.node-cyan { fill: #0d1117; stroke: #00e5ff; stroke-width: 2; rx: 8; }
+.node-purple { fill: #0d1117; stroke: #9d4edd; stroke-width: 2; rx: 8; }
+.node-green { fill: #0d1117; stroke: #00e676; stroke-width: 2; rx: 8; }
+.node-amber { fill: #0d1117; stroke: #ffab00; stroke-width: 2; rx: 8; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" class="arrow-head" />
+</marker>
+</defs>
+<rect width="1200" height="600" class="bg" />
+
+<text x="600" y="60" class="text-title" style="text-anchor:middle;">MemoryOps Self-Hosted Architecture</text>
+
+<rect x="200" y="120" width="800" height="420" class="lane" style="stroke:#58a6ff; fill:#0d1117" />
+<text x="220" y="150" class="text-left" style="font-weight:bold; fill:#58a6ff">Docker Compose / Kubernetes Data Plane</text>
+
+<!-- Top level API / UI -->
+<rect x="250" y="180" width="200" height="60" class="node-cyan" />
+<text x="350" y="205" class="text-main">Rust API (axum)</text>
+<text x="350" y="225" class="text-small">Port 8080</text>
+
+<rect x="500" y="180" width="200" height="60" class="node-purple" />
+<text x="600" y="205" class="text-main">React UI</text>
+<text x="600" y="225" class="text-small">Port 5173</text>
+
+<rect x="750" y="180" width="200" height="60" class="node-green" />
+<text x="850" y="205" class="text-main">MCP Server</text>
+<text x="850" y="225" class="text-small">Port 3003 / stdio</text>
+
+<!-- Infrastructure -->
+<rect x="250" y="300" width="200" height="80" class="box" />
+<text x="350" y="335" class="text-main">Postgres</text>
+<text x="350" y="355" class="text-small">Events &amp; State</text>
+
+<rect x="500" y="300" width="200" height="80" class="box" />
+<text x="600" y="335" class="text-main">Redis</text>
+<text x="600" y="355" class="text-small">Async Queue</text>
+
+<rect x="750" y="300" width="200" height="80" class="box" />
+<text x="850" y="335" class="text-main">Qdrant</text>
+<text x="850" y="355" class="text-small">Vector Search</text>
+
+<!-- LLMs -->
+<rect x="375" y="440" width="450" height="70" class="lane" style="stroke-dasharray:none; stroke:#ffab00" />
+<text x="600" y="470" class="text-main">LLM / Embeddings Layer</text>
+<text x="600" y="490" class="text-small">Local (Ollama/fastembed-rs) OR Cloud (OpenAI/Anthropic)</text>
+
+<!-- Lines -->
+<path d="M 350 240 L 350 300" class="arrow" marker-end="url(#arrow)" />
+<path d="M 600 240 L 600 300" class="arrow" marker-end="url(#arrow)" />
+<path d="M 850 240 L 850 300" class="arrow" marker-end="url(#arrow)" />
+<path d="M 600 380 L 600 440" class="arrow" marker-end="url(#arrow)" />
+
+</svg>

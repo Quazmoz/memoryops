@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "memoryops": {
+      "type": "http",
+      "url": "http://localhost:3003/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_MEMORYOPS_API_KEY"
+      }
+    }
+  }
+}

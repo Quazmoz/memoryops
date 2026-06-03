@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600">
+<defs>
+<style>
+.bg { fill: #0d1117; }
+.box { fill: #161b22; stroke: #30363d; stroke-width: 2; rx: 8; ry: 8; }
+.lane { fill: #0d1117; stroke: #30363d; stroke-width: 1; stroke-dasharray: 5,5; rx: 8; }
+.text-title { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 24px; font-weight: bold; }
+.text-main { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: middle; }
+.text-small { fill: #8b949e; font-family: -apple-system, sans-serif; font-size: 14px; text-anchor: middle; }
+.text-left { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: start; }
+.arrow { stroke: #58a6ff; stroke-width: 2; fill: none; }
+.arrow-head { fill: #58a6ff; }
+.node-cyan { fill: #0d1117; stroke: #00e5ff; stroke-width: 2; rx: 8; }
+.node-purple { fill: #0d1117; stroke: #9d4edd; stroke-width: 2; rx: 8; }
+.node-green { fill: #0d1117; stroke: #00e676; stroke-width: 2; rx: 8; }
+.node-amber { fill: #0d1117; stroke: #ffab00; stroke-width: 2; rx: 8; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" class="arrow-head" />
+</marker>
+</defs>
+<rect width="1200" height="600" class="bg" />
+
+<text x="600" y="60" class="text-title" style="text-anchor:middle;">MemoryOps vs. Verbatim-First Local Memory</text>
+
+<rect x="50" y="100" width="525" height="450" class="box" style="stroke:#58a6ff" />
+<text x="312" y="140" class="text-main" style="font-size:20px; fill:#58a6ff; font-weight:bold;">Verbatim-First / Local-First Memory</text>
+<text x="312" y="165" class="text-small">(e.g., MemPalace)</text>
+
+<text x="80" y="210" class="text-left" style="fill:#8b949e">Primary goal</text>
+<text x="80" y="235" class="text-left">Faithful local recall</text>
+
+<text x="80" y="280" class="text-left" style="fill:#8b949e">Ingestion model</text>
+<text x="80" y="305" class="text-left">Project/session mining, diaries, local capture</text>
+
+<text x="80" y="350" class="text-left" style="fill:#8b949e">Memory representation</text>
+<text x="80" y="375" class="text-left">Raw fidelity, minimal transformation</text>
+
+<text x="80" y="420" class="text-left" style="fill:#8b949e">Lifecycle governance</text>
+<text x="80" y="445" class="text-left">Append-first, optional cleanup</text>
+
+<text x="80" y="490" class="text-left" style="fill:#8b949e">Best fit</text>
+<text x="80" y="515" class="text-left" style="font-weight:bold">Personal agent continuity, raw context</text>
+
+<rect x="625" y="100" width="525" height="450" class="box" style="stroke:#00e5ff" />
+<text x="887" y="140" class="text-main" style="font-size:20px; fill:#00e5ff; font-weight:bold;">MemoryOps Control Plane</text>
+
+<text x="655" y="210" class="text-left" style="fill:#8b949e">Primary goal</text>
+<text x="655" y="235" class="text-left">Governed engineering memory operations</text>
+
+<text x="655" y="280" class="text-left" style="fill:#8b949e">Ingestion model</text>
+<text x="655" y="305" class="text-left">Structured webhooks (GitHub, Jira) + Observations</text>
+
+<text x="655" y="350" class="text-left" style="fill:#8b949e">Memory representation</text>
+<text x="655" y="375" class="text-left">Normalized episodic events → Semantic knowledge</text>
+
+<text x="655" y="420" class="text-left" style="fill:#8b949e">Lifecycle governance</text>
+<text x="655" y="445" class="text-left">Decay, pruning, pinning, workspace publishing</text>
+
+<text x="655" y="490" class="text-left" style="fill:#8b949e">Best fit</text>
+<text x="655" y="515" class="text-left" style="font-weight:bold">Teams needing inspectable, governed agent memory</text>
+
+</svg>

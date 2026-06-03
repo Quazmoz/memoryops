@@ -387,17 +387,27 @@ async fn insert_semantic_unit_and_delete_sources(
 }
 
 async fn delete_source_points(qdrant: &QdrantClient, source_ids: &[Uuid]) {
-    for source_id in source_ids {
-        if let Err(error) = qdrant
-            .delete_points(
-                DeletePointsBuilder::new(COLLECTION_NAME)
-                    .points([source_id.to_string()])
-                    .wait(true),
-            )
-            .await
-        {
-            tracing::warn!(error = ?error, memory_id = %source_id, "failed to delete source episode point after promotion");
-        }
+    if source_ids.is_empty() {
+        return;
+    }
+
+    let point_ids = source_ids
+        .iter()
+        .map(|source_id| source_id.to_string())
+        .collect::<Vec<_>>();
+    if let Err(error) = qdrant
+        .delete_points(
+            DeletePointsBuilder::new(COLLECTION_NAME)
+                .points(point_ids)
+                .wait(true),
+        )
+        .await
+    {
+        tracing::warn!(
+            error = ?error,
+            count = source_ids.len(),
+            "failed to delete source episode points after promotion"
+        );
     }
 }
 
@@ -512,10 +522,22 @@ fn report_for_cluster_plan(workspace_id: Uuid, plan: &ClusterPlan) -> PromotionR
 }
 
 fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
-    a.iter()
-        .zip(b.iter())
-        .map(|(left, right)| left * right)
-        .sum()
+    let (dot, norm_a, norm_b) = a.iter().zip(b.iter()).fold(
+        (0.0_f32, 0.0_f32, 0.0_f32),
+        |(dot, norm_a, norm_b), (left, right)| {
+            (
+                dot + left * right,
+                norm_a + left * left,
+                norm_b + right * right,
+            )
+        },
+    );
+
+    if norm_a <= f32::EPSILON || norm_b <= f32::EPSILON {
+        return 0.0;
+    }
+
+    dot / (norm_a.sqrt() * norm_b.sqrt())
 }
 
 #[cfg(test)]
@@ -527,6 +549,14 @@ mod tests {
         let vector = [1.0, 0.0, 0.0];
 
         assert!((cosine_sim(&vector, &vector) - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn cosine_sim_normalizes_non_unit_vectors() {
+        let left = [2.0, 0.0, 0.0];
+        let right = [4.0, 0.0, 0.0];
+
+        assert!((cosine_sim(&left, &right) - 1.0).abs() < 0.0001);
     }
 
     #[test]

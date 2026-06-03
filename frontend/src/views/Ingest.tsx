@@ -79,14 +79,14 @@ export function Ingest() {
         <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Webhook Tester</h1>
       </header>
 
-      <section className="grid gap-4 xl:grid-cols-[22rem_1fr]">
+      <section className="grid gap-4 xl:grid-cols-[26rem_1fr]">
         <Card>
           <CardHeader className="pb-0">
             <CardTitle className="flex items-center gap-1.5">
               <span>Event</span>
               <HelpTooltip label="Event">Choose the source fixture and event shape you want MemoryOps to ingest.</HelpTooltip>
             </CardTitle>
-            <div className="mt-3 flex border-b border-line" role="tablist" aria-label="Webhook source">
+            <div className="mt-3 flex overflow-x-auto thin-scrollbar border-b border-line" role="tablist" aria-label="Webhook source">
               {webhookSources.map((source) => {
                 const active = selectedSource === source.source;
                 return (
@@ -99,7 +99,7 @@ export function Ingest() {
                         aria-selected={active}
                         onClick={() => selectSource(source.source)}
                         className={cn(
-                          "border-b-2 px-3 pb-2 pt-1 text-sm font-medium transition-colors",
+                          "shrink-0 whitespace-nowrap border-b-2 px-3 pb-2 pt-1 text-sm font-medium transition-colors",
                           active ? "border-accent text-accent-strong" : "border-transparent text-ink/55 hover:border-line hover:text-ink",
                         )}
                       >

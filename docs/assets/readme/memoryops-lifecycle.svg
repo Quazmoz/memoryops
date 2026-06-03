@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600">
+<defs>
+<style>
+.bg { fill: #0d1117; }
+.box { fill: #161b22; stroke: #30363d; stroke-width: 2; rx: 8; ry: 8; }
+.lane { fill: #0d1117; stroke: #30363d; stroke-width: 1; stroke-dasharray: 5,5; rx: 8; }
+.text-title { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 24px; font-weight: bold; }
+.text-main { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: middle; }
+.text-small { fill: #8b949e; font-family: -apple-system, sans-serif; font-size: 14px; text-anchor: middle; }
+.text-left { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: start; }
+.arrow { stroke: #58a6ff; stroke-width: 2; fill: none; }
+.arrow-head { fill: #58a6ff; }
+.node-cyan { fill: #0d1117; stroke: #00e5ff; stroke-width: 2; rx: 8; }
+.node-purple { fill: #0d1117; stroke: #9d4edd; stroke-width: 2; rx: 8; }
+.node-green { fill: #0d1117; stroke: #00e676; stroke-width: 2; rx: 8; }
+.node-amber { fill: #0d1117; stroke: #ffab00; stroke-width: 2; rx: 8; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" class="arrow-head" />
+</marker>
+</defs>
+<rect width="1200" height="600" class="bg" />
+
+<text x="600" y="60" class="text-title" style="text-anchor:middle;">The MemoryOps Lifecycle</text>
+<rect x="50" y="150" width="160" height="300" class="lane" />
+<text x="130" y="190" class="text-main" style="fill:#8b949e">1. Ingestion</text>
+<rect x="70" y="220" width="120" height="50" class="node-cyan" />
+<text x="130" y="250" class="text-main">Raw Event</text>
+<rect x="70" y="300" width="120" height="50" class="box" />
+<text x="130" y="330" class="text-main">Normalized</text>
+
+<rect x="250" y="150" width="220" height="300" class="lane" />
+<text x="360" y="190" class="text-main" style="fill:#8b949e">2. Episodic Storage</text>
+<rect x="280" y="260" width="160" height="60" class="node-purple" />
+<text x="360" y="285" class="text-main">Episodic Memory</text>
+<text x="360" y="305" class="text-small">Point-in-time record</text>
+
+<rect x="510" y="150" width="200" height="300" class="lane" />
+<text x="610" y="190" class="text-main" style="fill:#8b949e">3. Synthesis</text>
+<rect x="530" y="220" width="160" height="50" class="node-amber" />
+<text x="610" y="250" class="text-main">Deduplication</text>
+<rect x="530" y="290" width="160" height="50" class="node-amber" />
+<text x="610" y="320" class="text-main">Semantic Promot.</text>
+
+<rect x="750" y="150" width="180" height="300" class="lane" />
+<text x="840" y="190" class="text-main" style="fill:#8b949e">4. Semantic Knowledge</text>
+<rect x="770" y="260" width="140" height="60" class="node-green" />
+<text x="840" y="285" class="text-main">Semantic Node</text>
+<text x="840" y="305" class="text-small">Governed truth</text>
+
+<rect x="970" y="150" width="180" height="300" class="lane" />
+<text x="1060" y="190" class="text-main" style="fill:#8b949e">5. Governance</text>
+<rect x="990" y="220" width="140" height="40" class="box" />
+<text x="1060" y="245" class="text-main">Decay</text>
+<rect x="990" y="270" width="140" height="40" class="box" />
+<text x="1060" y="295" class="text-main">Pin / Publish</text>
+<rect x="990" y="320" width="140" height="40" class="box" />
+<text x="1060" y="345" class="text-main">Prune</text>
+
+<path d="M 130 270 L 130 300" class="arrow" marker-end="url(#arrow)" />
+<path d="M 190 325 L 280 290" class="arrow" marker-end="url(#arrow)" />
+<path d="M 440 290 L 530 245" class="arrow" marker-end="url(#arrow)" />
+<path d="M 440 290 L 530 315" class="arrow" marker-end="url(#arrow)" />
+<path d="M 690 315 L 770 290" class="arrow" marker-end="url(#arrow)" />
+<path d="M 910 290 L 990 240" class="arrow" marker-end="url(#arrow)" />
+<path d="M 910 290 L 990 290" class="arrow" marker-end="url(#arrow)" />
+<path d="M 910 290 L 990 340" class="arrow" marker-end="url(#arrow)" />
+
+<rect x="530" y="480" width="160" height="50" class="node-purple" />
+<text x="610" y="510" class="text-main">Feedback Loop</text>
+<path d="M 840 320 L 840 505 L 690 505" class="arrow" marker-end="url(#arrow)" />
+<path d="M 530 505 L 360 505 L 360 320" class="arrow" marker-end="url(#arrow)" />
+
+</svg>

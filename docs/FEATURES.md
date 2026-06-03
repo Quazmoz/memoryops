@@ -87,7 +87,7 @@ This document tracks all planned features across the platform with current statu
 | Dead letter queue for failed jobs | 🟢 | M6 | Redis list dlq:{workspace_id} |
 | DLQ manual retry API | 🟢 | M6 | POST /workspaces/:id/dlq/:job_id/retry |
 | Auto-retry with exponential backoff (max 3) | 🟢 | M6 | |
-| Slack webhook receiver | 🟢 | M9 | Slack Events API receiver at POST /v1/ingest/slack |
+| Slack webhook receiver | 🟢 | M9 | Slack Events API receiver at POST /v1/ingest/slack/{workspace_id} |
 | Slack message ingestion | 🟢 | M9 | message, message.edited, app_mention |
 | Slack reaction ingestion | 🟢 | M9 | reaction_added with channel + message timestamp lineage |
 | Linear webhook receiver | 🟢 | M10 | X-Linear-Signature HMAC-SHA256 |
@@ -183,7 +183,7 @@ This document tracks all planned features across the platform with current statu
 | POST /v1/memory/merge | 🟢 | M6 | Appends source → target, soft-deletes source |
 | POST /v1/retrieve | 🟢 | M6 | |
 | GET /v1/retrieve/trace/:query_id | 🟢 | M6 | |
-| POST /v1/workspaces | 🟢 | M6 | Bootstrap, no auth required |
+| POST /v1/workspaces | 🟢 | M6 | Bootstrap, requires `x-admin-token` |
 | GET /v1/workspaces/:id | 🟢 | M6 | |
 | PATCH /v1/workspaces/:id/config | 🟢 | M6 | Scoring weights, thresholds, provider config |
 | POST /v1/workspaces/:id/integrations | 🟢 | M6 | |
@@ -277,7 +277,7 @@ This document tracks all planned features across the platform with current statu
 | Memory Explorer (search, filter, sort, paginate) | 🟢 | M5 | GET /v1/memory + POST /v1/memory/search |
 | Memory Detail view (entities, scope, score, tags) | 🟢 | M5 | GET /v1/memory/:id |
 | Pin / Tag / Importance override actions | 🟢 | M5 | PATCH /v1/memory/:id (optimistic cache update) |
-| Webhook tester (fire real GitHub payloads) | 🟢 | M5 | POST /v1/ingest/github |
+| Webhook tester (fire real GitHub payloads) | 🟢 | M5 | POST /v1/ingest/github/{workspace_id} |
 | Settings view (workspace config, read-only) | 🟢 | M5 | |
 | Retrieval Trace view (live query + trace drill-down) | 🟢 | M14 | Replaces M5 stub |
 | Lifecycle / Promotion Timeline (stubbed) | 🟢 | M5 | Wired in M8 |
@@ -295,9 +295,9 @@ This document tracks all planned features across the platform with current statu
 | Dashboard KPI strip (6 cards via /stats) | 🟢 | M13 | Replaces 3 useMemoryList calls |
 | Dashboard secondary stats row | 🟢 | M13 | Memory health + 30-day activity cards |
 | Retrieval Trace view (live data) | 🔴 | M14 | GET /v1/retrieve/trace/:query_id; per-component score breakdown |
-| Webhook Tester — Slack fixtures | 🟢 | M15 | POST /v1/ingest/slack; source tab switcher |
-| Webhook Tester — Linear fixtures | 🟢 | M15 | POST /v1/ingest/linear |
-| Webhook Tester — Jira fixtures | 🟢 | M15 | POST /v1/ingest/jira |
+| Webhook Tester — Slack fixtures | 🟢 | M15 | POST /v1/ingest/slack/{workspace_id}; source tab switcher |
+| Webhook Tester — Linear fixtures | 🟢 | M15 | POST /v1/ingest/linear/{workspace_id} |
+| Webhook Tester — Jira fixtures | 🟢 | M15 | POST /v1/ingest/jira/{workspace_id} |
 | DLQ retry action (from Integration view) | 🟢 | M16 | POST /v1/workspaces/:id/dlq/:job_id/retry |
 | DLQ discard action (from Integration view) | 🟢 | M16 | DELETE /v1/workspaces/:id/dlq/:job_id |
 | DLQ error detail expand (raw payload + error message) | 🟢 | M16 | Inline expandable row in DLQ panel |

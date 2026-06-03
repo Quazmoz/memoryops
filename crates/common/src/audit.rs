@@ -1,7 +1,13 @@
+use std::sync::{Arc, OnceLock};
+
 use sqlx::PgPool;
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 use crate::models::AuditAction;
+
+const AUDIT_LOG_MAX_IN_FLIGHT: usize = 64;
+static AUDIT_LOG_PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 pub fn spawn_audit_log(
     db: PgPool,
@@ -13,7 +19,19 @@ pub fn spawn_audit_log(
     diff: Option<serde_json::Value>,
 ) {
     let target_type = target_type.into();
+    let permits = audit_log_permits();
+    let Ok(permit) = permits.try_acquire_owned() else {
+        tracing::warn!(
+            workspace_id = %workspace_id,
+            target_id = %target_id,
+            action = ?action,
+            "audit log write queue is full; dropping audit entry"
+        );
+        return;
+    };
+
     tokio::spawn(async move {
+        let _permit = permit;
         if let Err(error) = insert_audit_log(
             &db,
             workspace_id,
@@ -28,6 +46,12 @@ pub fn spawn_audit_log(
             tracing::warn!(error = ?error, "failed to write audit log entry");
         }
     });
+}
+
+fn audit_log_permits() -> Arc<Semaphore> {
+    AUDIT_LOG_PERMITS
+        .get_or_init(|| Arc::new(Semaphore::new(AUDIT_LOG_MAX_IN_FLIGHT)))
+        .clone()
 }
 
 async fn insert_audit_log(

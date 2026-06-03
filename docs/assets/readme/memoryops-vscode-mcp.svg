@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600">
+<defs>
+<style>
+.bg { fill: #0d1117; }
+.box { fill: #161b22; stroke: #30363d; stroke-width: 2; rx: 8; ry: 8; }
+.lane { fill: #0d1117; stroke: #30363d; stroke-width: 1; stroke-dasharray: 5,5; rx: 8; }
+.text-title { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 24px; font-weight: bold; }
+.text-main { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: middle; }
+.text-small { fill: #8b949e; font-family: -apple-system, sans-serif; font-size: 14px; text-anchor: middle; }
+.text-left { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: start; }
+.arrow { stroke: #58a6ff; stroke-width: 2; fill: none; }
+.arrow-head { fill: #58a6ff; }
+.node-cyan { fill: #0d1117; stroke: #00e5ff; stroke-width: 2; rx: 8; }
+.node-purple { fill: #0d1117; stroke: #9d4edd; stroke-width: 2; rx: 8; }
+.node-green { fill: #0d1117; stroke: #00e676; stroke-width: 2; rx: 8; }
+.node-amber { fill: #0d1117; stroke: #ffab00; stroke-width: 2; rx: 8; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" class="arrow-head" />
+</marker>
+</defs>
+<rect width="1200" height="600" class="bg" />
+
+<text x="600" y="60" class="text-title" style="text-anchor:middle;">VS Code &amp; MCP Integration</text>
+
+<rect x="150" y="150" width="300" height="300" class="box" style="stroke:#007acc" />
+<text x="300" y="190" class="text-main" style="font-weight:bold; fill:#007acc; font-size:20px">VS Code</text>
+
+<rect x="180" y="220" width="240" height="50" class="node-cyan" />
+<text x="300" y="250" class="text-main">Extension Scaffold</text>
+
+<rect x="180" y="290" width="240" height="40" class="box" />
+<text x="300" y="315" class="text-main">Save Selection to Memory</text>
+
+<rect x="180" y="350" width="240" height="40" class="box" />
+<text x="300" y="375" class="text-main">Retrieve File Context</text>
+
+<rect x="550" y="210" width="100" height="80" class="lane" style="stroke:none" />
+<path d="M 450 245 L 750 245" class="arrow" marker-end="url(#arrow)" style="stroke-width:4" />
+<path d="M 750 265 L 450 265" class="arrow" marker-end="url(#arrow)" style="stroke-width:4" />
+<text x="600" y="235" class="text-main">MCP Protocol</text>
+<text x="600" y="285" class="text-small">stdio / HTTP</text>
+
+<rect x="750" y="150" width="300" height="300" class="box" style="stroke:#00e5ff" />
+<text x="900" y="190" class="text-main" style="font-weight:bold; fill:#00e5ff; font-size:20px">MemoryOps Server</text>
+
+<rect x="780" y="220" width="240" height="60" class="node-green" />
+<text x="900" y="245" class="text-main">MCP Server</text>
+<text x="900" y="265" class="text-small">Tools: search, store, retrieve</text>
+
+<rect x="780" y="300" width="240" height="60" class="node-purple" />
+<text x="900" y="325" class="text-main">REST API</text>
+<text x="900" y="345" class="text-small">Direct operations</text>
+
+</svg>

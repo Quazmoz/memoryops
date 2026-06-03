@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600">
+<defs>
+<style>
+.bg { fill: #0d1117; }
+.box { fill: #161b22; stroke: #30363d; stroke-width: 2; rx: 8; ry: 8; }
+.lane { fill: #0d1117; stroke: #30363d; stroke-width: 1; stroke-dasharray: 5,5; rx: 8; }
+.text-title { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 24px; font-weight: bold; }
+.text-main { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: middle; }
+.text-small { fill: #8b949e; font-family: -apple-system, sans-serif; font-size: 14px; text-anchor: middle; }
+.text-left { fill: #c9d1d9; font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 500; text-anchor: start; }
+.arrow { stroke: #58a6ff; stroke-width: 2; fill: none; }
+.arrow-head { fill: #58a6ff; }
+.node-cyan { fill: #0d1117; stroke: #00e5ff; stroke-width: 2; rx: 8; }
+.node-purple { fill: #0d1117; stroke: #9d4edd; stroke-width: 2; rx: 8; }
+.node-green { fill: #0d1117; stroke: #00e676; stroke-width: 2; rx: 8; }
+.node-amber { fill: #0d1117; stroke: #ffab00; stroke-width: 2; rx: 8; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" class="arrow-head" />
+</marker>
+</defs>
+<rect width="1200" height="600" class="bg" />
+
+<text x="600" y="50" class="text-title" style="text-anchor:middle;">AI Memory Landscape</text>
+
+<!-- Axes -->
+<path d="M 150 500 L 1050 500" style="stroke:#8b949e; stroke-width:3" marker-end="url(#arrow)" />
+<path d="M 150 500 L 150 100" style="stroke:#8b949e; stroke-width:3" marker-end="url(#arrow)" />
+
+<text x="600" y="540" class="text-main" style="font-weight:bold;">Raw Recall &lt;─────────────X Axis─────────────&gt; Governed Lifecycle</text>
+<text x="110" y="300" class="text-main" style="font-weight:bold;" transform="rotate(-90 110 300)">Personal/Local &lt;────────Y Axis────────&gt; Team/Operational</text>
+
+<!-- Quadrants -->
+<rect x="200" y="350" width="300" height="100" class="node-purple" />
+<text x="350" y="395" class="text-main" style="font-weight:bold">Vector DB / Basic RAG</text>
+<text x="350" y="420" class="text-small">Retrieval substrate</text>
+
+<rect x="200" y="150" width="300" height="100" class="node-amber" />
+<text x="350" y="195" class="text-main" style="font-weight:bold">Verbatim-First / Local Memory</text>
+<text x="350" y="220" class="text-small">e.g., MemPalace</text>
+
+<rect x="700" y="350" width="300" height="100" class="box" style="stroke:#58a6ff" />
+<text x="850" y="395" class="text-main" style="font-weight:bold">Managed Memory APIs</text>
+<text x="850" y="420" class="text-small">e.g., Mem0, Zep</text>
+
+<rect x="700" y="150" width="300" height="100" class="node-cyan" style="stroke-width:3; stroke:#00e5ff; fill:#0a192f" />
+<text x="850" y="195" class="text-main" style="font-weight:bold; fill:#00e5ff; font-size:20px">MemoryOps</text>
+<text x="850" y="220" class="text-small" style="fill:#8b949e">Team/operational + Governed lifecycle</text>
+
+<rect x="450" y="50" width="300" height="60" class="node-green" />
+<text x="600" y="75" class="text-main" style="font-weight:bold">Agent Frameworks</text>
+<text x="600" y="95" class="text-small">Orchestration focused, not memory control plane</text>
+
+</svg>

@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "generate:api": "node ../scripts/generate-openapi-client.mjs",
+    "check:api": "node ../scripts/generate-openapi-client.mjs --check",
+    "build": "npm run check:api && tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "e2e": "playwright test",

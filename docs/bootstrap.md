@@ -4,11 +4,12 @@ Use this flow to create your first workspace and obtain the initial API key in o
 
 ## Create Workspace and API Key
 
-`POST /v1/workspaces` does not require authentication. It creates the workspace and provisions one initial API key in the same response.
+`POST /v1/workspaces` requires the `x-admin-token` header set to `WORKSPACE_CREATION_SECRET`. It creates the workspace and provisions one initial API key in the same response.
 
 ```bash
 curl -sS -X POST http://localhost:8080/v1/workspaces \
   -H 'Content-Type: application/json' \
+  -H 'x-admin-token: <your-WORKSPACE_CREATION_SECRET>' \
   -d '{"name":"my-first-workspace"}'
 ```
 

@@ -106,15 +106,10 @@ impl RuntimeBackend {
 #[async_trait]
 impl McpBackend for RuntimeBackend {
     async fn authenticate(&self, token: &str) -> Result<AuthContext, JsonRpcError> {
-        let mut redis = self.state.redis.get().await.map_err(|_| JsonRpcError {
-            code: INTERNAL_ERROR,
-            message: "redis pool unavailable".to_owned(),
-            data: None,
-        })?;
-        let context = common::auth::validate_api_key_cached(&self.state.db, &mut *redis, token)
+        let context = common::services::AuthService::from_state(&self.state)
+            .authenticate_api_key(token)
             .await
             .map_err(auth_error_to_rpc)?;
-        common::auth::spawn_last_used_update(self.state.db.clone(), context.key_id);
         Ok(context)
     }
 

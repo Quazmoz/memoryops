@@ -9,8 +9,9 @@ use chrono::{DateTime, Duration, Utc};
 use common::{
     auth::AuthContext,
     error::AppResult,
-    models::{Entity, MemoryUnit},
+    models::{Entity, MemoryUnit, Source},
     telemetry::{RETRIEVAL_REQUESTS, TOKEN_PACK_BUDGET_USED},
+    tokens::estimate_tokens,
     AppError, AppState,
 };
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,7 @@ use uuid::Uuid;
 use crate::{
     dto::{MemoryResult, ScopeFilter, SearchMode, SearchRequest, WorkspacePoolAccess, MAX_LIMIT},
     search::{hybrid, keyword, vector},
+    services::RetrievalService,
     store,
 };
 
@@ -131,17 +133,35 @@ struct CandidateMemory {
     score_breakdown: ScoreBreakdown,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct SourceEventRow {
+    id: Uuid,
+    source: Source,
+}
+
 #[axum::debug_handler]
 pub async fn handle_retrieve(
     State(state): State<AppState>,
     auth: Option<Extension<AuthContext>>,
     Json(request): Json<RetrieveRequest>,
 ) -> AppResult<Json<RetrieveResponse>> {
+    let auth_context = auth.as_ref().map(|extension| &extension.0);
+    let response = RetrievalService::new(&state)
+        .retrieve(auth_context, request)
+        .await?;
+
+    Ok(Json(response))
+}
+
+pub(crate) async fn execute_retrieve(
+    state: &AppState,
+    auth_context: Option<&AuthContext>,
+    request: RetrieveRequest,
+) -> AppResult<RetrieveResponse> {
     if request.query.trim().is_empty() {
         return Err(AppError::Validation("query is required".to_owned()));
     }
 
-    let auth_context = auth.as_ref().map(|extension| &extension.0);
     let workspace_id = resolve_workspace_id(auth_context, Some(request.workspace_id))?;
     let mode = request.mode.unwrap_or_default();
     let include_trace = request.include_trace.unwrap_or(false);
@@ -170,7 +190,7 @@ pub async fn handle_retrieve(
     search_request.apply_workspace_config(&config);
     let workspace_pool = search_request.workspace_pool_access();
 
-    let search_results = search_candidates(&state, &search_request, mode).await?;
+    let search_results = search_candidates(&state, &search_request, mode, &config).await?;
     let candidates = hydrate_candidates(
         &state,
         workspace_id,
@@ -181,7 +201,7 @@ pub async fn handle_retrieve(
         mode,
     )
     .await?;
-    let packed = pack_memories(candidates, token_budget);
+    let packed = pack_memories(candidates, token_budget)?;
     if token_budget > 0 {
         let pct = (packed.total_tokens as f64 / token_budget as f64) * 100.0;
         TOKEN_PACK_BUDGET_USED.record(pct, &[]);
@@ -205,12 +225,12 @@ pub async fn handle_retrieve(
     persist_trace(&state, workspace_id, &trace).await?;
     RETRIEVAL_REQUESTS.add(1, &[]);
 
-    Ok(Json(RetrieveResponse {
+    Ok(RetrieveResponse {
         query_id,
         memories: packed.memories,
         total_tokens: packed.total_tokens,
         trace: if include_trace { Some(trace) } else { None },
-    }))
+    })
 }
 
 #[axum::debug_handler]
@@ -251,11 +271,16 @@ async fn search_candidates(
     state: &AppState,
     request: &SearchRequest,
     mode: SearchMode,
+    config: &common::models::WorkspaceConfig,
 ) -> AppResult<Vec<MemoryResult>> {
     match mode {
-        SearchMode::Vector => vector::vector_search_results(state, request, MAX_LIMIT).await,
+        SearchMode::Vector => {
+            vector::vector_search_results_with_config(state, request, MAX_LIMIT, config).await
+        }
         SearchMode::Keyword => keyword::keyword_search(state, request, MAX_LIMIT).await,
-        SearchMode::Hybrid => hybrid::hybrid_search(state, request, MAX_LIMIT).await,
+        SearchMode::Hybrid => {
+            hybrid::hybrid_search_with_config(state, request, MAX_LIMIT, config).await
+        }
     }
 }
 
@@ -281,6 +306,7 @@ async fn hydrate_candidates(
         .into_iter()
         .map(|unit| (unit.id, unit))
         .collect::<HashMap<_, _>>();
+    let source_by_event_id = source_by_event_id(&state.db, units_by_id.values()).await?;
     let mut candidates = Vec::with_capacity(search_results.len());
 
     for result in search_results {
@@ -293,9 +319,10 @@ async fn hydrate_candidates(
             }
         }
 
+        let source_authority = source_authority_for_unit(state, &unit, &source_by_event_id);
         candidates.push(CandidateMemory {
             score: result.score,
-            score_breakdown: score_breakdown(&unit, result.score, mode),
+            score_breakdown: score_breakdown(&unit, result.score, mode, source_authority),
             unit,
         });
     }
@@ -311,7 +338,7 @@ struct PackedResult {
     feedback_applied: bool,
 }
 
-fn pack_memories(candidates: Vec<CandidateMemory>, token_budget: usize) -> PackedResult {
+fn pack_memories(candidates: Vec<CandidateMemory>, token_budget: usize) -> AppResult<PackedResult> {
     let mut memories = Vec::new();
     let mut entries = Vec::with_capacity(candidates.len());
     let mut total_tokens = 0_usize;
@@ -319,7 +346,7 @@ fn pack_memories(candidates: Vec<CandidateMemory>, token_budget: usize) -> Packe
 
     for candidate in candidates {
         feedback_applied |= (candidate.unit.relevance_score - 0.5).abs() > f64::EPSILON;
-        let estimated_tokens = estimate_tokens(&candidate.unit.content);
+        let estimated_tokens = estimate_tokens(&candidate.unit.content)?;
         if total_tokens.saturating_add(estimated_tokens) > token_budget {
             entries.push(trace_entry(
                 &candidate,
@@ -343,12 +370,12 @@ fn pack_memories(candidates: Vec<CandidateMemory>, token_budget: usize) -> Packe
         });
     }
 
-    PackedResult {
+    Ok(PackedResult {
         memories,
         total_tokens,
         entries,
         feedback_applied,
-    }
+    })
 }
 
 fn trace_entry(
@@ -366,7 +393,12 @@ fn trace_entry(
     }
 }
 
-fn score_breakdown(unit: &MemoryUnit, score: f32, mode: SearchMode) -> ScoreBreakdown {
+fn score_breakdown(
+    unit: &MemoryUnit,
+    score: f32,
+    mode: SearchMode,
+    source_authority: f32,
+) -> ScoreBreakdown {
     ScoreBreakdown {
         semantic_similarity: if mode == SearchMode::Keyword {
             0.0
@@ -380,7 +412,53 @@ fn score_breakdown(unit: &MemoryUnit, score: f32, mode: SearchMode) -> ScoreBrea
         },
         importance: unit.importance_score,
         recency: unit.decay_score,
-        source_authority: 0.0,
+        source_authority,
+    }
+}
+
+async fn source_by_event_id<'a>(
+    db: &sqlx::PgPool,
+    units: impl Iterator<Item = &'a MemoryUnit>,
+) -> AppResult<HashMap<Uuid, Source>> {
+    let mut event_ids = units
+        .flat_map(|unit| unit.source_events.iter().copied())
+        .collect::<Vec<_>>();
+    if event_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    event_ids.sort_unstable();
+    event_ids.dedup();
+
+    let rows =
+        sqlx::query_as::<_, SourceEventRow>("SELECT id, source FROM raw_events WHERE id = ANY($1)")
+            .bind(event_ids)
+            .fetch_all(db)
+            .await
+            .map_err(AppError::Database)?;
+
+    Ok(rows.into_iter().map(|row| (row.id, row.source)).collect())
+}
+
+fn source_authority_for_unit(
+    state: &AppState,
+    unit: &MemoryUnit,
+    source_by_event_id: &HashMap<Uuid, Source>,
+) -> f32 {
+    let source = unit
+        .source_events
+        .iter()
+        .find_map(|event_id| source_by_event_id.get(event_id).copied());
+    source.map_or(0.0, |source| source_authority_weight(state, source))
+}
+
+fn source_authority_weight(state: &AppState, source: Source) -> f32 {
+    let authority = &state.config.retrieval.source_authority;
+    match source {
+        Source::GitHub => authority.github,
+        Source::Slack => authority.slack,
+        Source::Jira => authority.jira,
+        Source::Linear => authority.linear,
+        Source::Observation => 1.0,
     }
 }
 
@@ -393,10 +471,6 @@ fn first_scope_value(values: [Option<&String>; 2]) -> Option<String> {
             Some(trimmed.to_owned())
         }
     })
-}
-
-fn estimate_tokens(content: &str) -> usize {
-    (content.len() / 4).max(1)
 }
 
 async fn persist_trace(
@@ -468,6 +542,8 @@ mod tests {
                     workspace_id,
                     scope: MemoryScope {
                         workspace_id,
+                        source: None,
+                        actor: None,
                         agent_id: None,
                         user_id: None,
                         repo: None,
@@ -545,7 +621,8 @@ mod tests {
                 .map(PackTestMemory::into_candidate)
                 .collect();
 
-            let result = pack_memories(candidates, budget);
+            let result = pack_memories(candidates, budget)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
 
             prop_assert!(
                 result.total_tokens <= budget,
@@ -598,7 +675,8 @@ mod tests {
                 .map(PackTestMemory::into_candidate)
                 .collect();
 
-            let result = pack_memories(candidates, budget);
+            let result = pack_memories(candidates, budget)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
 
             // Every copy must appear in trace entries (included OR excluded)
             let trace_ids: HashSet<Uuid> = result
@@ -645,7 +723,8 @@ mod tests {
                 .map(PackTestMemory::into_candidate)
                 .collect();
 
-            let result = pack_memories(candidates, budget);
+            let result = pack_memories(candidates, budget)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
 
             let packed_ids: HashSet<Uuid> = result
                 .memories
@@ -677,8 +756,18 @@ mod tests {
     // ---------------------------------------------------------------------------
 
     #[test]
-    fn token_estimate_uses_char_division_floor_with_minimum_one() {
-        assert_eq!(estimate_tokens("abc"), 1);
-        assert_eq!(estimate_tokens("abcdefgh"), 2);
+    fn token_estimate_uses_tiktoken() {
+        let content = "hello, 世界";
+        let tokenizer = match tiktoken_rs::cl100k_base() {
+            Ok(tokenizer) => tokenizer,
+            Err(error) => panic!("tokenizer should initialize: {error}"),
+        };
+        let expected = tokenizer.encode_with_special_tokens(content).len().max(1);
+        let actual = match estimate_tokens(content) {
+            Ok(actual) => actual,
+            Err(error) => panic!("token estimate should succeed: {error}"),
+        };
+
+        assert_eq!(actual, expected);
     }
 }

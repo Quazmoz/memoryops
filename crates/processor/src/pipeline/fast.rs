@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use common::{
     error::AppResult,
     models::{EventType, MemoryType, MemoryUnit, RawEvent, Source},
+    tokens::estimate_tokens,
     AppError, AppState,
 };
 use serde_json::Value;
@@ -72,9 +73,7 @@ pub(crate) fn importance_score(state: &AppState, event: &RawEvent) -> f32 {
 }
 
 pub(crate) fn count_tokens(content: &str) -> AppResult<i32> {
-    let tokenizer = tiktoken_rs::cl100k_base()
-        .map_err(|error| AppError::Internal(anyhow!("failed to initialize tokenizer: {error}")))?;
-    let token_count = tokenizer.encode_with_special_tokens(content).len();
+    let token_count = estimate_tokens(content)?;
 
     i32::try_from(token_count)
         .map_err(|error| AppError::Internal(anyhow!("token count exceeded i32 range: {error}")))

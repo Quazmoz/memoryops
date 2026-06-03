@@ -16,8 +16,10 @@ use chrono::{DateTime, NaiveDate, Utc};
 use common::{
     audit::spawn_audit_log,
     auth::AuthContext,
+    build_embedding_provider_for_workspace, build_llm_provider_for_workspace,
     error::AppResult,
     models::{AuditAction, ContradictionMode, MemoryUnit, Workspace, WorkspaceConfig},
+    services::{VectorIndexService, WorkspaceConfigService},
     AppError, AppState,
 };
 use futures_util::StreamExt;
@@ -27,10 +29,10 @@ use processor::{
     config::fetch_workspace_promotion_config,
     promoter::{run_promotion_pass, PromotionReport},
 };
-use qdrant_client::qdrant::DeletePointsBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use super::{keys, require_workspace};
@@ -167,7 +169,7 @@ pub async fn create_workspace(
         }
         let mut dummy_req: Request<Body> = builder
             .body(Body::empty())
-            .unwrap_or_else(|_| Request::new(Body::empty()));
+            .map_err(|error| AppError::Internal(anyhow!(error)))?;
         dummy_req.extensions_mut().insert(ConnectInfo(peer_addr));
         crate::middleware::rate_limit::resolve_client_ip(&dummy_req, &state.trusted_proxy_cidrs)
             .unwrap_or_else(|| IpAddr::from([127, 0, 0, 1]))
@@ -220,7 +222,7 @@ pub async fn create_workspace(
 }
 
 #[axum::debug_handler]
-pub async fn list_workspaces(
+pub async fn get_current_workspace(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> AppResult<Json<Workspace>> {
@@ -470,16 +472,22 @@ pub async fn promote(
     let lock_key = format!("promotion:lock:{id}");
     let lock_token = acquire_promotion_lock(&state, &lock_key).await?;
 
-    let config = fetch_workspace_promotion_config(&state.db, id).await?;
+    let promotion_config = fetch_workspace_promotion_config(&state.db, id).await?;
+    let workspace_config = WorkspaceConfigService::new(state.db.clone())
+        .load(id)
+        .await?;
+    let llm_provider = build_llm_provider_for_workspace(&state.config, &workspace_config);
+    let embedding_provider =
+        build_embedding_provider_for_workspace(&state.config, &workspace_config);
     let result = tokio::time::timeout(
         Duration::from_secs(60),
         run_promotion_pass(
             &state.db,
             &state.qdrant,
-            state.llm_provider.as_ref(),
-            state.embedding_provider.as_ref(),
+            llm_provider.as_ref(),
+            embedding_provider.as_ref(),
             id,
-            config,
+            promotion_config,
         ),
     )
     .await;
@@ -628,6 +636,8 @@ fn sanitize_imported_memory(mut memory: MemoryUnit, workspace_id: Uuid) -> Memor
     memory.corroboration_count = 0;
     // Reset version so conflict resolution starts clean in the target workspace.
     memory.version = 1;
+    // Retrieval feedback is workspace-local; imported memories should start neutral.
+    memory.relevance_score = 0.5;
     memory
 }
 
@@ -917,7 +927,7 @@ fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
         return Err(AppError::Forbidden);
     };
 
-    if provided_secret == expected_secret {
+    if bool::from(provided_secret.as_bytes().ct_eq(expected_secret.as_bytes())) {
         Ok(())
     } else {
         Err(AppError::Forbidden)
@@ -928,12 +938,16 @@ async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> 
     let key = format!("workspace:create:ratelimit:{ip}");
     let now = unix_timestamp_secs()?;
 
-    let mut redis = state
-        .redis
-        .get()
-        .await
-        .map_err(|error| AppError::Internal(anyhow!(error)))?;
-    let allowed = redis::Script::new(
+    let mut redis = match state.redis.get().await {
+        Ok(redis) => redis,
+        Err(error) => {
+            tracing::warn!(error = ?error, ip = %ip, "workspace creation rate limit failed closed: Redis unavailable");
+            return Err(AppError::RateLimited {
+                retry_after_secs: 60,
+            });
+        }
+    };
+    let allowed = match redis::Script::new(
         r#"
         local data = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
         local tokens = tonumber(data[1])
@@ -967,7 +981,15 @@ async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> 
     .arg(WORKSPACE_CREATE_REFILL_TOKENS_PER_SEC)
     .invoke_async::<i64>(&mut *redis)
     .await
-    .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    {
+        Ok(allowed) => allowed,
+        Err(error) => {
+            tracing::warn!(error = ?error, ip = %ip, "workspace creation rate limit failed closed: Redis script failed");
+            return Err(AppError::RateLimited {
+                retry_after_secs: 60,
+            });
+        }
+    };
 
     if allowed == 1 {
         Ok(())
@@ -999,34 +1021,38 @@ async fn purge_workspace_associations(state: &AppState, workspace_id: Uuid) -> A
         id: Uuid,
     }
 
-    let embedded_ids = sqlx::query_as::<_, WorkspaceEmbeddingRow>(
-        r#"
-        SELECT id
-        FROM memory_units
-        WHERE workspace_id = $1
-          AND embedding_id IS NOT NULL
-        "#,
-    )
-    .bind(workspace_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(AppError::Database)?;
+    let vector_index = VectorIndexService::new(&state.qdrant, COLLECTION_NAME);
+    let mut cursor = None;
+    loop {
+        let embedded_ids = sqlx::query_as::<_, WorkspaceEmbeddingRow>(
+            r#"
+            SELECT id
+            FROM memory_units
+            WHERE workspace_id = $1
+              AND embedding_id IS NOT NULL
+              AND ($2::uuid IS NULL OR id > $2)
+            ORDER BY id ASC
+            LIMIT $3
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(cursor)
+        .bind(WORKSPACE_PURGE_VECTOR_PAGE_SIZE)
+        .fetch_all(&state.db)
+        .await
+        .map_err(AppError::Database)?;
+        if embedded_ids.is_empty() {
+            break;
+        }
 
-    for row in &embedded_ids {
-        if let Err(error) = state
-            .qdrant
-            .delete_points(
-                DeletePointsBuilder::new(COLLECTION_NAME)
-                    .points([row.id.to_string()])
-                    .wait(true),
-            )
-            .await
-        {
+        cursor = embedded_ids.last().map(|row| row.id);
+        let ids = embedded_ids.iter().map(|row| row.id).collect::<Vec<_>>();
+        if let Err(error) = vector_index.delete_points(ids.iter().copied()).await {
             tracing::warn!(
                 error = ?error,
                 workspace_id = %workspace_id,
-                memory_id = %row.id,
-                "failed to delete workspace point from Qdrant"
+                count = ids.len(),
+                "failed to delete workspace vector points"
             );
         }
     }
@@ -1167,6 +1193,7 @@ fn validate_threshold(
 }
 
 const REINDEX_PAGE_SIZE: i64 = 1000;
+const WORKSPACE_PURGE_VECTOR_PAGE_SIZE: i64 = 1000;
 
 #[derive(Debug, Deserialize)]
 pub struct ReindexQuery {
@@ -1180,6 +1207,13 @@ pub struct ReindexResponse {
     pub next_cursor: Option<Uuid>,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct MemoryIdRow {
+    id: Uuid,
+    workspace_id: Uuid,
+    embedding_id: Option<String>,
+}
+
 #[axum::debug_handler]
 pub async fn reindex_workspace(
     State(state): State<AppState>,
@@ -1191,39 +1225,21 @@ pub async fn reindex_workspace(
 
     let force = query.force.unwrap_or(false);
 
-    // If force mode: clear embedding_ids for all non-deleted memories first
-    if force {
-        sqlx::query(
-            "UPDATE memory_units SET embedding_id = NULL WHERE workspace_id = $1 AND deleted_at IS NULL AND ($2::UUID IS NULL OR id > $2)",
-        )
-        .bind(id)
-        .bind(query.after)
-        .execute(&state.db)
-        .await
-        .map_err(AppError::Database)?;
-    }
-
-    // Fetch memories that need embedding (missing embedding_id), with cursor pagination
-    #[derive(sqlx::FromRow)]
-    struct MemoryIdRow {
-        id: Uuid,
-        workspace_id: Uuid,
-    }
-
     let mut rows: Vec<MemoryIdRow> = sqlx::query_as::<_, MemoryIdRow>(
         r#"
-        SELECT id, workspace_id
+        SELECT id, workspace_id, embedding_id
         FROM memory_units
         WHERE workspace_id = $1
           AND deleted_at IS NULL
-          AND embedding_id IS NULL
           AND ($2::UUID IS NULL OR id > $2)
+          AND ($3::BOOLEAN OR embedding_id IS NULL)
         ORDER BY id ASC
-        LIMIT $3
+        LIMIT $4
         "#,
     )
     .bind(id)
     .bind(query.after)
+    .bind(force)
     .bind(REINDEX_PAGE_SIZE + 1)
     .fetch_all(&state.db)
     .await
@@ -1235,20 +1251,7 @@ pub async fn reindex_workspace(
         None
     };
 
-    let enqueued = rows.len();
-    match state.redis.get().await {
-        Ok(mut conn) => {
-            for row in &rows {
-                if let Err(error) = enqueue_slow_job(&mut *conn, row.id, row.workspace_id, 0).await
-                {
-                    tracing::warn!(error = ?error, memory_id = %row.id, "failed to enqueue memory for reindex");
-                }
-            }
-        }
-        Err(error) => {
-            tracing::warn!(error = ?error, "failed to get Redis connection for reindex enqueue")
-        }
-    }
+    let enqueued = enqueue_reindex_rows(&state, &rows, force).await?;
 
     // FIX: was `format!("user:{}", auth.key_id)` — use auth.actor() for
     // consistent audit record format across all handlers.
@@ -1266,6 +1269,87 @@ pub async fn reindex_workspace(
         enqueued,
         next_cursor,
     }))
+}
+
+async fn enqueue_reindex_rows(
+    state: &AppState,
+    rows: &[MemoryIdRow],
+    force: bool,
+) -> AppResult<usize> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    let mut enqueued = 0_usize;
+
+    for row in rows {
+        if force {
+            clear_memory_embedding(&state.db, row.id, row.workspace_id).await?;
+        }
+
+        if let Err(error) = enqueue_slow_job(&mut *conn, row.id, row.workspace_id, 0).await {
+            if force {
+                if let Err(restore_error) =
+                    restore_memory_embedding(&state.db, row.id, row.workspace_id, &row.embedding_id)
+                        .await
+                {
+                    tracing::warn!(error = ?restore_error, memory_id = %row.id, "failed to restore embedding_id after reindex enqueue failure");
+                }
+            }
+            return Err(error);
+        }
+
+        enqueued = enqueued.saturating_add(1);
+    }
+
+    Ok(enqueued)
+}
+
+async fn clear_memory_embedding(db: &PgPool, id: Uuid, workspace_id: Uuid) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE memory_units
+        SET embedding_id = NULL
+        WHERE id = $1
+          AND workspace_id = $2
+          AND deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(AppError::Database)
+}
+
+async fn restore_memory_embedding(
+    db: &PgPool,
+    id: Uuid,
+    workspace_id: Uuid,
+    embedding_id: &Option<String>,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE memory_units
+        SET embedding_id = $3
+        WHERE id = $1
+          AND workspace_id = $2
+          AND deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .bind(embedding_id.as_deref())
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(AppError::Database)
 }
 
 #[cfg(test)]
@@ -1328,7 +1412,9 @@ mod tests {
                 None,
             )),
             config: Arc::new(config),
-            github_webhook_secret: "test-secret".to_owned(),
+            app_secret_key: Arc::new(zeroize::Zeroizing::new(
+                "test-secret-key-for-unit-tests".to_owned(),
+            )),
             trusted_proxy_cidrs: Arc::new(Vec::new()),
         }
     }
@@ -1351,7 +1437,10 @@ mod tests {
 
     async fn insert_api_key(pool: &PgPool, workspace_id: Uuid) -> String {
         let key_id = Uuid::now_v7();
-        let (plaintext, prefix) = crate::security::generate_api_key(workspace_id);
+        let (plaintext, prefix) = match crate::security::generate_api_key(workspace_id) {
+            Ok(generated) => generated,
+            Err(error) => panic!("test key should be generated: {error}"),
+        };
         let key_hash = match crate::security::hash_secret(&plaintext) {
             Ok(hash) => hash,
             Err(error) => panic!("test key hash should be generated: {error}"),
@@ -1361,7 +1450,7 @@ mod tests {
             INSERT INTO api_keys (
                 id, workspace_id, name, key_hash, prefix, prefix_version, revoked, revoked_at
             )
-            VALUES ($1, $2, $3, $4, $5, 2, false, NULL)
+            VALUES ($1, $2, $3, $4, $5, 3, false, NULL)
             "#,
         )
         .bind(key_id)
@@ -1549,6 +1638,8 @@ mod tests {
             workspace_id,
             scope: MemoryScope {
                 workspace_id,
+                source: None,
+                actor: None,
                 agent_id: None,
                 user_id: None,
                 repo: Some("Quazmoz/memoryops".to_owned()),

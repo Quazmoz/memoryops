@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use common::{error::AppResult, AppError, AppState};
+use common::{error::AppResult, services::WorkspaceConfigService, AppError, AppState};
 use retrieval::{
     dto::{ScopeFilter, SearchMode, SearchRequest},
     search::hybrid,
@@ -75,7 +75,10 @@ pub async fn run(
         include_workspace_pool: false,
         inherited_workspace_pool_agent_ids: Vec::new(),
     };
-    request.apply_workspace_config(&retrieve::load_workspace_config(state, workspace_id).await?);
+    let workspace_config = WorkspaceConfigService::new(state.db.clone())
+        .load(workspace_id)
+        .await?;
+    request.apply_workspace_config(&workspace_config);
     let results = hybrid::hybrid_search(state, &request, limit).await?;
     let memories = retrieve::pack_results(
         results,

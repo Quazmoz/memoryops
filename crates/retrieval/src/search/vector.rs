@@ -2,8 +2,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use common::{
+    build_embedding_provider_for_workspace,
     error::{AppResult, ProviderError},
-    models::MemoryType,
+    models::{MemoryType, WorkspaceConfig},
     providers::EmbeddingProvider,
     AppError, AppState,
 };
@@ -19,7 +20,8 @@ use uuid::Uuid;
 use crate::{
     dto::{
         memory_type_as_str, normalized_memory_types, rank_from_index, MemoryResult, MemoryUnitDto,
-        ScopeFilter, SearchRequest, WorkspacePoolAccess, MIN_SCORE_THRESHOLD,
+        ScopeFilter, SearchFilters, SearchRequest, WorkspacePoolAccess, DEFAULT_OFFSET,
+        MIN_SCORE_THRESHOLD,
     },
     store,
 };
@@ -49,16 +51,33 @@ pub async fn vector_search(
     embedding_provider: &Arc<dyn EmbeddingProvider>,
     options: VectorSearchOptions<'_>,
 ) -> AppResult<Vec<ScoredCandidate>> {
-    let embedding = match embedding_provider.embed(options.query).await {
-        Ok(embedding) => embedding,
-        Err(ProviderError::NotConfigured) => {
-            tracing::warn!("embedding provider not configured; skipping vector search");
-            return Ok(Vec::new());
-        }
-        Err(error) => return Err(AppError::Provider(error)),
+    let Some(embedding) = query_embedding(embedding_provider, options.query).await? else {
+        return Ok(Vec::new());
     };
 
-    let request = SearchPointsBuilder::new(COLLECTION_NAME, embedding, options.limit)
+    vector_search_with_embedding(qdrant, &embedding, options).await
+}
+
+async fn query_embedding(
+    embedding_provider: &Arc<dyn EmbeddingProvider>,
+    query: &str,
+) -> AppResult<Option<Vec<f32>>> {
+    match embedding_provider.embed(query).await {
+        Ok(embedding) => Ok(Some(embedding)),
+        Err(ProviderError::NotConfigured) => {
+            tracing::warn!("embedding provider not configured; skipping vector search");
+            Ok(None)
+        }
+        Err(error) => Err(AppError::Provider(error)),
+    }
+}
+
+async fn vector_search_with_embedding(
+    qdrant: &QdrantClient,
+    embedding: &[f32],
+    options: VectorSearchOptions<'_>,
+) -> AppResult<Vec<ScoredCandidate>> {
+    let request = SearchPointsBuilder::new(COLLECTION_NAME, embedding.to_vec(), options.limit)
         .score_threshold(MIN_SCORE_THRESHOLD)
         .filter(build_vector_filter(
             options.workspace_id,
@@ -96,63 +115,153 @@ pub async fn vector_search_results(
     req: &SearchRequest,
     limit: u32,
 ) -> AppResult<Vec<MemoryResult>> {
+    let workspace_config = crate::handlers::fetch_workspace_config(state, req.workspace_id).await?;
+    vector_search_results_with_config(state, req, limit, &workspace_config).await
+}
+
+pub(crate) async fn vector_search_results_with_config(
+    state: &AppState,
+    req: &SearchRequest,
+    limit: u32,
+    workspace_config: &WorkspaceConfig,
+) -> AppResult<Vec<MemoryResult>> {
+    let offset = req.offset.unwrap_or(DEFAULT_OFFSET);
+    vector_search_results_with_offset_and_config(state, req, limit, offset, workspace_config).await
+}
+
+pub(crate) async fn vector_search_results_with_offset_and_config(
+    state: &AppState,
+    req: &SearchRequest,
+    limit: u32,
+    offset: u32,
+    workspace_config: &WorkspaceConfig,
+) -> AppResult<Vec<MemoryResult>> {
     let memory_types = normalized_memory_types(req)?;
     let scope = req.resolved_scope_filter();
     let workspace_pool = req.workspace_pool_access();
-    let candidates = vector_search(
-        &state.qdrant,
-        &state.embedding_provider,
-        VectorSearchOptions {
-            workspace_id: req.workspace_id,
-            query: &req.query,
-            scope: scope.as_ref(),
-            memory_types: memory_types.as_deref(),
-            as_of: req.as_of,
-            workspace_pool: &workspace_pool,
-            limit: VECTOR_CANDIDATE_LIMIT.max(u64::from(limit)),
-        },
-    )
-    .await?;
+    let embedding_provider =
+        build_embedding_provider_for_workspace(&state.config, &workspace_config);
+    let Some(embedding) = query_embedding(&embedding_provider, &req.query).await? else {
+        return Ok(Vec::new());
+    };
+    let mut candidate_limit = VECTOR_CANDIDATE_LIMIT.max(u64::from(limit.saturating_add(offset)));
+    let mut previous_candidate_count = None;
 
+    loop {
+        let candidates = vector_search_with_embedding(
+            &state.qdrant,
+            &embedding,
+            VectorSearchOptions {
+                workspace_id: req.workspace_id,
+                query: &req.query,
+                scope: scope.as_ref(),
+                memory_types: memory_types.as_deref(),
+                as_of: req.as_of,
+                workspace_pool: &workspace_pool,
+                limit: candidate_limit,
+            },
+        )
+        .await?;
+
+        let candidate_count = candidates.len();
+        let results = materialize_vector_results(
+            &state.db,
+            req,
+            scope.as_ref(),
+            memory_types.as_deref(),
+            &workspace_pool,
+            candidates,
+            limit,
+            offset,
+        )
+        .await?;
+
+        if results.len() >= limit as usize {
+            return Ok(results);
+        }
+        if candidate_count < candidate_limit as usize
+            || previous_candidate_count == Some(candidate_count)
+        {
+            return Ok(results);
+        }
+
+        previous_candidate_count = Some(candidate_count);
+        candidate_limit = candidate_limit.saturating_add(VECTOR_CANDIDATE_LIMIT);
+    }
+}
+
+async fn materialize_vector_results(
+    db: &sqlx::PgPool,
+    req: &SearchRequest,
+    scope: Option<&ScopeFilter>,
+    memory_types: Option<&[String]>,
+    workspace_pool: &WorkspacePoolAccess,
+    candidates: Vec<ScoredCandidate>,
+    limit: u32,
+    offset: u32,
+) -> AppResult<Vec<MemoryResult>> {
     let scored_ids = candidates
         .into_iter()
         .map(|candidate| (candidate.memory_id, candidate.score))
         .collect::<Vec<_>>();
     let ids = scored_ids.iter().map(|(id, _)| *id).collect::<Vec<_>>();
     let units = if let Some(as_of) = req.as_of {
-        store::get_memory_units_by_ids_at(&state.db, &ids, req.workspace_id, as_of).await?
+        store::get_memory_units_by_ids_at(db, &ids, req.workspace_id, as_of).await?
     } else {
-        store::get_memory_units_by_ids(&state.db, &ids, req.workspace_id).await?
+        store::get_memory_units_by_ids(db, &ids, req.workspace_id).await?
     };
     let mut units_by_id = units
         .into_iter()
         .map(|unit| (unit.id, unit))
         .collect::<HashMap<_, _>>();
+    let window_len = usize::try_from(limit.saturating_add(offset)).unwrap_or(usize::MAX);
 
-    let mut results = Vec::with_capacity(scored_ids.len());
+    let mut matches = Vec::with_capacity(scored_ids.len());
     for (id, score) in scored_ids {
         if let Some(unit) = units_by_id.remove(&id) {
-            if let Some(scope) = scope.as_ref() {
-                if !store::scope_matches_workspace_pool(&unit, scope, &workspace_pool) {
+            if let Some(scope) = scope {
+                if !store::scope_matches_workspace_pool(&unit, scope, workspace_pool) {
                     continue;
                 }
             }
-            if !matches_memory_type(unit.memory_type, memory_types.as_deref()) {
+            if !matches_memory_type(unit.memory_type, memory_types) {
                 continue;
             }
-            let rank = rank_from_index(results.len());
-            results.push(MemoryResult {
+            if !non_type_search_filters_match(
+                unit.scope.source.as_deref(),
+                unit.importance_score,
+                unit.pinned,
+                &unit.tags,
+                req.filters.as_ref(),
+            ) {
+                continue;
+            }
+            matches.push(MemoryResult {
                 memory: MemoryUnitDto::from(unit),
                 score,
-                rank,
+                rank: 0,
             });
-            if results.len() >= limit as usize {
+            if matches.len() >= window_len {
                 break;
             }
         }
     }
 
-    Ok(results)
+    let skip = offset as usize;
+    if skip >= matches.len() {
+        return Ok(Vec::new());
+    }
+
+    Ok(matches
+        .into_iter()
+        .skip(skip)
+        .take(limit as usize)
+        .enumerate()
+        .map(|(index, mut result)| {
+            result.rank = rank_from_index(index);
+            result
+        })
+        .collect())
 }
 
 pub fn build_vector_filter(
@@ -241,6 +350,51 @@ fn matches_memory_type(memory_type: MemoryType, filters: Option<&[String]>) -> b
     })
 }
 
+fn source_matches(memory_source: Option<&str>, source_filter: Option<&str>) -> bool {
+    source_filter.is_none_or(|expected| memory_source == Some(expected))
+}
+
+fn non_type_search_filters_match(
+    memory_source: Option<&str>,
+    importance_score: f32,
+    pinned: bool,
+    memory_tags: &[String],
+    filters: Option<&SearchFilters>,
+) -> bool {
+    let Some(filters) = filters else {
+        return true;
+    };
+
+    let source_filter = filters
+        .source
+        .as_deref()
+        .map(str::trim)
+        .filter(|source| !source.is_empty());
+    if !source_matches(memory_source, source_filter) {
+        return false;
+    }
+
+    if let Some(min_importance) = filters.min_importance {
+        if importance_score < min_importance {
+            return false;
+        }
+    }
+
+    if let Some(expected_pinned) = filters.pinned {
+        if pinned != expected_pinned {
+            return false;
+        }
+    }
+
+    if let Some(tags) = &filters.tags {
+        if !tags.iter().all(|tag| memory_tags.contains(tag)) {
+            return false;
+        }
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +421,58 @@ mod tests {
         assert!(debug.contains(&workspace_id.to_string()));
         assert!(debug.contains("agent_id"));
         assert!(debug.contains("repo"));
+    }
+
+    #[test]
+    fn source_match_requires_matching_source_when_filter_is_present() {
+        assert!(source_matches(Some("github"), Some("github")));
+        assert!(!source_matches(Some("slack"), Some("github")));
+        assert!(!source_matches(None, Some("github")));
+        assert!(source_matches(Some("slack"), None));
+    }
+
+    #[test]
+    fn non_type_search_filters_require_importance_pin_and_tags() {
+        let filters = SearchFilters {
+            memory_type: None,
+            source: Some("github".to_owned()),
+            min_importance: Some(0.7),
+            pinned: Some(true),
+            tags: Some(vec!["rust".to_owned(), "api".to_owned()]),
+            agent_id: None,
+            user_id: None,
+            repo: None,
+        };
+        let tags = vec!["rust".to_owned(), "api".to_owned(), "security".to_owned()];
+
+        assert!(non_type_search_filters_match(
+            Some("github"),
+            0.8,
+            true,
+            &tags,
+            Some(&filters),
+        ));
+        assert!(!non_type_search_filters_match(
+            Some("github"),
+            0.6,
+            true,
+            &tags,
+            Some(&filters),
+        ));
+        assert!(!non_type_search_filters_match(
+            Some("github"),
+            0.8,
+            false,
+            &tags,
+            Some(&filters),
+        ));
+        assert!(!non_type_search_filters_match(
+            Some("github"),
+            0.8,
+            true,
+            &["rust".to_owned()],
+            Some(&filters),
+        ));
     }
 
     #[test]
