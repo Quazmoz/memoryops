@@ -6,6 +6,7 @@ mod queue;
 mod router;
 pub mod slack;
 mod store;
+mod webhook;
 
 pub use observation::ingest::{ingest_observation, ObservationInput, ObservationOutput};
 pub use queue::{publish_raw_event, STREAM_KEY};

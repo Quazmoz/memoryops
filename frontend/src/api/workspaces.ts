@@ -1,4 +1,5 @@
-import { ApiError, apiRequest, apiUrl, extractDetail, parseResponse, requestHeaders } from "./client";
+import { ApiError, apiUrl, extractDetail, parseResponse, queryString, requestHeaders } from "./client";
+import { apiContractRequest, operationMethod, resolveOperationPath } from "./generated/contract";
 import type {
   CreatedApiKey,
   CreateApiKeyResponse,
@@ -15,10 +16,10 @@ import type {
   WorkspaceStats,
 } from "./types";
 
-export async function createWorkspace(name: string): Promise<WorkspaceSummary> {
-  const response = await apiRequest<CreateWorkspaceResponse>("/v1/workspaces", {
-    method: "POST",
+export async function createWorkspace(name: string, adminToken: string): Promise<WorkspaceSummary> {
+  const response = await apiContractRequest<CreateWorkspaceResponse>("createWorkspace", {
     auth: false,
+    headers: { "x-admin-token": adminToken },
     body: { name },
   });
   const id = response.id ?? response.workspace_id;
@@ -40,8 +41,8 @@ export async function createWorkspace(name: string): Promise<WorkspaceSummary> {
 }
 
 export async function createApiKey(workspaceId: string, name: string): Promise<CreatedApiKey> {
-  const response = await apiRequest<CreateApiKeyResponse>(`/v1/workspaces/${workspaceId}/keys`, {
-    method: "POST",
+  const response = await apiContractRequest<CreateApiKeyResponse>("createApiKey", {
+    path: resolveOperationPath("createApiKey", { id: workspaceId }),
     auth: false,
     body: { name },
   });
@@ -55,47 +56,52 @@ export async function createApiKey(workspaceId: string, name: string): Promise<C
 }
 
 export function getWorkspace(workspaceId: string): Promise<WorkspaceDetail> {
-  return apiRequest<WorkspaceDetail>(`/v1/workspaces/${workspaceId}`).then(normalizeWorkspaceDetail);
+  return apiContractRequest<WorkspaceDetail>("getWorkspace", {
+    path: resolveOperationPath("getWorkspace", { id: workspaceId }),
+  }).then(normalizeWorkspaceDetail);
 }
 
 export function getWorkspaceStats(workspaceId: string): Promise<WorkspaceStats> {
-  return apiRequest<WorkspaceStats>(`/v1/workspaces/${workspaceId}/stats`);
+  return apiContractRequest<WorkspaceStats>("getWorkspaceStats", {
+    path: resolveOperationPath("getWorkspaceStats", { id: workspaceId }),
+  });
 }
 
 export function getWorkspaceStatsHistory(workspaceId: string, days = 30): Promise<StatsHistory> {
-  return apiRequest<StatsHistory>(`/v1/workspaces/${workspaceId}/stats/history?days=${days}`);
+  return apiContractRequest<StatsHistory>("getWorkspaceStatsHistory", {
+    path: `${resolveOperationPath("getWorkspaceStatsHistory", { id: workspaceId })}${queryString({ days })}`,
+  });
 }
 
 export function listWorkspaceTags(workspaceId: string, limit = 50, cursor?: string): Promise<TagsResponse> {
-  const search = new URLSearchParams({ limit: String(limit) });
-  if (cursor) {
-    search.set("cursor", cursor);
-  }
-
-  return apiRequest<TagsResponse>(`/v1/workspaces/${workspaceId}/tags?${search.toString()}`);
+  return apiContractRequest<TagsResponse>("listWorkspaceTags", {
+    path: `${resolveOperationPath("listWorkspaceTags", { id: workspaceId })}${queryString({ limit, cursor })}`,
+  });
 }
 
 export function updateWorkspaceConfig(workspaceId: string, patch: Partial<WorkspaceConfig>): Promise<WorkspaceDetail> {
-  return apiRequest<WorkspaceDetail>(`/v1/workspaces/${workspaceId}/config`, {
-    method: "PATCH",
+  return apiContractRequest<WorkspaceDetail>("updateWorkspaceConfig", {
+    path: resolveOperationPath("updateWorkspaceConfig", { id: workspaceId }),
     body: configPatchBody(patch),
   }).then(normalizeWorkspaceDetail);
 }
 
 export function triggerPromotion(workspaceId: string): Promise<PromotionReport> {
-  return apiRequest<PromotionReport>(`/v1/workspaces/${workspaceId}/promote`, {
-    method: "POST",
+  return apiContractRequest<PromotionReport>("promoteWorkspace", {
+    path: resolveOperationPath("promoteWorkspace", { id: workspaceId }),
   });
 }
 
 export function forgetUserData(workspaceId: string, userId: string): Promise<ForgetUserDataResponse> {
-  return apiRequest<ForgetUserDataResponse>(`/v1/workspaces/${workspaceId}/forget/user/${encodeURIComponent(userId)}`, {
-    method: "DELETE",
+  return apiContractRequest<ForgetUserDataResponse>("forgetUserData", {
+    path: resolveOperationPath("forgetUserData", { workspace_id: workspaceId, user_id: userId }),
   });
 }
 
 export async function exportMemories(workspaceId: string): Promise<Blob> {
-  const response = await fetch(apiUrl(`/v1/workspaces/${workspaceId}/export`), {
+  const path = resolveOperationPath("exportWorkspaceMemory", { id: workspaceId });
+  const response = await fetch(apiUrl(path), {
+    method: operationMethod("exportWorkspaceMemory").toUpperCase(),
     headers: requestHeaders(),
   });
   const payload = response.ok ? null : await parseResponse(response);
@@ -109,8 +115,9 @@ export async function exportMemories(workspaceId: string): Promise<Blob> {
 
 export async function importMemories(workspaceId: string, file: File): Promise<ImportMemoriesResponse> {
   const headers = requestHeaders({ headers: { "content-type": "application/x-ndjson" } });
-  const response = await fetch(apiUrl(`/v1/workspaces/${workspaceId}/import`), {
-    method: "POST",
+  const path = resolveOperationPath("importWorkspaceMemory", { id: workspaceId });
+  const response = await fetch(apiUrl(path), {
+    method: operationMethod("importWorkspaceMemory").toUpperCase(),
     headers,
     body: file,
   });
@@ -141,7 +148,10 @@ export interface WorkspaceListResponse {
 export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[]> {
   const headers = requestHeaders({}, false);
   headers.set("x-api-key", apiKey);
-  const response = await fetch(apiUrl("/v1/workspaces/me"), { headers });
+  const response = await fetch(apiUrl(resolveOperationPath("getCurrentWorkspace", {})), {
+    method: operationMethod("getCurrentWorkspace").toUpperCase(),
+    headers,
+  });
   const payload = await parseResponse(response);
 
   if (!response.ok) {
@@ -173,12 +183,8 @@ export interface ReindexResponse {
 }
 
 export function triggerReindex(workspaceId: string, force = false, after?: string): Promise<ReindexResponse> {
-  const params = new URLSearchParams();
-  if (force) params.set("force", "true");
-  if (after) params.set("after", after);
-  const qs = params.toString();
-  return apiRequest<ReindexResponse>(`/v1/workspaces/${workspaceId}/reindex${qs ? `?${qs}` : ""}`, {
-    method: "POST",
+  return apiContractRequest<ReindexResponse>("reindexWorkspace", {
+    path: `${resolveOperationPath("reindexWorkspace", { id: workspaceId })}${queryString({ force: force ? true : undefined, after })}`,
   });
 }
 

@@ -22,6 +22,15 @@ pub async fn keyword_search(
     limit: u32,
 ) -> AppResult<Vec<MemoryResult>> {
     let offset = req.offset.unwrap_or(DEFAULT_OFFSET);
+    keyword_search_with_offset(state, req, limit, offset).await
+}
+
+pub(crate) async fn keyword_search_with_offset(
+    state: &AppState,
+    req: &SearchRequest,
+    limit: u32,
+    offset: u32,
+) -> AppResult<Vec<MemoryResult>> {
     let hits = keyword_hits(state, req, limit, offset).await?;
     let ids = hits.iter().map(|hit| hit.id).collect::<Vec<_>>();
     let units = if let Some(as_of) = req.as_of {
@@ -99,11 +108,12 @@ async fn keyword_hits(
 }
 
 fn push_search_filters<'a>(builder: &mut QueryBuilder<'a, Postgres>, filters: &'a SearchFilters) {
-    if let Some(memory_type) = filters.memory_type {
-        builder.push(" AND memory_type = ");
-        builder.push_bind(memory_type);
-    }
-    if let Some(source) = &filters.source {
+    if let Some(source) = filters
+        .source
+        .as_deref()
+        .map(str::trim)
+        .filter(|source| !source.is_empty())
+    {
         builder.push(" AND scope->>'source' = ");
         builder.push_bind(source);
     }
@@ -171,5 +181,25 @@ mod tests {
         );
 
         assert_eq!(builder.sql(), before);
+    }
+
+    #[test]
+    fn search_filters_leave_memory_type_to_normalized_filtering() {
+        let mut builder = QueryBuilder::<Postgres>::new("SELECT id FROM memory_units WHERE true");
+        push_search_filters(
+            &mut builder,
+            &SearchFilters {
+                memory_type: Some(common::models::MemoryType::Semantic),
+                source: None,
+                min_importance: None,
+                pinned: None,
+                tags: None,
+                agent_id: None,
+                user_id: None,
+                repo: None,
+            },
+        );
+
+        assert!(!builder.sql().contains("memory_type ="));
     }
 }

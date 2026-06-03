@@ -35,7 +35,7 @@
 <text x="480" y="90" class="text-main" style="font-weight:bold; fill:#8b949e">MemoryOps Core</text>
 <rect x="370" y="120" width="220" height="60" class="node-purple" />
 <text x="480" y="145" class="text-main">Ingestion API</text>
-<text x="480" y="165" class="text-small">Auth & Normalization</text>
+<text x="480" y="165" class="text-small">Auth &amp; Normalization</text>
 <rect x="370" y="220" width="220" height="60" class="node-purple" />
 <text x="480" y="245" class="text-main">Processor</text>
 <text x="480" y="265" class="text-small">Fast + Slow LLM Paths</text>
@@ -44,7 +44,7 @@
 <text x="480" y="365" class="text-small">Hybrid RRF + Token Packing</text>
 
 <rect x="660" y="50" width="220" height="500" class="lane" />
-<text x="770" y="90" class="text-main" style="font-weight:bold; fill:#8b949e">Storage & Indexes</text>
+<text x="770" y="90" class="text-main" style="font-weight:bold; fill:#8b949e">Storage &amp; Indexes</text>
 <rect x="690" y="120" width="160" height="50" class="node-amber" />
 <text x="770" y="150" class="text-main">Redis Queue</text>
 <rect x="690" y="190" width="160" height="50" class="box" />

@@ -1,11 +1,10 @@
 import { Activity, AlertCircle, AlertTriangle, BookOpen, CheckCircle2, Check, X, Search, Keyboard } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
 
 import { CodeBlock } from "../components/CodeBlock";
-import { getSystemHealth, type SystemHealthResponse } from "../api/health";
-import { listIntegrations } from "../api/integrations";
+import type { SystemHealthResponse } from "../api/health";
 import { HelpTooltip, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
+import { useSystemHealth, useWorkspaceIntegrations } from "../hooks/use-live-query";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
@@ -35,19 +34,8 @@ export function GuideView() {
   const [searchResults, setSearchResults] = useState<(typeof SECTIONS[number])[]>([]);
   const [showSearchResults, setShowSearchResults] = useState(false);
 
-  const healthQuery = useQuery({
-    queryKey: ["system-health"],
-    queryFn: getSystemHealth,
-    refetchInterval: 30_000,
-    enabled: hasAuth,
-  });
-
-  const integrationsQuery = useQuery({
-    queryKey: ["integrations", workspaceId],
-    queryFn: () => listIntegrations(workspaceId),
-    enabled: hasAuth,
-    refetchInterval: 60_000,
-  });
+  const healthQuery = useSystemHealth(hasAuth);
+  const integrationsQuery = useWorkspaceIntegrations(workspaceId, hasAuth);
 
   // Search functionality
   const filteredSections = useMemo(() => {
@@ -159,6 +147,26 @@ export function GuideView() {
               Connect your AI tools — VS Code/Copilot, Claude Desktop, OpenWebUI, or any HTTP client — using a workspace
               ID and API key. All data stays on your infrastructure.
             </p>
+            <div className="my-6 grid gap-4 md:grid-cols-2">
+              <div className="rounded-lg border border-line bg-soft/50 p-4">
+                <h3 className="font-semibold text-ink flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-blue-500" />
+                  Episodic Memory
+                </h3>
+                <p className="mt-2 text-xs text-ink/75 leading-relaxed">
+                  Discrete, point-in-time experiences or events (e.g., git commits, Slack messages, deployment logs, or agent observations). These are highly time-sensitive, subject to mathematical decay, and act as raw inputs to the memory engine.
+                </p>
+              </div>
+              <div className="rounded-lg border border-line bg-soft/50 p-4">
+                <h3 className="font-semibold text-ink flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  Semantic Memory
+                </h3>
+                <p className="mt-2 text-xs text-ink/75 leading-relaxed">
+                  Durable, consolidated facts, rules, and workspace concepts (e.g., architectural guidelines or database connection limits). Version-controlled, immune to decay, and created manually or via the Promotion Pipeline (which clusters related episodic memories).
+                </p>
+              </div>
+            </div>
             <Callout>
               You will need a <strong>Workspace ID</strong> <HelpTooltip label="Workspace ID">Workspace boundary that MemoryOps uses to isolate memories, settings, and retrieval scope.</HelpTooltip> and an <strong>API Key</strong> <HelpTooltip label="API Key">Credential used by clients and tools to authenticate against the selected MemoryOps workspace.</HelpTooltip>. Set them in{" "}
               <a href="/settings" className="text-accent-strong underline underline-offset-2">Settings</a> to have them
@@ -338,6 +346,41 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/query \\
               The response includes the new memory's <code className="inline-code">id</code>. Embedding and
               contradiction detection happen asynchronously in the background.
             </p>
+            <div className="mt-6 border-t border-line pt-6">
+              <h3 className="font-semibold text-ink text-sm">The MemoryOps Ingestion Pipeline</h3>
+              <p className="mt-1 text-xs text-ink/70">
+                The Ingestion Pipeline is the secure, high-throughput gateway of the MemoryOps control plane. It acts as an HMAC-validated receiver for developer workflow activity, translating raw tool actions into standardized memories.
+              </p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-lg border border-line bg-soft/30 p-3.5">
+                  <h4 className="text-xs font-semibold text-ink flex items-center gap-1.5">
+                    <span className="h-4 w-4 shrink-0 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[10px] font-bold">1</span>
+                    HMAC Security
+                  </h4>
+                  <p className="mt-1.5 text-xs text-ink/75 leading-relaxed">
+                    Incoming webhooks are verified via strict HMAC signature checks (e.g. <code>X-Hub-Signature-256</code> or <code>X-Slack-Signature</code>) using integration-specific secrets to prevent malicious probes.
+                  </p>
+                </div>
+                <div className="rounded-lg border border-line bg-soft/30 p-3.5">
+                  <h4 className="text-xs font-semibold text-ink flex items-center gap-1.5">
+                    <span className="h-4 w-4 shrink-0 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[10px] font-bold">2</span>
+                    Atomic Idempotency
+                  </h4>
+                  <p className="mt-1.5 text-xs text-ink/75 leading-relaxed">
+                    Duplicate webhook deliveries are rejected automatically. The ingestion transaction guarantees that a raw event is stored in PostgreSQL and enqueued in Redis Streams (<code>XADD</code>) atomically.
+                  </p>
+                </div>
+                <div className="rounded-lg border border-line bg-soft/30 p-3.5">
+                  <h4 className="text-xs font-semibold text-ink flex items-center gap-1.5">
+                    <span className="h-4 w-4 shrink-0 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[10px] font-bold">3</span>
+                    Decoupled Processing
+                  </h4>
+                  <p className="mt-1.5 text-xs text-ink/75 leading-relaxed">
+                    Webhooks immediately return <code>202 Accepted</code>. Asynchronous workers in the <code>processor</code> crate handle parsing, entity extraction, importance scoring, and vector indexing (Qdrant) in the background.
+                  </p>
+                </div>
+              </div>
+            </div>
           </Section>
 
           <Section id="retrieve" title="Search & Retrieve">

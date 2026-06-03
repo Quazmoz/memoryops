@@ -5,11 +5,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use common::{
-    auth::{spawn_last_used_update, validate_api_key_cached},
-    error::AppResult,
-    AppError, AppState,
-};
+use common::{error::AppResult, services::AuthService, AppError, AppState};
 use uuid::Uuid;
 
 pub const API_KEY_HEADER: HeaderName = HeaderName::from_static("x-api-key");
@@ -28,13 +24,9 @@ pub async fn require_api_key(
     let api_key = api_key_header
         .to_str()
         .map_err(|_| AppError::Unauthorized)?;
-    let mut redis = state
-        .redis
-        .get()
-        .await
-        .map_err(|_| AppError::Unauthorized)?;
-    let context = validate_api_key_cached(&state.db, &mut redis, api_key).await?;
-    spawn_last_used_update(state.db.clone(), context.key_id);
+    let context = AuthService::from_state(&state)
+        .authenticate_api_key(api_key)
+        .await?;
     request.extensions_mut().insert(context);
 
     Ok(next.run(request).await)

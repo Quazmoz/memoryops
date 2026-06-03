@@ -1,17 +1,22 @@
+use std::collections::HashSet;
+
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Timelike, Utc, Weekday};
 use common::{
     audit::spawn_audit_log,
+    build_embedding_provider_for_workspace, build_llm_provider_for_workspace,
     error::AppResult,
     models::{
         AuditAction, WorkspaceConfig, DEFAULT_DECAY_HALF_LIFE_DAYS, DEFAULT_PRUNING_THRESHOLD,
     },
+    services::{VectorIndexService, WorkspaceConfigService},
     AppError, AppState,
 };
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::{
-    config::fetch_workspace_promotion_config, embedder::Embedder, promoter::run_promotion_pass,
+    config::fetch_workspace_promotion_config, embedder::COLLECTION_NAME,
+    promoter::run_promotion_pass,
 };
 
 const WORKSPACE_PAGE_SIZE: i64 = 500;
@@ -32,6 +37,13 @@ struct MemoryIdentity {
 struct WorkspaceConfigRow {
     id: Uuid,
     config: serde_json::Value,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct RetentionMemoryCandidate {
+    id: Uuid,
+    embedding_id: Option<String>,
+    source_events: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,24 +150,42 @@ fn next_sunday_hour_utc_after(now: DateTime<Utc>, hour_utc: u32) -> DateTime<Utc
 }
 
 async fn run_scheduled_promotion_pass(state: &AppState) -> AppResult<()> {
-    for workspace_id in fetch_all_workspace_ids(&state.db).await? {
-        let config = fetch_workspace_promotion_config(&state.db, workspace_id).await?;
-        let report = run_promotion_pass(
-            &state.db,
-            &state.qdrant,
-            state.llm_provider.as_ref(),
-            state.embedding_provider.as_ref(),
-            workspace_id,
-            config,
-        )
-        .await
-        .map_err(AppError::Internal)?;
-        tracing::info!(
-            workspace_id = %report.workspace_id,
-            clusters_found = report.clusters_found,
-            units_promoted = report.units_promoted,
-            "promotion pass complete"
-        );
+    let mut cursor = None;
+    let config_service = WorkspaceConfigService::new(state.db.clone());
+
+    loop {
+        let workspace_ids =
+            list_workspace_ids_after(&state.db, cursor, WORKSPACE_PAGE_SIZE).await?;
+        if workspace_ids.is_empty() {
+            break;
+        }
+
+        for workspace_id in &workspace_ids {
+            let promotion_config =
+                fetch_workspace_promotion_config(&state.db, *workspace_id).await?;
+            let workspace_config = config_service.load(*workspace_id).await?;
+            let llm_provider = build_llm_provider_for_workspace(&state.config, &workspace_config);
+            let embedding_provider =
+                build_embedding_provider_for_workspace(&state.config, &workspace_config);
+            let report = run_promotion_pass(
+                &state.db,
+                &state.qdrant,
+                llm_provider.as_ref(),
+                embedding_provider.as_ref(),
+                *workspace_id,
+                promotion_config,
+            )
+            .await
+            .map_err(AppError::Internal)?;
+            tracing::info!(
+                workspace_id = %report.workspace_id,
+                clusters_found = report.clusters_found,
+                units_promoted = report.units_promoted,
+                "promotion pass complete"
+            );
+        }
+
+        cursor = workspace_ids.last().copied();
     }
 
     Ok(())
@@ -195,8 +225,51 @@ async fn apply_decay_scores(
     decay_half_life_days: u32,
 ) -> AppResult<u64> {
     let decay_half_life_secs = half_life_secs(decay_half_life_days);
-    let updated_ids = sqlx::query_scalar::<_, Uuid>(
+    let batch_size = i64::from(state.config.decay.batch_size.max(1));
+    let mut cursor = None;
+    let mut total = 0_u64;
+
+    loop {
+        let updated_ids = decay_score_batch(
+            &state.db,
+            workspace_id,
+            decay_half_life_secs,
+            cursor,
+            batch_size,
+        )
+        .await?;
+        if updated_ids.is_empty() {
+            break;
+        }
+
+        cursor = updated_ids.last().copied();
+        total = total.saturating_add(len_to_u64(updated_ids.len())?);
+    }
+
+    Ok(total)
+}
+
+async fn decay_score_batch(
+    db: &PgPool,
+    workspace_id: Uuid,
+    decay_half_life_secs: f64,
+    cursor: Option<Uuid>,
+    batch_size: i64,
+) -> AppResult<Vec<Uuid>> {
+    sqlx::query_scalar::<_, Uuid>(
         r#"
+        WITH candidates AS (
+            SELECT id
+            FROM memory_units
+            WHERE workspace_id = $1
+              AND deleted_at IS NULL
+              AND pinned = false
+              AND importance_overridden = false
+              AND ($3::uuid IS NULL OR id > $3)
+            ORDER BY id ASC
+            LIMIT $4
+            FOR UPDATE SKIP LOCKED
+        )
         UPDATE memory_units
         SET decay_score = GREATEST(
             0.0::double precision,
@@ -205,20 +278,18 @@ async fn apply_decay_scores(
                 EXTRACT(EPOCH FROM (NOW() - created_at)) / $2
             )
         )::real
-        WHERE workspace_id = $1
-          AND deleted_at IS NULL
-          AND pinned = false
-          AND importance_overridden = false
-        RETURNING id
+        FROM candidates
+        WHERE memory_units.id = candidates.id
+        RETURNING memory_units.id
         "#,
     )
     .bind(workspace_id)
     .bind(decay_half_life_secs)
-    .fetch_all(&state.db)
+    .bind(cursor)
+    .bind(batch_size)
+    .fetch_all(db)
     .await
-    .map_err(AppError::Database)?;
-
-    len_to_u64(updated_ids.len())
+    .map_err(AppError::Database)
 }
 
 pub async fn run_pruning_pass(state: &AppState) -> AppResult<u64> {
@@ -270,7 +341,6 @@ pub async fn run_pruning_pass(state: &AppState) -> AppResult<u64> {
 
 pub async fn run_hard_delete_pass(state: &AppState) -> AppResult<u64> {
     let batch_size = i64::from(state.config.decay.batch_size.max(1));
-    let embedder = Embedder::from_state(state);
     let mut total = 0_u64;
 
     loop {
@@ -279,17 +349,12 @@ pub async fn run_hard_delete_pass(state: &AppState) -> AppResult<u64> {
             break;
         }
 
-        for memory in &memories {
-            if let Err(error) = embedder.delete_point(memory.id).await {
-                tracing::warn!(error = ?error, memory_id = %memory.id, "failed to delete Qdrant point during hard delete pass");
-            }
-        }
-
         let ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
+        delete_vectors_best_effort(state, &ids, "hard delete pass").await;
         let deleted = sqlx::query_scalar::<_, Uuid>(
             "DELETE FROM memory_units WHERE id = ANY($1) RETURNING id",
         )
-        .bind(ids)
+        .bind(&ids)
         .fetch_all(&state.db)
         .await
         .map_err(AppError::Database)?;
@@ -315,95 +380,136 @@ pub async fn run_hard_delete_pass(state: &AppState) -> AppResult<u64> {
 }
 
 pub async fn run_compliance_retention_purge(state: &AppState) -> Result<(), AppError> {
-    let workspaces = sqlx::query_as::<_, WorkspaceConfigRow>(
+    let batch_size = i64::from(state.config.decay.batch_size.max(1));
+    let mut cursor = None;
+
+    loop {
+        let workspaces =
+            list_retention_workspaces_after(&state.db, cursor, WORKSPACE_PAGE_SIZE).await?;
+        if workspaces.is_empty() {
+            break;
+        }
+
+        for workspace in &workspaces {
+            let config = serde_json::from_value::<WorkspaceConfig>(workspace.config.clone())
+                .map_err(|error| AppError::Internal(anyhow::anyhow!(error)))?;
+            let Some(retention_max_age_days) = config.retention_max_age_days else {
+                continue;
+            };
+            if retention_max_age_days == 0 {
+                tracing::warn!(
+                    workspace_id = %workspace.id,
+                    "workspace retention limit is zero; skipping compliance purge"
+                );
+                continue;
+            }
+
+            let retention_days = retention_days_to_i32(retention_max_age_days)?;
+            let (memories_purged, raw_events_purged) = purge_retention_memory_batches(
+                state,
+                workspace.id,
+                retention_days,
+                config.compliance_hard_purge,
+                batch_size,
+            )
+            .await?;
+
+            if memories_purged > 0 {
+                insert_retention_compliance_audit_log(
+                    &state.db,
+                    workspace.id,
+                    memories_purged,
+                    raw_events_purged,
+                )
+                .await?;
+            }
+
+            tracing::info!(
+                workspace = %workspace.id,
+                memories_purged,
+                "compliance purge"
+            );
+        }
+
+        cursor = workspaces.last().map(|workspace| workspace.id);
+    }
+
+    Ok(())
+}
+
+async fn list_retention_workspaces_after(
+    pool: &PgPool,
+    cursor: Option<Uuid>,
+    limit: i64,
+) -> AppResult<Vec<WorkspaceConfigRow>> {
+    sqlx::query_as::<_, WorkspaceConfigRow>(
         r#"
         SELECT id, config
         FROM workspaces
         WHERE deleted_at IS NULL
           AND config->>'retention_max_age_days' IS NOT NULL
+          AND ($1::uuid IS NULL OR id > $1)
         ORDER BY id ASC
+        LIMIT $2
         "#,
     )
-    .fetch_all(&state.db)
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(pool)
     .await
-    .map_err(AppError::Database)?;
+    .map_err(AppError::Database)
+}
 
-    for workspace in workspaces {
-        let config = serde_json::from_value::<WorkspaceConfig>(workspace.config)
-            .map_err(|error| AppError::Internal(anyhow::anyhow!(error)))?;
-        let Some(retention_max_age_days) = config.retention_max_age_days else {
-            continue;
-        };
-        if retention_max_age_days == 0 {
-            tracing::warn!(
-                workspace_id = %workspace.id,
-                "workspace retention limit is zero; skipping compliance purge"
-            );
-            continue;
+async fn purge_retention_memory_batches(
+    state: &AppState,
+    workspace_id: Uuid,
+    retention_days: i32,
+    hard_purge_raw_events: bool,
+    batch_size: i64,
+) -> AppResult<(u64, u64)> {
+    let mut cursor = None;
+    let mut memories_purged = 0_u64;
+    let mut raw_events_purged = 0_u64;
+
+    loop {
+        let candidates = collect_retention_memory_candidates_after(
+            &state.db,
+            workspace_id,
+            retention_days,
+            cursor,
+            batch_size,
+        )
+        .await?;
+        if candidates.is_empty() {
+            break;
         }
 
-        let retention_days = retention_days_to_i32(retention_max_age_days)?;
-        let candidates =
-            collect_retention_memory_candidates(&state.db, workspace.id, retention_days).await?;
+        cursor = candidates.last().map(|candidate| candidate.id);
+        let ids = candidates
+            .iter()
+            .map(|candidate| candidate.id)
+            .collect::<Vec<_>>();
+        let vector_ids = candidates
+            .iter()
+            .filter(|candidate| candidate.embedding_id.is_some())
+            .map(|candidate| candidate.id)
+            .collect::<Vec<_>>();
+        delete_vectors_best_effort(state, &vector_ids, "compliance retention purge").await;
 
-        let embedder = Embedder::from_state(state);
-        for (memory_id, embedding_id) in &candidates {
-            if embedding_id.is_some() {
-                if let Err(error) = embedder.delete_point(*memory_id).await {
-                    tracing::warn!(
-                        error = ?error,
-                        memory_id = %memory_id,
-                        "failed to delete Qdrant point during compliance retention purge"
-                    );
-                }
-            }
-        }
-
-        let ids: Vec<Uuid> = candidates.iter().map(|(id, _)| *id).collect();
-        let memories_purged = if ids.is_empty() {
-            0u64
+        let source_event_ids = if hard_purge_raw_events {
+            retention_source_event_ids_from_candidates(&candidates)
         } else {
-            sqlx::query(
-                r#"
-                DELETE FROM memory_units
-                WHERE workspace_id = $1
-                  AND id = ANY($2)
-                "#,
-            )
-            .bind(workspace.id)
-            .bind(&ids)
-            .execute(&state.db)
-            .await
-            .map(|result| result.rows_affected())
-            .map_err(AppError::Database)?
+            Vec::new()
         };
 
-        let raw_events_purged = if config.compliance_hard_purge {
-            let source_event_ids =
-                retention_source_event_ids(&state.db, workspace.id, retention_days).await?;
-            delete_retention_raw_events(&state.db, workspace.id, &source_event_ids).await?
-        } else {
-            0
-        };
-
-        if memories_purged > 0 {
-            insert_retention_compliance_audit_log(
-                &state.db,
-                workspace.id,
-                memories_purged,
-                raw_events_purged,
-            )
-            .await?;
-        }
-
-        tracing::info!(
-            workspace = %workspace.id,
-            memories_purged,
-            "compliance purge"
+        memories_purged = memories_purged
+            .saturating_add(delete_retention_memory_batch(&state.db, workspace_id, &ids).await?);
+        raw_events_purged = raw_events_purged.saturating_add(
+            delete_retention_raw_events(&state.db, workspace_id, &source_event_ids).await?,
         );
     }
 
-    Ok(())
+    Ok((memories_purged, raw_events_purged))
 }
 
 async fn list_workspace_lifecycle_settings_after(
@@ -433,15 +539,23 @@ async fn list_workspace_lifecycle_settings_after(
         .collect())
 }
 
-async fn fetch_all_workspace_ids(pool: &sqlx::PgPool) -> AppResult<Vec<Uuid>> {
+async fn list_workspace_ids_after(
+    pool: &sqlx::PgPool,
+    cursor: Option<Uuid>,
+    limit: i64,
+) -> AppResult<Vec<Uuid>> {
     sqlx::query_scalar::<_, Uuid>(
         r#"
         SELECT id
         FROM workspaces
         WHERE deleted_at IS NULL
+          AND ($1::uuid IS NULL OR id > $1)
         ORDER BY id ASC
+        LIMIT $2
         "#,
     )
+    .bind(cursor)
+    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(AppError::Database)
@@ -498,55 +612,74 @@ async fn hard_delete_candidates(state: &AppState, limit: i64) -> AppResult<Vec<M
     .map_err(AppError::Database)
 }
 
-async fn retention_source_event_ids(
+async fn collect_retention_memory_candidates_after(
     pool: &PgPool,
     workspace_id: Uuid,
     retention_days: i32,
-) -> AppResult<Vec<Uuid>> {
-    let source_event_ids = sqlx::query_scalar::<_, Option<Vec<Uuid>>>(
+    cursor: Option<Uuid>,
+    limit: i64,
+) -> AppResult<Vec<RetentionMemoryCandidate>> {
+    sqlx::query_as::<_, RetentionMemoryCandidate>(
         r#"
-        SELECT ARRAY_AGG(DISTINCT source_event_id)
-        FROM (
-            SELECT UNNEST(source_events) AS source_event_id
-            FROM memory_units
-            WHERE workspace_id = $1
-              AND created_at < NOW() - ($2::INTEGER * INTERVAL '1 day')
-              AND pinned = false
-              AND importance_overridden = false
-              AND hard_deleted_at IS NULL
-        ) AS source_events
-        "#,
-    )
-    .bind(workspace_id)
-    .bind(retention_days)
-    .fetch_one(pool)
-    .await
-    .map_err(AppError::Database)?;
-
-    Ok(source_event_ids.unwrap_or_default())
-}
-
-async fn collect_retention_memory_candidates(
-    pool: &PgPool,
-    workspace_id: Uuid,
-    retention_days: i32,
-) -> AppResult<Vec<(Uuid, Option<String>)>> {
-    sqlx::query_as::<_, (Uuid, Option<String>)>(
-        r#"
-        SELECT id, embedding_id
+        SELECT id, embedding_id, COALESCE(source_events, ARRAY[]::uuid[]) AS source_events
         FROM memory_units
         WHERE workspace_id = $1
           AND created_at < NOW() - ($2::INTEGER * INTERVAL '1 day')
           AND pinned = false
           AND importance_overridden = false
           AND hard_deleted_at IS NULL
+          AND ($3::uuid IS NULL OR id > $3)
+        ORDER BY id ASC
+        LIMIT $4
         "#,
     )
     .bind(workspace_id)
     .bind(retention_days)
+    .bind(cursor)
+    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(AppError::Database)
+}
+
+async fn delete_retention_memory_batch(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    ids: &[Uuid],
+) -> AppResult<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+
+    sqlx::query(
+        r#"
+        DELETE FROM memory_units
+        WHERE workspace_id = $1
+          AND id = ANY($2)
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(ids)
+    .execute(pool)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(AppError::Database)
+}
+
+fn retention_source_event_ids_from_candidates(
+    candidates: &[RetentionMemoryCandidate],
+) -> Vec<Uuid> {
+    let mut seen = HashSet::new();
+    let mut ids = Vec::new();
+    for source_event_id in candidates
+        .iter()
+        .flat_map(|candidate| candidate.source_events.iter().copied())
+    {
+        if seen.insert(source_event_id) {
+            ids.push(source_event_id);
+        }
+    }
+    ids
 }
 
 async fn delete_retention_raw_events(
@@ -610,6 +743,22 @@ fn retention_days_to_i32(value: u32) -> AppResult<i32> {
 
 fn len_to_u64(value: usize) -> AppResult<u64> {
     u64::try_from(value).map_err(|error| AppError::Internal(anyhow::anyhow!(error)))
+}
+
+async fn delete_vectors_best_effort(state: &AppState, memory_ids: &[Uuid], context: &'static str) {
+    if memory_ids.is_empty() {
+        return;
+    }
+
+    let vector_index = VectorIndexService::new(&state.qdrant, COLLECTION_NAME);
+    if let Err(error) = vector_index.delete_points(memory_ids.iter().copied()).await {
+        tracing::warn!(
+            error = ?error,
+            count = memory_ids.len(),
+            context,
+            "failed to delete vector points"
+        );
+    }
 }
 
 pub fn decay_filter_allows_update(

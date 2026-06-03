@@ -1,12 +1,32 @@
+use anyhow::anyhow;
 use common::{
     error::AppResult,
     models::{EventType, RawEvent, Source},
+    telemetry::RAW_EVENT_PUBLISH_FAILED,
+    AppError,
 };
 use redis::aio::ConnectionLike;
 
 pub const STREAM_KEY: &str = "memoryops:raw_events";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishMode {
+    BestEffort,
+    Strict,
+}
+
 pub async fn publish_raw_event<C>(redis: &mut C, event: &RawEvent) -> AppResult<()>
+where
+    C: ConnectionLike + Send,
+{
+    publish_raw_event_with_mode(redis, event, PublishMode::BestEffort).await
+}
+
+pub async fn publish_raw_event_with_mode<C>(
+    redis: &mut C,
+    event: &RawEvent,
+    mode: PublishMode,
+) -> AppResult<()>
 where
     C: ConnectionLike + Send,
 {
@@ -21,11 +41,15 @@ where
         .arg(source_as_str(event.source))
         .arg("event_type")
         .arg(event_type_as_str(event.event_type))
-        .query_async::<()>(redis)
+        .query_async::<String>(redis)
         .await;
 
     if let Err(error) = result {
+        RAW_EVENT_PUBLISH_FAILED.add(1, &[]);
         tracing::error!(error = ?error, event_id = %event.id, "failed to publish raw event");
+        if mode == PublishMode::Strict {
+            return Err(AppError::Internal(anyhow!(error)));
+        }
     }
 
     Ok(())

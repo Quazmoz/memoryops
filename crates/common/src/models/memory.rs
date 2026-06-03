@@ -71,6 +71,10 @@ pub enum ScopeVisibility {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryScope {
     pub workspace_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
     pub agent_id: Option<String>,
     pub user_id: Option<String>,
     pub repo: Option<String>,
@@ -169,11 +173,34 @@ mod tests {
     fn memory_scope_specificity_uses_agent_user_repo_weights() {
         let scope = MemoryScope {
             workspace_id: Uuid::now_v7(),
+            source: Some("github".to_owned()),
+            actor: Some("octocat".to_owned()),
             agent_id: Some("agent".to_owned()),
             user_id: Some("user".to_owned()),
             repo: Some("Quazmoz/memoryops".to_owned()),
         };
 
         assert_eq!(scope.specificity(), 7);
+    }
+
+    #[test]
+    fn memory_scope_preserves_source_and_actor_metadata() {
+        let workspace_id = Uuid::now_v7();
+        let value = serde_json::json!({
+            "workspace_id": workspace_id,
+            "source": "github",
+            "actor": "octocat",
+            "agent_id": null,
+            "user_id": null,
+            "repo": "Quazmoz/memoryops"
+        });
+
+        let scope = match serde_json::from_value::<MemoryScope>(value) {
+            Ok(scope) => scope,
+            Err(error) => panic!("memory scope should deserialize: {error}"),
+        };
+
+        assert_eq!(scope.source.as_deref(), Some("github"));
+        assert_eq!(scope.actor.as_deref(), Some("octocat"));
     }
 }

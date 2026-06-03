@@ -22,9 +22,9 @@ cp .env.example .env
 ```
 
 **Required vs Optional Variables:**
-- Core connection strings (`DATABASE_URL`, `REDIS_URL`, `QDRANT_URL`) and server details (`APP_HOST`, `APP_PORT`) are **required**.
-- `APP_ENV=development` enables GitHub webhook secret fallback to ease local testing.
-- Webhook secrets (`GITHUB_WEBHOOK_SECRET`, `SLACK_SIGNING_SECRET`, etc.) default to `dev-placeholder` for local use out of the box.
+- Core connection strings (`DATABASE_URL`, `REDIS_URL`, `QDRANT_URL`), server details (`APP_HOST`, `APP_PORT`), `APP_SECRET_KEY`, and `WORKSPACE_CREATION_SECRET` are **required**.
+- `APP_ENV=development` enables local-friendly defaults where supported, but webhook secrets are still stored per workspace.
+- Webhook signing secrets are registered per workspace through the integrations API for local and production use.
 - AI Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are optional unless you configure those providers in `config.toml`.
 
 Next, configure the frontend:
@@ -214,7 +214,22 @@ ollama serve
 
 ---
 
-## 10. Using the Ingest Tester
+## 10. Memory Core Concepts
+
+### Episodic vs. Semantic Memory
+MemoryOps divides memory into two functional layers:
+- **Episodic Memory**: Discrete, timestamped occurrences (e.g., Pull Requests merged, Slack incidents, commits). These have importance scores assigned automatically, decay mathematically over time using half-life values (fading in query relevance to prevent context pollution), and are the raw events processed by workers.
+- **Semantic Memory**: Durable, high-level facts, guidelines, or architectural decisions (e.g., database configs, directory guidelines, team coding standards). These are permanent, do not undergo decay, are version-controlled upon modification, and are generated manually via API or automatically by clustering similar episodic events.
+
+### Ingestion Pipeline Feature
+The Ingestion Pipeline is the entry point for all engineering tools:
+1. **Webhook Security**: All incoming webhooks (GitHub, Slack, Jira, Linear) are HMAC signature-verified using registered workspace integration secrets.
+2. **Atomicity & Speed**: Ingestion returns `202 Accepted` immediately. It writes the `RawEvent` to PostgreSQL and registers the `XADD` stream entry to Redis atomically in a single transaction.
+3. **Async Queue Processing**: Background workers consume the stream asynchronously, extracting entities (Repo, Topic, Branch, File, Person) and scoring event importance without blocking developer environments.
+
+---
+
+## 11. Using the Ingest Tester
 
 To test incoming webhook payloads:
 1. Navigate to `http://localhost:5173/ingest` in the UI.
@@ -223,7 +238,7 @@ To test incoming webhook payloads:
 
 ---
 
-## 11. Port reference table
+## 12. Port reference table
 
 | Service | Port | Notes |
 |---|---|---|
@@ -240,7 +255,7 @@ To test incoming webhook payloads:
 
 ---
 
-## 12. Common issues and fixes
+## 13. Common issues and fixes
 
 - **Port conflict on 5432:** Run `lsof -i :5432` to see what is using the port. Stop your local Postgres instance, or remap the port in `docker-compose.yml`.
 - **Migrations fail:** Ensure `DATABASE_URL` is exported in your active shell and the Postgres container is healthy (`docker compose ps`).
@@ -251,7 +266,7 @@ To test incoming webhook payloads:
 
 ---
 
-## 13. Resetting Local Environment
+## 14. Resetting Local Environment
 
 If you experience persistent issues, you can reset the non-persistent containers:
 

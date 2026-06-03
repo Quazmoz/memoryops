@@ -360,7 +360,9 @@ async fn test_state(pool: PgPool) -> AppState {
         embedding_provider: Arc::new(TestEmbeddingProvider),
         llm_provider: Arc::new(TestLlmProvider),
         config: Arc::new(config),
-        github_webhook_secret: "test-secret".to_owned(),
+        app_secret_key: Arc::new(zeroize::Zeroizing::new(
+            "test-secret-key-for-unit-tests".to_owned(),
+        )),
         trusted_proxy_cidrs: Arc::new(Vec::new()),
     }
 }

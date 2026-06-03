@@ -1,6 +1,7 @@
+use anyhow::anyhow;
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
@@ -10,16 +11,17 @@ use uuid::Uuid;
 
 use crate::{
     github::{parser::parse_github_event, signature::verify_signature},
-    queue::publish_raw_event,
+    queue::{publish_raw_event_with_mode, PublishMode},
     store::{
-        find_raw_event_id_by_idempotency_key, insert_raw_event, workspace_exists, NewRawEvent,
+        insert_raw_event_in_tx, raw_event_needs_publish, workspace_exists, InsertRawEventOutcome,
+        NewRawEvent,
     },
+    webhook::workspace_webhook_secret,
 };
 
 const SIGNATURE_HEADER: &str = "x-hub-signature-256";
 const EVENT_HEADER: &str = "x-github-event";
 const DELIVERY_HEADER: &str = "x-github-delivery";
-const WORKSPACE_HEADER: &str = "x-workspace-id";
 
 #[derive(Debug, Serialize)]
 pub struct IngestResponse {
@@ -31,15 +33,17 @@ pub struct IngestResponse {
 #[axum::debug_handler]
 pub async fn handle_github_webhook(
     State(state): State<AppState>,
+    Path(workspace_id): Path<Uuid>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<(StatusCode, Json<IngestResponse>), AppError> {
     let signature = signature_header(&headers)?;
     let event_header = required_header(&headers, EVENT_HEADER)?;
     let delivery_id = required_header(&headers, DELIVERY_HEADER)?;
-    let workspace_id = workspace_id_header(&headers)?;
-
-    verify_signature(signature, &body, &state.github_webhook_secret)?;
+    let secret = workspace_webhook_secret(&state, workspace_id, Source::GitHub)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    verify_signature(signature, &body, &secret)?;
 
     if !workspace_exists(&state.db, workspace_id).await? {
         return Err(AppError::NotFound {
@@ -52,21 +56,9 @@ pub async fn handle_github_webhook(
     let parsed = parse_github_event(event_header, &payload)?;
     let idempotency_key = format!("github:{delivery_id}");
 
-    if find_raw_event_id_by_idempotency_key(&state.db, &idempotency_key)
-        .await?
-        .is_some()
-    {
-        return Ok((
-            StatusCode::OK,
-            Json(IngestResponse {
-                status: "duplicate",
-                event_id: None,
-            }),
-        ));
-    }
-
-    let event = insert_raw_event(
-        &state.db,
+    let mut transaction = state.db.begin().await.map_err(AppError::Database)?;
+    let event = match insert_raw_event_in_tx(
+        &mut transaction,
         &NewRawEvent {
             workspace_id,
             source: Source::GitHub,
@@ -77,21 +69,33 @@ pub async fn handle_github_webhook(
             occurred_at: parsed.occurred_at,
         },
     )
-    .await?;
-    INGEST_EVENTS.add(1, &[]);
-
-    let redis = state.redis.clone();
-    let queued_event = event.clone();
-    tokio::spawn(async move {
-        let mut redis = match redis.get().await {
-            Ok(redis) => redis,
-            Err(error) => {
-                tracing::error!(error = ?error, event_id = %queued_event.id, "failed to get Redis connection for raw event publish");
-                return;
+    .await?
+    {
+        InsertRawEventOutcome::Existing(event) => {
+            drop(transaction);
+            if raw_event_needs_publish(&state.db, event.id).await? {
+                publish_existing_event(&state, &event).await?;
             }
-        };
-        let _ = publish_raw_event(&mut *redis, &queued_event).await;
-    });
+            return Ok((
+                StatusCode::OK,
+                Json(IngestResponse {
+                    status: "duplicate",
+                    event_id: None,
+                }),
+            ));
+        }
+        InsertRawEventOutcome::Inserted(event) => event,
+    };
+
+    transaction.commit().await.map_err(AppError::Database)?;
+
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    publish_raw_event_with_mode(&mut *redis, &event, PublishMode::Strict).await?;
+    INGEST_EVENTS.add(1, &[]);
 
     Ok((
         StatusCode::ACCEPTED,
@@ -100,6 +104,18 @@ pub async fn handle_github_webhook(
             event_id: Some(event.id),
         }),
     ))
+}
+
+async fn publish_existing_event(
+    state: &AppState,
+    event: &common::models::RawEvent,
+) -> Result<(), AppError> {
+    let mut redis = state
+        .redis
+        .get()
+        .await
+        .map_err(|error| AppError::Internal(anyhow!(error)))?;
+    publish_raw_event_with_mode(&mut *redis, event, PublishMode::Strict).await
 }
 
 fn signature_header(headers: &HeaderMap) -> Result<&str, AppError> {
@@ -116,12 +132,6 @@ fn required_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, Ap
         .ok_or_else(|| AppError::Validation(format!("missing {name} header")))?
         .to_str()
         .map_err(|_| AppError::Validation(format!("invalid {name} header")))
-}
-
-fn workspace_id_header(headers: &HeaderMap) -> Result<Uuid, AppError> {
-    let raw = required_header(headers, WORKSPACE_HEADER)?;
-    Uuid::parse_str(raw)
-        .map_err(|_| AppError::Validation("invalid x-workspace-id header".to_owned()))
 }
 
 #[cfg(test)]
@@ -222,7 +232,7 @@ mod tests {
             embedding_provider: Arc::new(TestEmbeddingProvider),
             llm_provider: Arc::new(TestLlmProvider),
             config: Arc::new(config),
-            github_webhook_secret: secret.to_owned(),
+            app_secret_key: Arc::new(zeroize::Zeroizing::new(secret.to_owned())),
             trusted_proxy_cidrs: Arc::new(Vec::new()),
         }
     }
@@ -238,6 +248,27 @@ mod tests {
 
         if let Err(error) = result {
             panic!("test workspace insert should succeed: {error}");
+        }
+    }
+
+    async fn insert_github_integration(pool: &PgPool, workspace_id: Uuid, secret: &str) {
+        let encrypted = match common::crypto::encrypt_secret(secret, secret) {
+            Ok(encrypted) => encrypted,
+            Err(error) => panic!("test integration secret should encrypt: {error}"),
+        };
+        let result = sqlx::query(
+            r#"
+            INSERT INTO integrations (workspace_id, source, webhook_secret_hash, webhook_secret_enc)
+            VALUES ($1, 'github', NULL, $2)
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(encrypted)
+        .execute(pool)
+        .await;
+
+        if let Err(error) = result {
+            panic!("test GitHub integration insert should succeed: {error}");
         }
     }
 
@@ -266,11 +297,10 @@ mod tests {
     ) -> Request<Body> {
         let mut builder = Request::builder()
             .method(Method::POST)
-            .uri("/v1/ingest/github")
+            .uri(format!("/v1/ingest/github/{workspace_id}"))
             .header("content-type", "application/json")
             .header(EVENT_HEADER, event)
-            .header(DELIVERY_HEADER, Uuid::now_v7().to_string())
-            .header(WORKSPACE_HEADER, workspace_id.to_string());
+            .header(DELIVERY_HEADER, Uuid::now_v7().to_string());
 
         if let Some(signature) = signature {
             builder = builder.header(SIGNATURE_HEADER, signature);
@@ -327,6 +357,7 @@ mod tests {
     async fn unknown_event_type_returns_400(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
+        insert_github_integration(&pool, workspace_id, "secret").await;
         let body = pull_request_body();
         let signature = signed_header(body.as_bytes(), "secret");
         let app = ingestion_router().with_state(test_state(pool, "secret").await);
@@ -345,6 +376,7 @@ mod tests {
     async fn valid_pull_request_returns_202(pool: PgPool) {
         let workspace_id = Uuid::now_v7();
         insert_workspace(&pool, workspace_id).await;
+        insert_github_integration(&pool, workspace_id, "secret").await;
         let body = pull_request_body();
         let signature = signed_header(body.as_bytes(), "secret");
         let app = ingestion_router().with_state(test_state(pool, "secret").await);

@@ -169,6 +169,12 @@ pub enum MemoryType {
     Episodic,
     Semantic,
 }
+
+#### Episodic vs. Semantic Memory
+
+MemoryOps distinguishes between these two core memory types:
+*   **Episodic Memory**: Represents discrete, point-in-time experiences or events (e.g., a specific GitHub PR merge event, a production deployment failure alert, or a specific Slack observation). They are highly time-sensitive, subject to a mathematical decay rate (fading in relevance over time), and act as raw inputs to the memory engine.
+*   **Semantic Memory**: Represents durable, consolidated facts, rules, and workspace-level concepts (e.g., "The database connection pool limit is 20", or coding styles, or API usage contracts). Semantic memories do not decay under the normal pipeline, are version-controlled upon modification, and are created either manually via the API or automatically via the Promotion Pipeline (which clusters related episodic memories, summarizes them using an LLM, and promotes the consensus to a semantic memory).
 ```
 
 ### 5.3 MemoryScope
@@ -570,13 +576,19 @@ pub struct AppState {
     pub embedding_provider: Arc<dyn EmbeddingProvider>,
     pub llm_provider: Arc<dyn LlmProvider>,
     pub config: Arc<AppConfig>,
-    pub github_webhook_secret: String,
+    pub app_secret_key: Arc<Zeroizing<String>>,
 }
 ```
-
 ---
 
 ## 9. Ingestion Layer
+
+The Ingestion Pipeline is the secure, high-throughput gateway of the MemoryOps control plane. It acts as an HMAC-validated receiver for developer workflow activity, translating raw tool actions into standardized `RawEvent` structs.
+
+#### Key Characteristics of the Ingestion Pipeline:
+*   **Security & Signature Validation**: Webhooks are never accepted blindly. All incoming requests undergo strict HMAC signature verification using a per-workspace registered integration secret key (e.g. `X-Hub-Signature-256` for GitHub, `X-Slack-Signature` for Slack).
+*   **Transactional Idempotency**: Duplicate webhook deliveries (common in distributed messaging) are rejected automatically before processing. The ingestion transaction guarantees that a raw event is stored in PostgreSQL and enqueued in Redis Streams (`XADD`) atomically.
+*   **Decoupled Async Architecture**: Webhook ingestion is designed for extreme speed, immediately returning a `202 Accepted` status to the caller, while asynchronous workers in the `processor` crate handle parsing, entity extraction, importance scoring, and Qdrant storage.
 
 ### 9.1 WebhookValidator Trait
 
@@ -616,7 +628,7 @@ pub enum ValidationError {
 ### 9.3 Ingestion Flow
 
 ```
-POST /v1/ingest/github
+POST /v1/ingest/github/{workspace_id}
   │
   ├─ 1. Validate HMAC  →  401 ValidationError on failure
   ├─ 2. Parse event type from X-GitHub-Event header
@@ -790,7 +802,7 @@ Full per-component score breakdown (`semantic_similarity`, `importance`, `recenc
 ### 12.1 Conventions
 
 - **Versioning:** All routes prefixed `/v1/`
-- **Auth:** `X-API-Key` header required on all routes except `/v1/ingest/*` and `/health`
+- **Auth:** `X-API-Key` header required on all routes except `/v1/ingest/*`, `/health`, and `POST /v1/workspaces` (which requires `x-admin-token`)
 - **Content-Type:** `application/json` for all request/response bodies
 - **Pagination:** cursor-based on list endpoints (`?after=<cursor>&limit=<n>`, default limit 20, max 100)
 - **Errors:** unified error envelope (see §14)
@@ -804,8 +816,7 @@ Full per-component score breakdown (`semantic_similarity`, `importance`, `recenc
 {
   "error": {
     "code": "memory_not_found",
-    "message": "Memory unit with id 'abc...' not found",
-    "request_id": "req_01hx..."
+    "message": "Memory unit with id 'abc...' not found"
   }
 }
 ```
@@ -816,10 +827,10 @@ Full per-component score breakdown (`semantic_similarity`, `importance`, `recenc
 
 | Method | Path | Status | Description |
 |--------|------|--------|-------------|
-| POST | `/v1/ingest/github` | ✅ Live | GitHub webhook receiver |
-| POST | `/v1/ingest/slack` | ✅ Live | Slack Events API receiver |
-| POST | `/v1/ingest/linear` | ✅ Live | Linear webhook receiver |
-| POST | `/v1/ingest/jira` | ✅ Live | Jira Cloud admin webhook receiver |
+| POST | `/v1/ingest/github/{workspace_id}` | ✅ Live | GitHub webhook receiver |
+| POST | `/v1/ingest/slack/{workspace_id}` | ✅ Live | Slack Events API receiver |
+| POST | `/v1/ingest/linear/{workspace_id}` | ✅ Live | Linear webhook receiver |
+| POST | `/v1/ingest/jira/{workspace_id}` | ✅ Live | Jira Cloud admin webhook receiver |
 
 #### Memory (live — M4 complete)
 
@@ -1239,7 +1250,7 @@ Window: 60s sliding. Excess → `429 Too Many Requests` with `Retry-After`.
 | `/` | Dashboard | `GET /health/ready`, `GET /v1/memory` (counts) |
 | `/memory` | MemoryExplorer | `GET /v1/memory`, `POST /v1/memory/search`, `PATCH /v1/memory/:id` |
 | `/memory/:id` | MemoryDetail | `GET /v1/memory/:id`, `PATCH /v1/memory/:id` |
-| `/ingest` | WebhookTester | `POST /v1/ingest/github` (dev tool) |
+| `/ingest` | WebhookTester | `POST /v1/ingest/github/{workspace_id}` (dev tool) |
 | `/settings` | WorkspaceSettings | config display only (M6 write) |
 
 Views for `/retrieve/trace`, `/lifecycle`, `/audit`, `/integrations` are stubbed with empty states in M5 and wired to real endpoints in M6+.

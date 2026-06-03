@@ -1,11 +1,8 @@
 use anyhow::anyhow;
 use axum::{extract::Path, extract::State, Extension, Json};
 use common::{
-    audit::spawn_audit_log,
-    auth::AuthContext,
-    error::AppResult,
-    models::{AuditAction, WorkspaceConfig},
-    AppError, AppState,
+    audit::spawn_audit_log, auth::AuthContext, error::AppResult, models::AuditAction,
+    services::WorkspaceConfigService, AppError, AppState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -39,7 +36,9 @@ pub async fn forget_user_data(
         return Err(AppError::Validation("user_id is required".to_owned()));
     }
 
-    let config = load_workspace_config(&state, path.workspace_id).await?;
+    let config = WorkspaceConfigService::new(state.db.clone())
+        .load(path.workspace_id)
+        .await?;
 
     let (memories_purged, raw_events_purged, mode) = if config.compliance_hard_purge {
         let mut tx = state.db.begin().await.map_err(AppError::Database)?;
@@ -89,25 +88,6 @@ pub async fn forget_user_data(
         raw_events_purged,
         mode: mode.to_owned(),
     }))
-}
-
-async fn load_workspace_config(state: &AppState, workspace_id: Uuid) -> AppResult<WorkspaceConfig> {
-    let config_value = sqlx::query_scalar::<_, serde_json::Value>(
-        r#"
-        SELECT config
-        FROM workspaces
-        WHERE id = $1 AND deleted_at IS NULL
-        "#,
-    )
-    .bind(workspace_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace:{workspace_id}"),
-    })?;
-
-    serde_json::from_value(config_value).map_err(|error| AppError::Internal(anyhow!(error)))
 }
 
 async fn user_source_event_ids(

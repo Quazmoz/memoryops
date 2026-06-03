@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import type { ForgetUserDataResponse, ImportMemoriesResponse, PromotionReport, WorkspaceConfig } from "../api/types";
-import { getSystemHealth, type HealthCheck } from "../api/health";
+import type { HealthCheck } from "../api/health";
 import { exportMemories, forgetUserData, getWorkspace, importMemories, triggerPromotion, triggerReindex, updateWorkspaceConfig } from "../api/workspaces";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
@@ -11,6 +11,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
+import { useSystemHealth } from "../hooks/use-live-query";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
@@ -49,12 +50,7 @@ export function SettingsView() {
   const hasApiKey = apiKey.trim().length > 0;
   const canAct = hasApiKey && workspaceId.trim().length > 0;
 
-  const healthQuery = useQuery({
-    queryKey: ["health", "system"],
-    queryFn: () => getSystemHealth(),
-    enabled: canAct,
-    refetchInterval: 30_000,
-  });
+  const healthQuery = useSystemHealth(canAct);
 
   const reindexMutation = useMutation({
     mutationKey: ["workspace", workspaceId, "reindex"],

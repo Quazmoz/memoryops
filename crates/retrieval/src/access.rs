@@ -36,6 +36,30 @@ pub async fn record_access(redis: &RedisPool, memory_id: Uuid) -> AppResult<u64>
     }
 }
 
+/// Batch version: increments access count and sets expiry for all memory_ids in one pipeline.
+pub async fn record_access_batch(redis: &RedisPool, memory_ids: &[Uuid]) -> AppResult<()> {
+    if memory_ids.is_empty() {
+        return Ok(());
+    }
+    let mut connection = match redis.get().await {
+        Ok(conn) => conn,
+        Err(error) => {
+            tracing::warn!(error = ?error, "failed to get Redis connection for batch access recording");
+            return Ok(());
+        }
+    };
+    let mut pipe = redis::pipe();
+    for memory_id in memory_ids {
+        let key = access_key(*memory_id);
+        pipe.cmd("HINCRBY").arg(&key).arg("count").arg(1_i64);
+        pipe.cmd("EXPIRE").arg(&key).arg(ACCESS_TTL_SECS);
+    }
+    if let Err(error) = pipe.query_async::<()>(&mut *connection).await {
+        tracing::warn!(error = ?error, count = memory_ids.len(), "failed to batch record memory access");
+    }
+    Ok(())
+}
+
 pub async fn get_access_count(redis: &RedisPool, memory_id: Uuid) -> AppResult<u64> {
     let mut connection = match redis.get().await {
         Ok(conn) => conn,

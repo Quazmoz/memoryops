@@ -42,7 +42,7 @@
 <text x="600" y="290" class="text-main">BM25 Keyword</text>
 
 <rect x="750" y="100" width="200" height="400" class="lane" />
-<text x="850" y="140" class="text-main" style="fill:#8b949e">Rank & Pack</text>
+<text x="850" y="140" class="text-main" style="fill:#8b949e">Rank &amp; Pack</text>
 <rect x="770" y="180" width="160" height="50" class="node-cyan" />
 <text x="850" y="210" class="text-main">RRF Hybrid Score</text>
 <rect x="770" y="260" width="160" height="50" class="node-cyan" />

@@ -13,7 +13,7 @@ pub async fn get_metrics(
     // Process-global metrics are not safe to expose per-workspace until
     // per-workspace partitioning is implemented.
     // See: https://github.com/Quazmoz/memoryops/issues/1
-    Err(AppError::Unprocessable(
+    Err(AppError::NotImplemented(
         "per-workspace metrics are not yet available; process-global values cannot be safely exposed per workspace"
             .to_owned(),
     ))
