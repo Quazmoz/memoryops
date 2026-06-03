@@ -14,6 +14,23 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
   private mode: "recent" | "search" | "retrieval" | "message" | "error" = "message";
   private recentTotal = 0;
 
+  private filterPinned: boolean | undefined = undefined;
+  private filterType: "episodic" | "semantic" | undefined = undefined;
+  private sortField: "importance_score" | "decay_score" | "relevance_score" | "updated_at" | "created_at" = "updated_at";
+  private sortDirection: "asc" | "desc" = "desc";
+
+  getFilterPinned(): boolean | undefined { return this.filterPinned; }
+  setFilterPinned(value: boolean | undefined): void { this.filterPinned = value; }
+
+  getFilterType(): "episodic" | "semantic" | undefined { return this.filterType; }
+  setFilterType(value: "episodic" | "semantic" | undefined): void { this.filterType = value; }
+
+  getSortField(): "importance_score" | "decay_score" | "relevance_score" | "updated_at" | "created_at" { return this.sortField; }
+  setSortField(value: "importance_score" | "decay_score" | "relevance_score" | "updated_at" | "created_at"): void { this.sortField = value; }
+
+  getSortDirection(): "asc" | "desc" { return this.sortDirection; }
+  setSortDirection(value: "asc" | "desc"): void { this.sortDirection = value; }
+
   setRecentMemories(response: MemoryListResponse, options: { append?: boolean } = {}): void {
     const nextMemories = response.items.map((memory) => ({ ...memory }));
     this.mode = "recent";

@@ -305,6 +305,29 @@ export class MemoryOpsClient {
     return normalizeFeedbackResponse(response);
   }
 
+  async submitMemoryFeedback(
+    memoryId: string,
+    input: {
+      queryId: string;
+      rating: number;
+      agentId?: string | null;
+      userId?: string | null;
+      comment?: string | null;
+    }
+  ): Promise<unknown> {
+    return this.request(this.memoryPath(memoryId, "/feedback"), {
+      method: "POST",
+      authenticated: true,
+      body: {
+        query_id: input.queryId,
+        rating: input.rating,
+        agent_id: input.agentId ?? undefined,
+        user_id: input.userId ?? undefined,
+        comment: input.comment ?? undefined,
+      },
+    });
+  }
+
   async saveObservation(input: {
     content: string;
     agentId: string;
@@ -410,8 +433,17 @@ function normalizeSearchResults(response: unknown): MemorySearchResult[] {
     return [];
   }
 
+  const queryId = typeof response.query_id === "string" ? response.query_id : undefined;
   const results = response.results ?? response.items ?? response.memories;
-  return Array.isArray(results) ? results.filter(isRecord).map(normalizeSearchItem) : [];
+  const normalized = Array.isArray(results) ? results.filter(isRecord).map(normalizeSearchItem) : [];
+
+  if (queryId) {
+    for (const item of normalized) {
+      item.query_id = queryId;
+    }
+  }
+
+  return normalized;
 }
 
 function normalizeSearchItem(item: Record<string, unknown>): MemorySearchResult {

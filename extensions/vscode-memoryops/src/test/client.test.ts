@@ -166,6 +166,40 @@ test("getMemoryFeedback includes list query params and normalizes ratings", asyn
   }
 });
 
+test("submitMemoryFeedback sends a POST with feedback fields", async () => {
+  let receivedUrl = "";
+  let receivedMethod = "";
+  let receivedBody: any = null;
+
+  const restoreFetch = mockFetch(async (url, init) => {
+    receivedUrl = url;
+    receivedMethod = init?.method ?? "";
+    receivedBody = init?.body ? JSON.parse(init.body as string) : null;
+    return jsonResponse({ success: true });
+  });
+
+  try {
+    const client = new MemoryOpsClient(CONFIG);
+    await client.submitMemoryFeedback("mem-1", {
+      queryId: "query-abc",
+      rating: 1,
+      comment: "Very helpful",
+      agentId: "vscode",
+    });
+
+    assert.equal(receivedUrl, "https://memoryops.test/v1/memory/mem-1/feedback?workspace_id=workspace-123");
+    assert.equal(receivedMethod, "POST");
+    assert.deepEqual(receivedBody, {
+      query_id: "query-abc",
+      rating: 1,
+      comment: "Very helpful",
+      agent_id: "vscode",
+    });
+  } finally {
+    restoreFetch();
+  }
+});
+
 function mockFetch(handler: (url: string, init?: RequestInit) => Promise<Response> | Response): () => void {
   const originalFetch = globalThis.fetch;
 

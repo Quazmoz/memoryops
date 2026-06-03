@@ -38,6 +38,7 @@
     "views": {
       "memoryops": [
         {
+          "type": "webview",
           "id": "memoryops.memories",
           "name": "Memories",
           "contextualTitle": "MemoryOps Memories"
@@ -140,6 +141,36 @@
         "title": "MemoryOps: Open Settings",
         "category": "MemoryOps",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "memoryops.editMemory",
+        "title": "MemoryOps: Edit Memory",
+        "category": "MemoryOps",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "memoryops.submitFeedback",
+        "title": "MemoryOps: Submit Retrieval Feedback",
+        "category": "MemoryOps",
+        "icon": "$(feedback)"
+      },
+      {
+        "command": "memoryops.insertContext",
+        "title": "MemoryOps: Insert Retrieval Context",
+        "category": "MemoryOps",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "memoryops.copyContext",
+        "title": "MemoryOps: Copy Retrieval Context",
+        "category": "MemoryOps",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "memoryops.setFilterSort",
+        "title": "MemoryOps: Filter and Sort Sidebar",
+        "category": "MemoryOps",
+        "icon": "$(filter)"
       }
     ],
     "menus": {
@@ -158,6 +189,11 @@
           "command": "memoryops.retrieveContextForCurrentFile",
           "when": "view == memoryops.memories",
           "group": "navigation@3"
+        },
+        {
+          "command": "memoryops.setFilterSort",
+          "when": "view == memoryops.memories",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -202,9 +238,19 @@
           "group": "3_inspect@3"
         },
         {
+          "command": "memoryops.submitFeedback",
+          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
+          "group": "3_inspect@4"
+        },
+        {
           "command": "memoryops.copyMemory",
           "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
           "group": "4_edit@1"
+        },
+        {
+          "command": "memoryops.editMemory",
+          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
+          "group": "4_edit@2"
         },
         {
           "command": "memoryops.deleteMemory",
