@@ -226,6 +226,15 @@ paths:
           in: query
           schema:
             $ref: '#/components/schemas/Source'
+        - name: source_ref
+          in: query
+          schema:
+            type: string
+          description: >-
+            Filter to memories derived from a specific source file. Matches the
+            `source_ref` recorded on linked raw events, ignoring any
+            `#Lstart-Lend` line anchor (e.g. `src/foo.rs` matches
+            `src/foo.rs#L10-L20`).
         - name: tag
           in: query
           schema:

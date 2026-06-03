@@ -115,6 +115,8 @@ export interface MemoryListOptions {
   memoryType?: "episodic" | "semantic";
   sort?: "importance_score" | "decay_score" | "relevance_score" | "updated_at" | "created_at";
   direction?: "asc" | "desc";
+  // Filter to memories derived from a specific source file (line anchors ignored).
+  sourceRef?: string;
 }
 
 export interface SearchOptions {
@@ -197,9 +199,11 @@ export class MemoryOpsClient {
       memory_type: options.memoryType,
       sort: options.sort,
       direction: options.direction,
+      source_ref: options.sourceRef,
     })}`, {
       method: "GET",
       authenticated: true,
+      idempotent: true,
     });
 
     if (!isRecord(response)) {

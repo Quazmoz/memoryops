@@ -1,10 +1,10 @@
 import * as vscode from "vscode";
 import { MemoryOpsClient, MemorySearchResult } from "./client";
 import { MemoryOpsConfig } from "./config";
-import { getRelativeFileName, getWorkspaceRepoHint } from "./repo";
+import { getRelativeFileName } from "./repo";
 
 const CACHE_TTL_MS = 60_000;
-const MAX_LENS_TOP_K = 10;
+const SAMPLE_LIMIT = 10;
 
 interface CodeLensClientContext {
   client: MemoryOpsClient;
@@ -14,9 +14,16 @@ interface CodeLensClientContext {
 
 type GetClient = () => CodeLensClientContext;
 
+interface FileMemoryCount {
+  // Exact count of memories referencing the file (server-side `total`).
+  total: number;
+  // A bounded sample of those memories (for quick surfacing).
+  items: MemorySearchResult[];
+}
+
 interface CacheEntry {
   expiresAt: number;
-  results: MemorySearchResult[];
+  value: FileMemoryCount;
 }
 
 /**
@@ -24,15 +31,19 @@ interface CacheEntry {
  * MemoryOps memories reference the current file (e.g. "$(database) 3 memories
  * reference this file"). Clicking it surfaces those memories.
  *
+ * Uses the backend's `source_ref` list filter, which matches memories by the
+ * file recorded on their originating observation (line anchors ignored) — an
+ * exact count, not a fuzzy search.
+ *
  * Disabled by default — gated on `memoryops.enableCodeLens` — because it issues
- * a (cached) search request per file. Results are cached per file for 60s.
+ * a (cached) request per file. Results are cached per file for 60s.
  */
 export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
   private readonly _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
   public readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
 
   private readonly cache = new Map<string, CacheEntry>();
-  private inFlight = new Map<string, Promise<MemorySearchResult[]>>();
+  private inFlight = new Map<string, Promise<FileMemoryCount>>();
 
   constructor(private readonly getClient: GetClient) {}
 
@@ -60,20 +71,20 @@ export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
       return [];
     }
 
-    let results: MemorySearchResult[];
+    let result: FileMemoryCount;
     try {
-      results = await this.getResultsForFile(client, config, document, fileName);
+      result = await this.getCountForFile(client, fileName);
     } catch {
       // Never surface CodeLens errors inline — fail silent.
       return [];
     }
 
-    if (token.isCancellationRequested || results.length === 0) {
+    if (token.isCancellationRequested || result.total === 0) {
       return [];
     }
 
     const range = new vscode.Range(0, 0, 0, 0);
-    const label = results.length === 1 ? "1 memory references this file" : `${results.length} memories reference this file`;
+    const label = result.total === 1 ? "1 memory references this file" : `${result.total} memories reference this file`;
     return [
       new vscode.CodeLens(range, {
         title: `$(database) ${label}`,
@@ -83,15 +94,13 @@ export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
     ];
   }
 
-  private async getResultsForFile(
+  private async getCountForFile(
     client: MemoryOpsClient,
-    config: MemoryOpsConfig,
-    document: vscode.TextDocument,
     fileName: string,
-  ): Promise<MemorySearchResult[]> {
+  ): Promise<FileMemoryCount> {
     const cached = this.cache.get(fileName);
     if (cached && Date.now() < cached.expiresAt) {
-      return cached.results;
+      return cached.value;
     }
 
     const existing = this.inFlight.get(fileName);
@@ -100,17 +109,13 @@ export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
     }
 
     const promise = (async () => {
-      const repo = await getWorkspaceRepoHint(document);
-      const results = await client.searchMemory(fileName, MAX_LENS_TOP_K, {
-        mode: config.defaultSearchMode,
-        repo,
-        includeWorkspacePool: config.includeWorkspacePool,
-      });
-      this.cache.set(fileName, { expiresAt: Date.now() + CACHE_TTL_MS, results });
+      const response = await client.listMemory({ sourceRef: fileName, limit: SAMPLE_LIMIT });
+      const value: FileMemoryCount = { total: response.total, items: response.items };
+      this.cache.set(fileName, { expiresAt: Date.now() + CACHE_TTL_MS, value });
       this.inFlight.delete(fileName);
       // Trigger a re-render now that the real count is known.
       this._onDidChangeCodeLenses.fire();
-      return results;
+      return value;
     })().catch((error) => {
       this.inFlight.delete(fileName);
       throw error;

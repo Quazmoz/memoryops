@@ -11,9 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Getting Started walkthrough** — a guided, four-step onboarding (connect backend → authenticate → test connection → explore) that opens automatically on first install when the extension is not yet configured. Re-openable via `MemoryOps: Open Getting Started Walkthrough`.
 - **`@memoryops` Copilot Chat participant** — query your workspace conversationally from Copilot Chat. Supports `/search` (default) and `/retrieve` (packed, token-budgeted context) slash commands, with "Open in editor" buttons and follow-up suggestions. No-op when no chat-capable client is installed.
-- **Inline CodeLens hints** — opt-in (`memoryops.enableCodeLens`) lens at the top of files showing how many memories reference the current file; click to surface them. Results are cached per file for 60s.
+- **Inline CodeLens hints** — opt-in (`memoryops.enableCodeLens`) lens at the top of files showing an **exact** count of memories that reference the current file; click to surface them. Backed by a new backend `source_ref` list filter (matches memories by the file recorded on their originating observation, ignoring line anchors) rather than a fuzzy filename search. Results are cached per file for 60s.
 - **`MemoryOps: Reconnect`** — drop the cached client and re-establish the connection. Connection failures now offer **Reconnect** / **Open Settings** actions, and the status bar item becomes a one-click reconnect.
-- **`MemoryOps: Show Memories Referencing Current File`** — find memories related to the active file.
+- **`MemoryOps: Show Memories Referencing Current File`** — find memories that reference the active file (exact `source_ref` match, not fuzzy search).
 
 ### Changed
 

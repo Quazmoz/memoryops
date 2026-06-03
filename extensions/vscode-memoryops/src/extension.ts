@@ -269,20 +269,23 @@ async function showMemoriesForFile(fileNameArg?: unknown): Promise<void> {
     return;
   }
 
-  const repo = await getWorkspaceRepoHint(document);
-  const results = await vscode.window.withProgress(
+  const response = await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: `Finding MemoryOps memories for ${fileName}...`,
       cancellable: false,
     },
-    () => client.searchMemory(fileName, config.defaultTopK, {
-      mode: config.defaultSearchMode,
-      repo,
-      includeWorkspacePool: config.includeWorkspacePool,
+    // Precise: filter memories by the source file recorded on their originating
+    // observation, rather than a fuzzy full-text search on the file name.
+    () => client.listMemory({
+      sourceRef: fileName,
+      limit: config.sidebarPageSize,
+      sort: memoryTreeProvider.getSortField(),
+      direction: memoryTreeProvider.getSortDirection(),
     }),
   );
 
+  const results = response.items as MemorySearchResult[];
   memoryTreeProvider.setSearchResults(results, fileName);
   await showSearchResults(results, `MemoryOps memories referencing ${fileName}`);
 }
