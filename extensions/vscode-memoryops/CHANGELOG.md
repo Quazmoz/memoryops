@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`MemoryOps: Reconnect`** — drop the cached client and re-establish the connection. Connection failures now offer **Reconnect** / **Open Settings** actions, and the status bar item becomes a one-click reconnect.
 - **`MemoryOps: Show Memories Referencing Current File`** — find memories that reference the active file (exact `source_ref` match, not fuzzy search).
 
+### Fixed
+
+- **Sidebar stuck on "Loading…" and dead toolbar buttons** — the webview now declares a `Content-Security-Policy` with a per-render nonce and runs its script under it. Previously the inline script and inline `onclick` handlers were blocked in stricter editor environments, so the view never received state (stuck on "Loading…" after entering API key / workspace ID) and the Refresh / Settings (and card action) buttons did nothing. All handlers now use `addEventListener` + event delegation, and the `message` listener is registered before the `ready` handshake so the first state push can't be dropped.
+
 ### Changed
 
 - **Automatic retry with exponential backoff** — read-only requests (search, retrieve, list, health) are retried on transient failures (timeouts, network errors, 5xx/429). Mutating writes are never auto-retried. Tunable via `memoryops.maxRetries` and `memoryops.retryBackoffMs`.

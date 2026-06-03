@@ -233,14 +233,24 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
   }
 
   private _getHtmlForWebview(webview: vscode.Webview): string {
-    const codiconsUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this._extensionUri, "media", "codicon.css")
-    );
+    // A nonce lets the inline <script> run under a strict Content-Security-Policy.
+    // Without an explicit CSP, stricter editor environments block the inline
+    // script entirely — which previously left the view stuck on "Loading..." and
+    // made every button (refresh/settings/card actions) a no-op.
+    const nonce = getNonce();
+    const csp = [
+      "default-src 'none'",
+      `img-src ${webview.cspSource} https: data:`,
+      `style-src ${webview.cspSource} 'unsafe-inline'`,
+      `font-src ${webview.cspSource}`,
+      `script-src 'nonce-${nonce}'`,
+    ].join("; ");
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="${csp}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MemoryOps</title>
   <style>
@@ -789,10 +799,10 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         <input type="text" class="search-input" id="search" placeholder="Search memories..." />
         <button class="search-clear" id="search-clear" title="Clear search">✕</button>
       </div>
-      <button class="icon-button" id="refresh-btn" title="Refresh Memories" onclick="vscode.postMessage({ type: 'refresh' })">
+      <button class="icon-button" id="refresh-btn" title="Refresh Memories">
         <svg class="svg-icon" viewBox="0 0 16 16"><path d="M13.6 2.3C12.2.9 10.2.1 8 .1 3.6.1 0 3.7 0 8.1s3.6 8 8 8c3.2 0 6-1.9 7.2-4.8l-1.3-.5c-1 2.3-3.2 3.8-5.9 3.8-3.6 0-6.5-2.9-6.5-6.5S4.4 1.6 8 1.6c1.8 0 3.4.7 4.6 1.9l-2.1 2.1h5.6V0L13.6 2.3z"/></svg>
       </button>
-      <button class="icon-button" id="settings-btn" title="Open Settings" onclick="vscode.postMessage({ type: 'openSettings' })">
+      <button class="icon-button" id="settings-btn" title="Open Settings">
         <svg class="svg-icon" viewBox="0 0 16 16"><path d="M9.1 1.006A1.5 1.5 0 0 0 7.728.016l-.28-.01a1.5 1.5 0 0 0-1.425.99L5.6 2.222a6.767 6.767 0 0 0-1.572.909l-1.411-.798a1.5 1.5 0 0 0-1.986.386l-.16.232a1.5 1.5 0 0 0 .193 1.983L1.75 6.02a6.772 6.772 0 0 0 .041 1.81l-1.127 1.054a1.5 1.5 0 0 0-.27 1.974l.142.242a1.5 1.5 0 0 0 1.932.482l1.455-.722a6.77 6.77 0 0 0 1.517.997l.386 1.554a1.5 1.5 0 0 0 1.396 1.12l.278.01a1.5 1.5 0 0 0 1.442-.962l.462-1.533c.548-.22 1.056-.523 1.508-.897l1.43.76a1.5 1.5 0 0 0 1.974-.356l.169-.225a1.5 1.5 0 0 0-.154-1.996l-1.077-1.107a6.776 6.776 0 0 0 .012-1.802l1.171-1.006a1.5 1.5 0 0 0 .344-1.963l-.125-.251a1.5 1.5 0 0 0-1.905-.584l-1.48.667A6.772 6.772 0 0 0 9.5 3.328l-.4-2.322zM8 10a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>
       </button>
     </div>
@@ -812,7 +822,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
     </div>
   </div>
 
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     window.vscode = vscode;
 
@@ -833,10 +843,12 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
       statusMessage: "Loading..."
     };
 
-    // Initialize
-    vscode.postMessage({ type: "ready" });
+    // Toolbar buttons (wired here rather than via inline onclick, which a strict CSP blocks)
+    refreshBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh" }));
+    settingsBtn.addEventListener("click", () => vscode.postMessage({ type: "openSettings" }));
 
-    // Handle messages from Extension Host
+    // Handle messages from Extension Host. Register BEFORE posting "ready" so the
+    // first state push from the host can never be missed (was: stuck on "Loading...").
     window.addEventListener("message", event => {
       const message = event.data;
       if (message.type === "state") {
@@ -895,6 +907,43 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         vscode.postMessage({ type: "tabChanged", tab: selectedTab });
       });
     });
+
+    // Delegated click handling for dynamically rendered cards. Inline onclick
+    // attributes are blocked under the CSP, so all card actions route through here.
+    cardsContainer.addEventListener("click", (e) => {
+      const actionEl = e.target.closest("[data-action]");
+      if (actionEl) {
+        e.stopPropagation();
+        const id = actionEl.dataset.id;
+        switch (actionEl.dataset.action) {
+          case "pin": vscode.postMessage({ type: "pin", id, pinned: actionEl.dataset.pinned === "true" }); break;
+          case "promote": vscode.postMessage({ type: "promote", id }); break;
+          case "publish": vscode.postMessage({ type: "publish", id }); break;
+          case "copy": vscode.postMessage({ type: "copy", id }); break;
+          case "edit": vscode.postMessage({ type: "edit", id, field: "all" }); break;
+          case "delete": vscode.postMessage({ type: "delete", id }); break;
+          case "read-more": toggleReadMore(id); break;
+          case "feedback-up": toggleFeedbackPanel(id, 1); break;
+          case "feedback-down": toggleFeedbackPanel(id, -1); break;
+          case "feedback-cancel": closeFeedbackPanel(id); break;
+          case "feedback-submit": submitFeedback(id); break;
+        }
+        return;
+      }
+
+      // Clicks inside the feedback editor must not open the detail view.
+      if (e.target.closest("[data-no-card-open]")) {
+        return;
+      }
+
+      const card = e.target.closest(".card");
+      if (card && card.dataset.id) {
+        vscode.postMessage({ type: "openDetails", id: card.dataset.id });
+      }
+    });
+
+    // Initialize — post AFTER listeners are wired so no host message is dropped.
+    vscode.postMessage({ type: "ready" });
 
     // Rendering Logic
     function renderMemories() {
@@ -988,7 +1037,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         let promoteBtn = "";
         if (isEpisodic) {
           promoteBtn = \`
-            <button class="action-btn action-btn-accent" onclick="event.stopPropagation(); promoteMemory('\${safeId}')" title="Promote to Semantic">
+            <button class="action-btn action-btn-accent" data-action="promote" data-id="\${safeId}" title="Promote to Semantic">
               <svg class="svg-icon" viewBox="0 0 16 16"><path d="M8 0L3 5h3v6h4V5h3L8 0zm-5 13h10v2H3v-2z"/></svg>
             </button>
           \`;
@@ -997,7 +1046,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         let publishBtn = "";
         if (isSemantic && !isWorkspace) {
           publishBtn = \`
-            <button class="action-btn action-btn-accent" onclick="event.stopPropagation(); publishMemory('\${safeId}')" title="Publish to Workspace Pool">
+            <button class="action-btn action-btn-accent" data-action="publish" data-id="\${safeId}" title="Publish to Workspace Pool">
               <svg class="svg-icon" viewBox="0 0 16 16"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM7 11.5H5.5a2 2 0 0 1 0-4H7v4zm3.5-4h-2v4h2a2 2 0 0 0 0-4z"/></svg>
             </button>
           \`;
@@ -1008,19 +1057,19 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         const queryId = memory.query_id || memory.queryId;
         if (queryId) {
           feedbackHtml = \`
-            <div class="feedback-trigger-row" onclick="event.stopPropagation();">
-              <button class="feedback-trigger-btn thumbs-up" onclick="toggleFeedbackPanel('\${safeId}', 1)" title="Helpful (+1)">
+            <div class="feedback-trigger-row" data-no-card-open>
+              <button class="feedback-trigger-btn thumbs-up" data-action="feedback-up" data-id="\${safeId}" title="Helpful (+1)">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M11 5.08V2c0-1.1-.9-2-2-2H8c-.55 0-1 .45-1 1v2.58l-3.3 3.3a1.98 1.98 0 0 0-.58 1.41V14c0 1.1.9 2 2 2h6c.83 0 1.54-.5 1.84-1.22l2-4.67c.1-.26.16-.54.16-.83v-3.2a2.006 2.006 0 0 0-2-2h-3.16zM0 8h2v8H0V8z"/></svg>
               </button>
-              <button class="feedback-trigger-btn thumbs-down" onclick="toggleFeedbackPanel('\${safeId}', -1)" title="Not Helpful (-1)">
+              <button class="feedback-trigger-btn thumbs-down" data-action="feedback-down" data-id="\${safeId}" title="Not Helpful (-1)">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M5 10.92V14c0 1.1.9 2 2 2h1c.55 0 1-.45 1-1v-2.58l3.3-3.3c.37-.37.58-.88.58-1.41V2c0-1.1-.9-2-2-2H5c-.83 0-1.54.5-1.84 1.22l-2 4.67c-.1.26-.16.54-.16.83v3.2c0 1.1.9 2 2 2h3.16zM16 8h-2v-8h2v8z"/></svg>
               </button>
             </div>
-            <div class="feedback-comment-box" id="feedback-box-\${safeId}" onclick="event.stopPropagation();">
+            <div class="feedback-comment-box" id="feedback-box-\${safeId}" data-no-card-open>
               <textarea class="feedback-comment-input" id="feedback-comment-\${safeId}" placeholder="Explain your rating (optional)..." rows="2"></textarea>
               <div class="feedback-submit-row">
-                <button class="feedback-cancel-btn" onclick="closeFeedbackPanel('\${safeId}')">Cancel</button>
-                <button class="feedback-submit-btn" id="feedback-submit-btn-\${safeId}">Submit</button>
+                <button class="feedback-cancel-btn" data-action="feedback-cancel" data-id="\${safeId}">Cancel</button>
+                <button class="feedback-submit-btn" data-action="feedback-submit" data-id="\${safeId}" id="feedback-submit-btn-\${safeId}">Submit</button>
               </div>
             </div>
           \`;
@@ -1033,7 +1082,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
             </div>
             <div class="card-header-right">
               <span class="card-date">\${dateStr}</span>
-              <button class="pin-btn \${isPinned ? "pinned" : ""}" onclick="event.stopPropagation(); togglePin('\${safeId}', \${!isPinned})" title="\${isPinned ? "Unpin Memory" : "Pin Memory"}">
+              <button class="pin-btn \${isPinned ? "pinned" : ""}" data-action="pin" data-id="\${safeId}" data-pinned="\${!isPinned}" title="\${isPinned ? "Unpin Memory" : "Pin Memory"}">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M12.9 8.2v-6h1.1v-1h-12v1h1.1v6l-2.1 2.1v1h5.3v3.7l1.1 1.1 1.1-1.1v-3.7h5.3v-1l-1.9-2.1z"/></svg>
               </button>
             </div>
@@ -1042,7 +1091,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
             \${escapeHtml(displayContent)}
             \${needsTruncate ? '<div class="content-fade"></div>' : ""}
           </div>
-          \${needsTruncate ? \`<button class="read-more-btn" id="read-more-btn-\${safeId}" onclick="event.stopPropagation(); toggleReadMore('\${safeId}')">Read more</button>\` : ""}
+          \${needsTruncate ? \`<button class="read-more-btn" id="read-more-btn-\${safeId}" data-action="read-more" data-id="\${safeId}">Read more</button>\` : ""}
           \${tagsHtml}
           \${meterHtml}
           <div class="card-footer">
@@ -1050,32 +1099,30 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
               \${feedbackHtml}
             </div>
             <div class="footer-right">
-              <button class="action-btn" onclick="event.stopPropagation(); copyContent('\${safeId}')" title="Copy Content">
+              <button class="action-btn" data-action="copy" data-id="\${safeId}" title="Copy Content">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M4 4h8v1H4V4zm0 2h8v1H4V6zm0 2h8v1H4V8zm-2-6h12v12H2V2zm1 1v10h10V3H3z"/></svg>
               </button>
-              <button class="action-btn" onclick="event.stopPropagation(); editMemoryField('\${safeId}')" title="Edit Memory">
+              <button class="action-btn" data-action="edit" data-id="\${safeId}" title="Edit Memory">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5L13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V12h2.293l6.5-6.5z"/></svg>
               </button>
               \${promoteBtn}
               \${publishBtn}
-              <button class="action-btn action-btn-danger" onclick="event.stopPropagation(); deleteMemory('\${safeId}')" title="Delete Memory">
+              <button class="action-btn action-btn-danger" data-action="delete" data-id="\${safeId}" title="Delete Memory">
                 <svg class="svg-icon" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6c0-.28.22-.5.5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6c0-.28.22-.5.5-.5zm3-.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 1 0V6c0-.28-.22-.5-.5-.5zM11 2.5V1h-6v1.5H2.5A.5.5 0 0 0 2 3v1h12V3a.5.5 0 0 0-.5-.5H11zM13 5H3v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5z"/></svg>
               </button>
             </div>
           </div>
         \`;
 
-        // Bind Details click
-        card.addEventListener("click", () => {
-          vscode.postMessage({ type: "openDetails", id: memory.id });
-        });
+        // The id lives on the element so the delegated handler can open details.
+        card.dataset.id = memory.id || "";
 
         cardsContainer.appendChild(card);
       });
     }
 
-    // Helper functions exposed globally for HTML events
-    window.toggleReadMore = function(id) {
+    // Helper functions — invoked from the delegated click handler above.
+    function toggleReadMore(id) {
       const contentEl = document.getElementById(\`content-\${id}\`);
       const btnEl = document.getElementById(\`read-more-btn-\${id}\`);
       if (contentEl.classList.contains("expanded")) {
@@ -1085,39 +1132,15 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         contentEl.classList.add("expanded");
         btnEl.textContent = "Read less";
       }
-    };
-
-    window.togglePin = function(id, pinned) {
-      vscode.postMessage({ type: "pin", id, pinned });
-    };
-
-    window.promoteMemory = function(id) {
-      vscode.postMessage({ type: "promote", id });
-    };
-
-    window.publishMemory = function(id) {
-      vscode.postMessage({ type: "publish", id });
-    };
-
-    window.deleteMemory = function(id) {
-      vscode.postMessage({ type: "delete", id });
-    };
-
-    window.copyContent = function(id) {
-      vscode.postMessage({ type: "copy", id });
-    };
-
-    window.editMemoryField = function(id) {
-      vscode.postMessage({ type: "edit", id, field: "all" });
-    };
+    }
 
     // Feedback loops inside Webview
     let activeFeedbackRating = {}; // maps memoryId -> rating
 
-    window.toggleFeedbackPanel = function(id, rating) {
+    function toggleFeedbackPanel(id, rating) {
       const box = document.getElementById(\`feedback-box-\${id}\`);
       const ups = box.previousElementSibling.querySelectorAll(".feedback-trigger-btn");
-      
+
       activeFeedbackRating[id] = rating;
 
       // Toggle styles
@@ -1130,25 +1153,23 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
       }
 
       box.style.display = "flex";
+    }
 
-      // Bind submission
-      const submitBtn = document.getElementById(\`feedback-submit-btn-\${id}\`);
-      submitBtn.onclick = () => {
-        const comment = document.getElementById(\`feedback-comment-\${id}\`).value;
-        const memory = state.memories.find(m => m.id === id);
-        const queryId = memory.query_id || memory.queryId;
-        vscode.postMessage({
-          type: "submitFeedback",
-          id,
-          queryId,
-          rating: activeFeedbackRating[id],
-          comment: comment.trim() || null
-        });
-        closeFeedbackPanel(id);
-      };
-    };
+    function submitFeedback(id) {
+      const comment = document.getElementById(\`feedback-comment-\${id}\`).value;
+      const memory = state.memories.find(m => m.id === id);
+      const queryId = memory && (memory.query_id || memory.queryId);
+      vscode.postMessage({
+        type: "submitFeedback",
+        id,
+        queryId,
+        rating: activeFeedbackRating[id],
+        comment: comment.trim() || null
+      });
+      closeFeedbackPanel(id);
+    }
 
-    window.closeFeedbackPanel = function(id) {
+    function closeFeedbackPanel(id) {
       const box = document.getElementById(\`feedback-box-\${id}\`);
       box.style.display = "none";
       const ups = box.previousElementSibling.querySelectorAll(".feedback-trigger-btn");
@@ -1214,4 +1235,14 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
 </html>
 `;
   }
+}
+
+// Random nonce so the inline webview <script> is permitted under the CSP.
+function getNonce(): string {
+  let text = "";
+  const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  for (let i = 0; i < 32; i++) {
+    text += possible.charAt(Math.floor(Math.random() * possible.length));
+  }
+  return text;
 }
