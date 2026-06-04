@@ -177,6 +177,14 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
           vscode.commands.executeCommand("memoryops.openMemory", data.id);
           break;
         }
+        case "error": {
+          console.error(`[Webview Error] ${data.message} at ${data.source}:${data.lineno}:${data.colno}`);
+          if (data.error) {
+            console.error(data.error);
+          }
+          vscode.window.showErrorMessage(`MemoryOps Webview Error: ${data.message} at line ${data.lineno}`);
+          break;
+        }
       }
     });
 
@@ -826,6 +834,19 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     window.vscode = vscode;
+
+    // Report errors back to extension host
+    window.onerror = function(message, source, lineno, colno, error) {
+      vscode.postMessage({
+        type: "error",
+        message: message,
+        source: source,
+        lineno: lineno,
+        colno: colno,
+        error: error ? error.stack : undefined
+      });
+      return false;
+    };
 
     // DOM Cache
     const cardsContainer = document.getElementById("cards-container");

@@ -266,6 +266,12 @@
         "title": "MemoryOps: Roll Back Skill Version",
         "category": "MemoryOps",
         "icon": "$(discard)"
+      },
+      {
+        "command": "memoryops.configureFromLocal",
+        "title": "MemoryOps: Configure from Local Config File",
+        "category": "MemoryOps",
+        "icon": "$(gear)"
       }
     ],
     "keybindings": [

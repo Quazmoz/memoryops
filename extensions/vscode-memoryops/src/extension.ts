@@ -89,6 +89,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("memoryops.reconnect", reconnect),
     vscode.commands.registerCommand("memoryops.showMemoriesForFile", showMemoriesForFile),
     vscode.commands.registerCommand("memoryops.openWalkthrough", openWalkthrough),
+    vscode.commands.registerCommand("memoryops.configureFromLocal", () => configureFromLocalCommand(context)),
     vscode.commands.registerCommand("memoryops.setApiKey", async () => {
       const value = await vscode.window.showInputBox({
         title: "MemoryOps: Set API Key",
@@ -151,8 +152,20 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   // Read the secure API key before initializing the sidebar
-  void context.secrets.get("memoryops.apiKey").then((secret) => {
+  void context.secrets.get("memoryops.apiKey").then(async (secret) => {
     setCachedApiKeySecret(secret || undefined);
+
+    // Auto-configure from local config file if not fully configured
+    const currentConfig = getConfig();
+    if (!currentConfig.workspaceId || !currentConfig.apiKey) {
+      await autoConfigureFromLocal(context);
+      // Re-read secret in case auto-configuration just updated it
+      const newSecret = await context.secrets.get("memoryops.apiKey");
+      if (newSecret) {
+        setCachedApiKeySecret(newSecret);
+      }
+    }
+
     void initializeSidebar();
     // Feature 5: on first install, open the Getting Started walkthrough so users
     // who install the extension and "see nothing" are guided through setup.
@@ -1597,5 +1610,103 @@ async function submitFeedbackInline(
     void vscode.window.showInformationMessage("MemoryOps feedback submitted successfully.");
   } catch (err) {
     void vscode.window.showErrorMessage(`Failed to submit feedback: ${errorMessage(err)}`);
+  }
+}
+
+async function configureFromLocalCommand(context: vscode.ExtensionContext): Promise<void> {
+  let localConfigPath: string | undefined;
+  if (vscode.workspace.workspaceFolders) {
+    for (const folder of vscode.workspace.workspaceFolders) {
+      const p = path.join(folder.uri.fsPath, ".memoryops.local.json");
+      if (fs.existsSync(p)) {
+        localConfigPath = p;
+        break;
+      }
+    }
+  }
+
+  if (!localConfigPath) {
+    void vscode.window.showErrorMessage(
+      "Could not find .memoryops.local.json in the workspace root directory."
+    );
+    return;
+  }
+
+  try {
+    const data = JSON.parse(fs.readFileSync(localConfigPath, "utf8"));
+    const workspaceId = data.workspace_id || data.workspaceId;
+    const apiKey = data.api_key || data.apiKey;
+    const apiUrl = data.api_url || data.apiUrl || "http://localhost:8080";
+
+    if (!workspaceId || !apiKey) {
+      throw new Error("Missing 'workspace_id' or 'api_key' in the configuration file.");
+    }
+
+    const config = vscode.workspace.getConfiguration("memoryops");
+    const target = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+      ? vscode.ConfigurationTarget.Workspace
+      : vscode.ConfigurationTarget.Global;
+
+    await config.update("apiUrl", apiUrl, target);
+    await config.update("workspaceId", workspaceId, target);
+    await context.secrets.store("memoryops.apiKey", apiKey);
+
+    // Force client cache invalidation
+    cachedClient = undefined;
+
+    void vscode.window.showInformationMessage(
+      `MemoryOps extension configured successfully using ${path.basename(localConfigPath)}.`
+    );
+  } catch (err: any) {
+    void vscode.window.showErrorMessage(`Failed to configure MemoryOps from local file: ${err.message}`);
+  }
+}
+
+async function autoConfigureFromLocal(context: vscode.ExtensionContext): Promise<void> {
+  const currentConfig = getConfig();
+  // Check if API key or workspace ID is missing
+  if (currentConfig.workspaceId && currentConfig.apiKey) {
+    return;
+  }
+
+  let localConfigPath: string | undefined;
+  if (vscode.workspace.workspaceFolders) {
+    for (const folder of vscode.workspace.workspaceFolders) {
+      const p = path.join(folder.uri.fsPath, ".memoryops.local.json");
+      if (fs.existsSync(p)) {
+        localConfigPath = p;
+        break;
+      }
+    }
+  }
+
+  if (!localConfigPath) {
+    return;
+  }
+
+  try {
+    const data = JSON.parse(fs.readFileSync(localConfigPath, "utf8"));
+    const workspaceId = data.workspace_id || data.workspaceId;
+    const apiKey = data.api_key || data.apiKey;
+    const apiUrl = data.api_url || data.apiUrl || "http://localhost:8080";
+
+    if (workspaceId && apiKey) {
+      const config = vscode.workspace.getConfiguration("memoryops");
+      const target = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+
+      await config.update("apiUrl", apiUrl, target);
+      await config.update("workspaceId", workspaceId, target);
+      await context.secrets.store("memoryops.apiKey", apiKey);
+
+      cachedClient = undefined;
+
+      void vscode.window.showInformationMessage(
+        `MemoryOps extension auto-configured using ${path.basename(localConfigPath)}.`
+      );
+    }
+  } catch (err: any) {
+    outputChannel.appendLine(`Auto-configuration failed: ${err.message}`);
   }
 }
