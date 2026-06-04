@@ -2,7 +2,7 @@
   "name": "memoryops-vscode",
   "displayName": "MemoryOps",
   "description": "Bring governed MemoryOps agent memory into VS Code.",
-  "version": "0.4.0",
+  "version": "1.0.0",
   "publisher": "quazmoz",
   "author": {
     "name": "Quazmoz",
@@ -580,10 +580,14 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
+    "vscode:uninstall": "node ./out/lifecycle.js",
     "compile": "tsc -p ./",
-    "test": "npm run compile && node --test out/test/client.test.js out/test/markdown.test.js",
+    "test": "npm run compile && node --test out/test/client.test.js out/test/markdown.test.js out/test/cleanup.test.js",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.15",

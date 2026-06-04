@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 
 import { MemoryOpsClient, MemorySearchResult } from "./client";
+import { collectCandidateUserSettingsFiles, updateCleanupManifest } from "./cleanup";
 import { getConfig, openMemoryOpsSettings, setCachedApiKeySecret, validateConfig } from "./config";
 import { registerChatParticipant } from "./chatParticipant";
 import { MemoryCodeLensProvider } from "./codeLensProvider";
@@ -46,6 +47,7 @@ interface LoadRecentMemoriesOptions {
 export function activate(context: vscode.ExtensionContext): void {
   outputChannel = vscode.window.createOutputChannel("MemoryOps");
   context.subscriptions.push(outputChannel);
+  trackCleanupTargets(context);
 
   memoryTreeProvider = new MemoryWebviewViewProvider(context.extensionUri);
   context.subscriptions.push(
@@ -101,17 +103,21 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       if (value.trim()) {
-        await context.secrets.store("memoryops.apiKey", value.trim());
+        await storeSecureApiKey(context, value.trim());
         void vscode.window.showInformationMessage("MemoryOps API key stored securely.");
       } else {
-        await context.secrets.delete("memoryops.apiKey");
+        await storeSecureApiKey(context, undefined);
         void vscode.window.showInformationMessage("MemoryOps API key removed from secure storage.");
       }
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      trackCleanupTargets(context);
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (!event.affectsConfiguration("memoryops")) {
         return;
       }
+      trackCleanupTargets(context);
       cachedClient = undefined;
       codeLensProvider?.refresh();
       void initializeSidebar();
@@ -142,9 +148,14 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     context.secrets.onDidChange((event) => {
       if (event.key === "memoryops.apiKey") {
-        void context.secrets.get("memoryops.apiKey").then((secret) => {
-          setCachedApiKeySecret(secret || undefined);
+        void context.secrets.get("memoryops.apiKey").then(async (secret) => {
+          const normalizedSecret = secret?.trim() || undefined;
+          setCachedApiKeySecret(normalizedSecret);
+          if (normalizedSecret) {
+            await clearLegacyApiKeySetting();
+          }
           cachedClient = undefined;
+          trackCleanupTargets(context);
           void initializeSidebar();
         });
       }
@@ -153,7 +164,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Read the secure API key before initializing the sidebar
   void context.secrets.get("memoryops.apiKey").then(async (secret) => {
-    setCachedApiKeySecret(secret || undefined);
+    const normalizedSecret = secret?.trim() || undefined;
+    setCachedApiKeySecret(normalizedSecret);
+    if (normalizedSecret) {
+      await clearLegacyApiKeySetting();
+    }
 
     // Auto-configure from local config file if not fully configured
     const currentConfig = getConfig();
@@ -162,7 +177,8 @@ export function activate(context: vscode.ExtensionContext): void {
       // Re-read secret in case auto-configuration just updated it
       const newSecret = await context.secrets.get("memoryops.apiKey");
       if (newSecret) {
-        setCachedApiKeySecret(newSecret);
+        setCachedApiKeySecret(newSecret.trim());
+        await clearLegacyApiKeySetting();
       }
     }
 
@@ -886,11 +902,13 @@ async function resolveMemorySelection(item: unknown, title: string): Promise<Mem
 function setDefaultStatusBar(): void {
   statusBarItem.text = "$(database) MemoryOps";
   statusBarItem.tooltip = "MemoryOps: Test connection";
+  statusBarItem.command = "memoryops.testConnection";
 }
 
 function setIncompleteStatusBar(missing: string[]): void {
   statusBarItem.text = "$(warning) MemoryOps";
   statusBarItem.tooltip = `MemoryOps settings are incomplete: ${missing.join(", ")}`;
+  statusBarItem.command = "memoryops.openSettings";
 }
 
 async function editMemory(item?: unknown): Promise<void> {
@@ -1649,7 +1667,7 @@ async function configureFromLocalCommand(context: vscode.ExtensionContext): Prom
 
     await config.update("apiUrl", apiUrl, target);
     await config.update("workspaceId", workspaceId, target);
-    await context.secrets.store("memoryops.apiKey", apiKey);
+    await storeSecureApiKey(context, apiKey);
 
     // Force client cache invalidation
     cachedClient = undefined;
@@ -1698,7 +1716,7 @@ async function autoConfigureFromLocal(context: vscode.ExtensionContext): Promise
 
       await config.update("apiUrl", apiUrl, target);
       await config.update("workspaceId", workspaceId, target);
-      await context.secrets.store("memoryops.apiKey", apiKey);
+      await storeSecureApiKey(context, apiKey);
 
       cachedClient = undefined;
 
@@ -1709,4 +1727,88 @@ async function autoConfigureFromLocal(context: vscode.ExtensionContext): Promise
   } catch (err: any) {
     outputChannel.appendLine(`Auto-configuration failed: ${err.message}`);
   }
+}
+
+async function storeSecureApiKey(
+  context: vscode.ExtensionContext,
+  value: string | undefined,
+): Promise<void> {
+  const normalizedValue = value?.trim() || undefined;
+
+  if (normalizedValue) {
+    await context.secrets.store("memoryops.apiKey", normalizedValue);
+  } else {
+    await context.secrets.delete("memoryops.apiKey");
+  }
+
+  setCachedApiKeySecret(normalizedValue);
+  await clearLegacyApiKeySetting();
+  cachedClient = undefined;
+  trackCleanupTargets(context);
+}
+
+async function clearLegacyApiKeySetting(): Promise<void> {
+  const config = vscode.workspace.getConfiguration("memoryops");
+  const updates: Thenable<void>[] = [];
+  const inspect = config.inspect<string>("apiKey");
+
+  if (inspect?.globalValue !== undefined) {
+    updates.push(config.update("apiKey", undefined, vscode.ConfigurationTarget.Global));
+  }
+  if (inspect?.workspaceValue !== undefined) {
+    updates.push(config.update("apiKey", undefined, vscode.ConfigurationTarget.Workspace));
+  }
+
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    if (folder.uri.scheme !== "file") {
+      continue;
+    }
+
+    const folderConfig = vscode.workspace.getConfiguration("memoryops", folder.uri);
+    const folderInspect = folderConfig.inspect<string>("apiKey");
+    if (folderInspect?.workspaceFolderValue !== undefined) {
+      updates.push(folderConfig.update("apiKey", undefined, vscode.ConfigurationTarget.WorkspaceFolder));
+    }
+  }
+
+  await Promise.all(updates);
+}
+
+function trackCleanupTargets(context: vscode.ExtensionContext): void {
+  const settingsFiles = [
+    ...collectCandidateUserSettingsFiles(),
+    ...getWorkspaceSettingsFiles(),
+  ];
+  const storageDirectories = [
+    context.globalStorageUri.fsPath,
+    ...(context.storageUri?.fsPath ? [context.storageUri.fsPath] : []),
+  ];
+
+  try {
+    updateCleanupManifest({
+      settingsFiles,
+      storageDirectories,
+    });
+  } catch (error) {
+    outputChannel.appendLine(`Failed to update uninstall cleanup manifest: ${errorMessage(error)}`);
+  }
+}
+
+function getWorkspaceSettingsFiles(): string[] {
+  const paths: string[] = [];
+
+  const workspaceFile = vscode.workspace.workspaceFile;
+  if (workspaceFile?.scheme === "file" && workspaceFile.fsPath.endsWith(".code-workspace")) {
+    paths.push(workspaceFile.fsPath);
+  }
+
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    if (folder.uri.scheme !== "file") {
+      continue;
+    }
+
+    paths.push(path.join(folder.uri.fsPath, ".vscode", "settings.json"));
+  }
+
+  return paths;
 }

@@ -5,6 +5,14 @@ All notable changes to the MemoryOps VS Code extension will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-06-04
+
+### Fixed
+
+- **Uninstall cleanup** — the extension now registers VS Code's official `vscode:uninstall` hook and removes persisted `memoryops.*` settings plus tracked extension storage on uninstall.
+- **Legacy plaintext API key cleanup** — when a secure API key is stored in VS Code SecretStorage, any old `memoryops.apiKey` fallback entries are removed so stale keys do not linger in `settings.json`.
+- **Status bar reconnect drift** — the status bar now restores the correct click action after failures instead of sometimes looking healthy while still pointing at `Reconnect`.
+
 ## [0.4.0] - 2026-06-04
 
 ### Added

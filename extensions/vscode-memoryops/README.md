@@ -59,6 +59,8 @@ A built-in Getting Started walkthrough opens on first install and walks you thro
 5. **Test the connection** using the `MemoryOps: Test Connection` command from the Command Palette.
 
 > **Tip:** Store your API key in **User Settings** (not workspace settings) to avoid committing secrets.
+> 
+> **Cleanup:** Uninstalling the extension now clears tracked `memoryops.*` settings and extension state. The secure API key command also removes any old plaintext fallback key from `settings.json`.
 
 ---
 
@@ -75,7 +77,7 @@ A built-in Getting Started walkthrough opens on first install and walks you thro
 |---|---|---|
 | `memoryops.apiUrl` | `http://localhost:8080` | Base URL for the MemoryOps API |
 | `memoryops.workspaceId` | — | MemoryOps workspace UUID |
-| `memoryops.apiKey` | — | Workspace API key (store in user settings) |
+| `memoryops.apiKey` | — | Legacy plaintext fallback key. Prefer `MemoryOps: Set API Key (Secure)`, which stores the key in SecretStorage and clears this fallback entry. |
 | `memoryops.defaultTopK` | `5` | Number of results for search/retrieval (1–20) |
 | `memoryops.defaultSearchMode` | `hybrid` | Search mode: `hybrid`, `keyword`, or `vector` |
 | `memoryops.defaultTokenBudget` | `2048` | Token budget for retrieval context (256–16000) |
