@@ -819,6 +819,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
     <div class="empty-state">
       <svg class="svg-icon" style="width: 32px; height: 32px; opacity: 0.3;" viewBox="0 0 16 16"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm1 12H7v-2h2v2zm0-3H7V4h2v5z"/></svg>
       <span>No memories loaded yet. Make sure MemoryOps backend is running and settings are complete.</span>
+      <button class="feedback-submit-btn" id="empty-settings-btn" style="margin-top: 8px; font-size: 11px; padding: 4px 12px;">Open Settings</button>
     </div>
   </div>
 
@@ -846,6 +847,10 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
     // Toolbar buttons (wired here rather than via inline onclick, which a strict CSP blocks)
     refreshBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh" }));
     settingsBtn.addEventListener("click", () => vscode.postMessage({ type: "openSettings" }));
+    const emptySettingsBtn = document.getElementById("empty-settings-btn");
+    if (emptySettingsBtn) {
+      emptySettingsBtn.addEventListener("click", () => vscode.postMessage({ type: "openSettings" }));
+    }
 
     // Handle messages from Extension Host. Register BEFORE posting "ready" so the
     // first state push from the host can never be missed (was: stuck on "Loading...").
@@ -916,6 +921,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         e.stopPropagation();
         const id = actionEl.dataset.id;
         switch (actionEl.dataset.action) {
+          case "open-settings-hint": vscode.postMessage({ type: "openSettings" }); break;
           case "pin": vscode.postMessage({ type: "pin", id, pinned: actionEl.dataset.pinned === "true" }); break;
           case "promote": vscode.postMessage({ type: "promote", id }); break;
           case "publish": vscode.postMessage({ type: "publish", id }); break;
@@ -958,9 +964,11 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
       }
 
       if (filtered.length === 0) {
+        const hasSettingsHint = state.statusMessage && state.statusMessage.toLowerCase().includes("settings");
         cardsContainer.innerHTML = \`<div class="empty-state">
-          <svg class="svg-icon" style="width: 24px; height: 24px; opacity: 0.3;" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/></svg>
-          <span>No memories found for this view.</span>
+          <svg class="svg-icon" style="width: 24px; height: 24px; opacity: 0.3;" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"></path></svg>
+          <span>\${escapeHtml(state.statusMessage) || "No memories found for this view."}</span>
+          \${hasSettingsHint ? '<button class="feedback-submit-btn" data-action="open-settings-hint" style="margin-top: 8px; font-size: 11px; padding: 4px 12px;">Open Settings</button>' : ""}
         </div>\`;
         return;
       }

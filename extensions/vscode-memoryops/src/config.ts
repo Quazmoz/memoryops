@@ -57,7 +57,7 @@ export function validateConfig(config: MemoryOpsConfig): string[] {
 
 export async function openMemoryOpsSettings(): Promise<void> {
   try {
-    await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:quazmoz.memoryops-vscode");
+    await vscode.commands.executeCommand("workbench.action.openSettings", "memoryops");
   } catch {
     try {
       await vscode.commands.executeCommand("workbench.action.openSettings");
