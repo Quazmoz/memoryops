@@ -1,8 +1,8 @@
-import { Check, Edit3, FlaskConical, Loader2, Play, Plus, Trash2, X } from "lucide-react";
+import { Check, Edit3, FlaskConical, History, Loader2, Play, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
 
-import { createSkill, deleteSkill, listSkills, testSkill, updateSkill, type CreateSkillPayload, type Skill, type SkillTestResponse } from "../api/skills";
+import { createSkill, deleteSkill, listSkillVersions, listSkills, rollbackSkillVersion, testSkill, updateSkill, type CreateSkillPayload, type Skill, type SkillTestResponse, type SkillVersion } from "../api/skills";
 import type { JsonValue } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { InlineError } from "../components/InlineError";
@@ -43,6 +43,9 @@ export function SkillsView() {
   const [testBody, setTestBody] = useState("");
   const [testResult, setTestResult] = useState<SkillTestResponse | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
+  const [historySkillName, setHistorySkillName] = useState<string | null>(null);
+  const [rollbackNote, setRollbackNote] = useState("");
+  const [confirmingRollback, setConfirmingRollback] = useState<number | null>(null);
   const hasAuth = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
 
   const skillsQuery = useQuery({
@@ -107,6 +110,27 @@ export function SkillsView() {
     onError: (error) => {
       setTestError(error instanceof Error ? error.message : "Test request failed.");
       setTestResult(null);
+    },
+  });
+
+  const versionsQuery = useQuery({
+    queryKey: skillVersionsKey(workspaceId, historySkillName ?? ""),
+    queryFn: () => listSkillVersions(workspaceId, historySkillName as string),
+    enabled: hasAuth && historySkillName !== null,
+  });
+
+  const rollbackMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "skills", "rollback"],
+    mutationFn: ({ name, version, change_note }: { name: string; version: number; change_note?: string }) =>
+      rollbackSkillVersion(workspaceId, name, version, change_note),
+    onSuccess: (skill) => {
+      setConfirmingRollback(null);
+      setRollbackNote("");
+      queryClient.setQueryData<Skill[]>(skillsKey(workspaceId), (current) =>
+        current?.map((item) => (item.id === skill.id ? skill : item)) ?? [skill],
+      );
+      void queryClient.invalidateQueries({ queryKey: skillVersionsKey(workspaceId, skill.name) });
+      void queryClient.invalidateQueries({ queryKey: skillsKey(workspaceId) });
     },
   });
 
@@ -179,9 +203,22 @@ export function SkillsView() {
       return;
     }
     setTestingSkillName(skill.name);
+    setHistorySkillName(null);
     setTestBody(JSON.stringify(skill.input_schema ?? {}, null, 2));
     setTestResult(null);
     setTestError(null);
+  }
+
+  function openHistoryPanel(skill: Skill) {
+    if (historySkillName === skill.name) {
+      setHistorySkillName(null);
+      setConfirmingRollback(null);
+      return;
+    }
+    setHistorySkillName(skill.name);
+    setTestingSkillName(null);
+    setRollbackNote("");
+    setConfirmingRollback(null);
   }
 
   function runTest(name: string) {
@@ -298,6 +335,22 @@ export function SkillsView() {
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              data-testid={`skill-history-open-${skill.name}`}
+                              aria-label={`History for ${skill.name}`}
+                              aria-pressed={historySkillName === skill.name}
+                              onClick={() => openHistoryPanel(skill)}
+                            >
+                              <History className="h-4 w-4" aria-hidden="true" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>View past versions and roll back to a previous configuration.</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
                             <Button type="button" variant="ghost" size="icon" data-testid={`skill-edit-${skill.name}`} aria-label={`Edit ${skill.name}`} onClick={() => openEditDrawer(skill)}>
                               <Edit3 className="h-4 w-4" aria-hidden="true" />
                             </Button>
@@ -387,6 +440,87 @@ export function SkillsView() {
                                 {JSON.stringify(testResult.body, null, 2)}
                               </pre>
                             </div>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                  {historySkillName === skill.name ? (
+                    <tr>
+                      <td colSpan={6} className="border-b border-line/80 bg-soft/40 px-5 py-4">
+                        <div className="grid max-w-3xl gap-3" data-testid={`skill-history-${skill.name}`}>
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-semibold text-ink">Version history</h3>
+                            <span className="text-xs text-ink/55">Current: v{skill.version}</span>
+                          </div>
+                          {versionsQuery.isLoading ? <Skeleton className="h-24 w-full" /> : null}
+                          {versionsQuery.isError ? <InlineError message={errorMessage(versionsQuery.error)} /> : null}
+                          {rollbackMutation.isError ? <InlineError title="Rollback failed" message={errorMessage(rollbackMutation.error)} /> : null}
+                          {versionsQuery.data && versionsQuery.data.length > 0 ? (
+                            <div className="overflow-hidden rounded-md border border-line bg-white">
+                              <table className="w-full border-collapse text-left text-sm">
+                                <thead className="border-b border-line bg-soft/60 text-xs font-semibold uppercase text-ink/55">
+                                  <tr>
+                                    <th className="px-3 py-2">Version</th>
+                                    <th className="px-3 py-2">When</th>
+                                    <th className="px-3 py-2">By</th>
+                                    <th className="px-3 py-2">Change note</th>
+                                    <th className="px-3 py-2 text-right">Actions</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {versionsQuery.data.map((v) => (
+                                    <tr key={v.id} data-testid={`skill-version-row-${skill.name}-${v.version}`} className="border-b border-line/70 last:border-b-0 align-top">
+                                      <td className="px-3 py-2 font-mono text-xs text-ink">v{v.version}{v.version === skill.version ? <span className="ml-1 text-[10px] uppercase text-accent-strong">current</span> : null}</td>
+                                      <td className="px-3 py-2 text-xs text-ink/70">{new Date(v.created_at).toLocaleString()}</td>
+                                      <td className="px-3 py-2 font-mono text-xs text-ink/60">{v.created_by ?? "—"}</td>
+                                      <td className="px-3 py-2 text-xs text-ink/70">{v.change_note ?? <span className="text-ink/40">—</span>}</td>
+                                      <td className="px-3 py-2 text-right">
+                                        {v.version !== skill.version ? (
+                                          confirmingRollback === v.version ? (
+                                            <div className="inline-grid gap-2 rounded-md border border-line bg-white p-2 text-left shadow">
+                                              <Input
+                                                data-testid={`skill-rollback-note-${skill.name}-${v.version}`}
+                                                placeholder="Change note (optional)"
+                                                value={rollbackNote}
+                                                onChange={(e) => setRollbackNote(e.target.value)}
+                                              />
+                                              <div className="flex justify-end gap-1.5">
+                                                <Button type="button" variant="ghost" size="sm" onClick={() => { setConfirmingRollback(null); setRollbackNote(""); }}>Cancel</Button>
+                                                <Button
+                                                  type="button"
+                                                  size="sm"
+                                                  data-testid={`skill-rollback-confirm-${skill.name}-${v.version}`}
+                                                  disabled={rollbackMutation.isPending}
+                                                  onClick={() => rollbackMutation.mutate({ name: skill.name, version: v.version, change_note: rollbackNote.trim() || undefined })}
+                                                >
+                                                  {rollbackMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />}
+                                                  Confirm rollback
+                                                </Button>
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="sm"
+                                              data-testid={`skill-rollback-${skill.name}-${v.version}`}
+                                              onClick={() => { setConfirmingRollback(v.version); setRollbackNote(""); }}
+                                            >
+                                              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                                              Roll back
+                                            </Button>
+                                          )
+                                        ) : null}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : null}
+                          {versionsQuery.data && versionsQuery.data.length === 0 ? (
+                            <p className="text-sm text-ink/60">No version history recorded yet.</p>
                           ) : null}
                         </div>
                       </td>
@@ -558,6 +692,10 @@ function SkillsSkeleton() {
 
 function skillsKey(workspaceId: string) {
   return ["workspace", workspaceId, "skills"] as const;
+}
+
+function skillVersionsKey(workspaceId: string, name: string) {
+  return ["workspace", workspaceId, "skills", name, "versions"] as const;
 }
 
 function errorMessage(error: unknown): string {

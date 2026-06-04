@@ -2,7 +2,7 @@
   "name": "memoryops-vscode",
   "displayName": "MemoryOps",
   "description": "Bring governed MemoryOps agent memory into VS Code.",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "publisher": "quazmoz",
   "author": {
     "name": "Quazmoz",
@@ -224,6 +224,48 @@
         "title": "MemoryOps: Open Getting Started Walkthrough",
         "category": "MemoryOps",
         "icon": "$(rocket)"
+      },
+      {
+        "command": "memoryops.skills.list",
+        "title": "MemoryOps: List Skills",
+        "category": "MemoryOps",
+        "icon": "$(symbol-method)"
+      },
+      {
+        "command": "memoryops.skills.create",
+        "title": "MemoryOps: Create Skill",
+        "category": "MemoryOps",
+        "icon": "$(add)"
+      },
+      {
+        "command": "memoryops.skills.toggleEnabled",
+        "title": "MemoryOps: Toggle Skill Enabled",
+        "category": "MemoryOps",
+        "icon": "$(circle-large-outline)"
+      },
+      {
+        "command": "memoryops.skills.delete",
+        "title": "MemoryOps: Delete Skill",
+        "category": "MemoryOps",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "memoryops.skills.test",
+        "title": "MemoryOps: Test Skill",
+        "category": "MemoryOps",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "memoryops.skills.viewHistory",
+        "title": "MemoryOps: View Skill Version History",
+        "category": "MemoryOps",
+        "icon": "$(history)"
+      },
+      {
+        "command": "memoryops.skills.rollback",
+        "title": "MemoryOps: Roll Back Skill Version",
+        "category": "MemoryOps",
+        "icon": "$(discard)"
       }
     ],
     "keybindings": [

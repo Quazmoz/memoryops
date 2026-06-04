@@ -172,6 +172,71 @@ interface HttpError extends Error {
   transient?: boolean;
 }
 
+export interface Skill {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description: string;
+  endpoint_url: string;
+  http_method: string;
+  input_schema: unknown;
+  output_schema: unknown;
+  auth_header: string | null;
+  enabled: boolean;
+  version: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SkillVersion {
+  id: string;
+  skill_id: string;
+  workspace_id: string;
+  name: string;
+  version: number;
+  description: string;
+  endpoint_url: string;
+  http_method: string;
+  input_schema: unknown;
+  output_schema: unknown;
+  auth_header: string | null;
+  enabled: boolean;
+  change_note: string | null;
+  created_by: string | null;
+  created_at?: string;
+}
+
+export interface SkillCreateInput {
+  name: string;
+  description: string;
+  endpoint_url: string;
+  http_method?: string;
+  input_schema?: unknown;
+  output_schema?: unknown;
+  auth_header?: string;
+  auth_secret?: string;
+  enabled?: boolean;
+  change_note?: string;
+}
+
+export interface SkillUpdateInput {
+  description?: string;
+  endpoint_url?: string;
+  http_method?: string;
+  input_schema?: unknown;
+  output_schema?: unknown;
+  auth_header?: string;
+  auth_secret?: string;
+  enabled?: boolean;
+  change_note?: string;
+}
+
+export interface SkillTestResult {
+  status: number;
+  latency_ms: number;
+  body: unknown;
+}
+
 export class MemoryOpsClient {
   constructor(
     private readonly config: MemoryOpsConfig,
@@ -411,6 +476,87 @@ export class MemoryOpsClient {
     }
 
     return response as unknown as ObservationAccepted;
+  }
+
+  async listSkills(): Promise<Skill[]> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/skills`,
+      { method: "GET", authenticated: true, idempotent: true },
+    );
+    return Array.isArray(response) ? response.filter(isRecord).map(normalizeSkill) : [];
+  }
+
+  async createSkill(input: SkillCreateInput): Promise<Skill> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/skills`,
+      {
+        method: "POST",
+        authenticated: true,
+        body: {
+          name: input.name,
+          description: input.description,
+          endpoint_url: input.endpoint_url,
+          http_method: input.http_method ?? "POST",
+          input_schema: input.input_schema ?? {},
+          output_schema: input.output_schema ?? {},
+          auth_header: input.auth_header,
+          auth_secret: input.auth_secret,
+          enabled: input.enabled ?? true,
+          change_note: input.change_note,
+        },
+      },
+    );
+    return expectSkill(response, "MemoryOps returned an unexpected skill response.");
+  }
+
+  async updateSkill(name: string, patch: SkillUpdateInput): Promise<Skill> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/skills/${encodeURIComponent(name)}`,
+      { method: "PATCH", authenticated: true, body: patch },
+    );
+    return expectSkill(response, "MemoryOps returned an unexpected skill response.");
+  }
+
+  async deleteSkill(name: string): Promise<void> {
+    await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/skills/${encodeURIComponent(name)}`,
+      { method: "DELETE", authenticated: true },
+    );
+  }
+
+  async testSkill(name: string, body: unknown): Promise<SkillTestResult> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/skills/${encodeURIComponent(name)}/test`,
+      { method: "POST", authenticated: true, idempotent: true, body: { body } },
+    );
+    if (!isRecord(response)) {
+      return { status: 0, latency_ms: 0, body: response };
+    }
+    return {
+      status: numberOrDefault(response.status, 0),
+      latency_ms: numberOrDefault(response.latency_ms, 0),
+      body: response.body,
+    };
+  }
+
+  async listSkillVersions(name: string): Promise<SkillVersion[]> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/skills/${encodeURIComponent(name)}/versions`,
+      { method: "GET", authenticated: true, idempotent: true },
+    );
+    return Array.isArray(response) ? response.filter(isRecord).map(normalizeSkillVersion) : [];
+  }
+
+  async rollbackSkillVersion(name: string, version: number, changeNote?: string): Promise<Skill> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/skills/${encodeURIComponent(name)}/versions/${version}/rollback`,
+      {
+        method: "POST",
+        authenticated: true,
+        body: changeNote ? { change_note: changeNote } : {},
+      },
+    );
+    return expectSkill(response, "MemoryOps returned an unexpected rollback response.");
   }
 
   private async request(path: string, options: {
@@ -685,6 +831,51 @@ function expectMemoryUnit(response: unknown, message: string): MemoryUnit {
   }
 
   return normalizeMemoryUnit(response);
+}
+
+function expectSkill(response: unknown, message: string): Skill {
+  if (!isRecord(response)) {
+    throw new Error(message);
+  }
+  return normalizeSkill(response);
+}
+
+function normalizeSkill(value: Record<string, unknown>): Skill {
+  return {
+    id: stringOrUndefined(value.id) ?? "",
+    workspace_id: stringOrUndefined(value.workspace_id) ?? "",
+    name: stringOrUndefined(value.name) ?? "",
+    description: stringOrUndefined(value.description) ?? "",
+    endpoint_url: stringOrUndefined(value.endpoint_url) ?? "",
+    http_method: stringOrUndefined(value.http_method) ?? "POST",
+    input_schema: value.input_schema ?? {},
+    output_schema: value.output_schema ?? {},
+    auth_header: stringOrNullOrUndefined(value.auth_header) ?? null,
+    enabled: booleanOrUndefined(value.enabled) ?? false,
+    version: numberOrDefault(value.version, 1),
+    created_at: stringOrUndefined(value.created_at),
+    updated_at: stringOrUndefined(value.updated_at),
+  };
+}
+
+function normalizeSkillVersion(value: Record<string, unknown>): SkillVersion {
+  return {
+    id: stringOrUndefined(value.id) ?? "",
+    skill_id: stringOrUndefined(value.skill_id) ?? "",
+    workspace_id: stringOrUndefined(value.workspace_id) ?? "",
+    name: stringOrUndefined(value.name) ?? "",
+    version: numberOrDefault(value.version, 1),
+    description: stringOrUndefined(value.description) ?? "",
+    endpoint_url: stringOrUndefined(value.endpoint_url) ?? "",
+    http_method: stringOrUndefined(value.http_method) ?? "POST",
+    input_schema: value.input_schema ?? {},
+    output_schema: value.output_schema ?? {},
+    auth_header: stringOrNullOrUndefined(value.auth_header) ?? null,
+    enabled: booleanOrUndefined(value.enabled) ?? false,
+    change_note: stringOrNullOrUndefined(value.change_note) ?? null,
+    created_by: stringOrNullOrUndefined(value.created_by) ?? null,
+    created_at: stringOrUndefined(value.created_at),
+  };
 }
 
 function extractErrorMessage(payload: unknown): string | undefined {

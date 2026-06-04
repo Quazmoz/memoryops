@@ -21,6 +21,7 @@ import {
   truncate,
 } from "./markdown";
 import { getRelativeFileName, getSourceRef, getWorkspaceRepoHint } from "./repo";
+import { registerSkillCommands } from "./skillCommands";
 
 let statusBarItem: vscode.StatusBarItem;
 let memoryTreeProvider: MemoryWebviewViewProvider;
@@ -125,6 +126,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Feature 8: @memoryops Copilot Chat participant (no-op if chat is unavailable).
   registerChatParticipant(context, () => getClient());
+
+  // Skill management + versioning commands.
+  registerSkillCommands(context, {
+    getClient: () => {
+      const { client, missing } = getClient();
+      return { client, missing };
+    },
+    promptForMissingConfig,
+    openMarkdownDocument,
+  });
 
   // Listen for secure storage changes (e.g., API key set/cleared)
   context.subscriptions.push(

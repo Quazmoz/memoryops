@@ -4,6 +4,9 @@ import {
   MemoryVersion,
   ProvenanceGraph,
   RetrievalResult,
+  Skill,
+  SkillTestResult,
+  SkillVersion,
 } from "./client";
 
 export function formatMemoryMarkdown(memory: MemoryUnit): string {
@@ -129,6 +132,62 @@ export function formatMemoryFeedbackMarkdown(memory: MemoryUnit, feedback: Feedb
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+export function formatSkillMarkdown(skill: Skill): string {
+  return [
+    `# MemoryOps Skill \`${skill.name}\``,
+    `Version: ${skill.version}`,
+    `Enabled: ${skill.enabled ? "yes" : "no"}`,
+    `Method: ${skill.http_method}`,
+    `URL: ${skill.endpoint_url}`,
+    skill.auth_header ? `Auth header: ${skill.auth_header}` : undefined,
+    skill.created_at ? `Created: ${skill.created_at}` : undefined,
+    skill.updated_at ? `Updated: ${skill.updated_at}` : undefined,
+    "",
+    "## Description",
+    skill.description || "_(no description)_",
+    "",
+    "## Input schema",
+    formatJsonBlock(skill.input_schema ?? {}),
+    "",
+    "## Output schema",
+    formatJsonBlock(skill.output_schema ?? {}),
+  ]
+    .filter((part) => part !== undefined)
+    .join("\n");
+}
+
+export function formatSkillVersionsMarkdown(skill: Skill, versions: SkillVersion[]): string {
+  return [
+    `# Skill version history \`${skill.name}\``,
+    `Current version: ${skill.version}`,
+    `Total versions: ${versions.length}`,
+    "",
+    ...(versions.length > 0
+      ? versions.map((v) => [
+          `## v${v.version}${v.version === skill.version ? " (current)" : ""}`,
+          v.created_at ? `Created: ${v.created_at}` : undefined,
+          v.created_by ? `By: ${v.created_by}` : undefined,
+          `Method: ${v.http_method}`,
+          `URL: ${v.endpoint_url}`,
+          `Enabled: ${v.enabled ? "yes" : "no"}`,
+          v.change_note ? `Change note: ${v.change_note}` : undefined,
+          v.description ? `Description: ${v.description}` : undefined,
+        ].filter(Boolean).join("\n"))
+      : ["No version history recorded yet."]),
+  ].join("\n");
+}
+
+export function formatSkillTestMarkdown(skill: Skill, result: SkillTestResult): string {
+  return [
+    `# Skill test \`${skill.name}\``,
+    `Status: ${result.status}`,
+    `Latency: ${result.latency_ms} ms`,
+    "",
+    "## Response body",
+    formatJsonBlock(result.body),
+  ].join("\n");
 }
 
 export function firstLine(value: string): string {

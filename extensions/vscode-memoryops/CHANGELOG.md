@@ -5,6 +5,13 @@ All notable changes to the MemoryOps VS Code extension will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-04
+
+### Added
+
+- **Skills management commands** — register and manage HTTP Skills directly from the Command Palette: `MemoryOps: List Skills`, `Create Skill`, `Toggle Skill Enabled`, `Delete Skill`, `Test Skill`, `View Skill Version History`, and `Roll Back Skill Version`.
+- **Skill versioning** — every create/update bumps the skill version and snapshots a full history entry. `View Skill Version History` opens a markdown report; `Roll Back Skill Version` lets you pick any prior version, add a change note, and restore it as a new bumped version.
+
 ## [0.3.1] - 2026-06-03
 
 ### Fixed
