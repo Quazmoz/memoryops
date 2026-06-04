@@ -302,7 +302,9 @@ export type WorkspaceConfig = {
   decay_half_life_days?: number;
   pruning_threshold?: number;
   retention_max_age_days?: number | null;
+  skill_version_retention_days?: number | null;
   compliance_hard_purge?: boolean;
+  compliance_mode?: boolean;
   contradiction_mode?: "quarantine" | "auto_resolve" | string;
   contradiction_threshold?: number;
   contradiction_candidates?: number;

@@ -184,6 +184,7 @@ export interface Skill {
   auth_header: string | null;
   enabled: boolean;
   version: number;
+  scope_visibility: "private" | "workspace" | "published";
   created_at?: string;
   updated_at?: string;
 }
@@ -201,6 +202,7 @@ export interface SkillVersion {
   output_schema: unknown;
   auth_header: string | null;
   enabled: boolean;
+  scope_visibility: "private" | "workspace" | "published";
   change_note: string | null;
   created_by: string | null;
   created_at?: string;
@@ -217,6 +219,7 @@ export interface SkillCreateInput {
   auth_secret?: string;
   enabled?: boolean;
   change_note?: string;
+  scope_visibility?: "private" | "workspace" | "published";
 }
 
 export interface SkillUpdateInput {
@@ -229,6 +232,7 @@ export interface SkillUpdateInput {
   auth_secret?: string;
   enabled?: boolean;
   change_note?: string;
+  scope_visibility?: "private" | "workspace" | "published";
 }
 
 export interface SkillTestResult {
@@ -503,6 +507,7 @@ export class MemoryOpsClient {
           auth_secret: input.auth_secret,
           enabled: input.enabled ?? true,
           change_note: input.change_note,
+          scope_visibility: input.scope_visibility,
         },
       },
     );
@@ -876,6 +881,7 @@ function normalizeSkill(value: Record<string, unknown>): Skill {
     auth_header: stringOrNullOrUndefined(value.auth_header) ?? null,
     enabled: booleanOrUndefined(value.enabled) ?? false,
     version: numberOrDefault(value.version, 1),
+    scope_visibility: skillScopeVisibilityOrDefault(value.scope_visibility),
     created_at: stringOrUndefined(value.created_at),
     updated_at: stringOrUndefined(value.updated_at),
   };
@@ -895,10 +901,18 @@ function normalizeSkillVersion(value: Record<string, unknown>): SkillVersion {
     output_schema: value.output_schema ?? {},
     auth_header: stringOrNullOrUndefined(value.auth_header) ?? null,
     enabled: booleanOrUndefined(value.enabled) ?? false,
+    scope_visibility: skillScopeVisibilityOrDefault(value.scope_visibility),
     change_note: stringOrNullOrUndefined(value.change_note) ?? null,
     created_by: stringOrNullOrUndefined(value.created_by) ?? null,
     created_at: stringOrUndefined(value.created_at),
   };
+}
+
+function skillScopeVisibilityOrDefault(value: unknown): "private" | "workspace" | "published" {
+  if (value === "private" || value === "workspace" || value === "published") {
+    return value;
+  }
+  return "workspace";
 }
 
 function extractErrorMessage(payload: unknown): string | undefined {

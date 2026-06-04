@@ -211,7 +211,9 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   const embeddingModel = stringConfig(config.embedding_model);
   const subAgentPools = stringArrayConfig(config.sub_agent_pools);
   const retentionMaxAgeDays = numberConfig(config.retention_max_age_days);
+  const skillVersionRetentionDays = numberConfig(config.skill_version_retention_days);
   const complianceHardPurge = booleanConfig(config.compliance_hard_purge);
+  const complianceMode = booleanConfig(config.compliance_mode);
 
   if (decayHalfLifeDays !== undefined) {
     normalized.decay_half_life_days = decayHalfLifeDays;
@@ -237,8 +239,14 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   if (retentionMaxAgeDays !== undefined) {
     normalized.retention_max_age_days = retentionMaxAgeDays;
   }
+  if (skillVersionRetentionDays !== undefined) {
+    normalized.skill_version_retention_days = skillVersionRetentionDays;
+  }
   if (complianceHardPurge !== undefined) {
     normalized.compliance_hard_purge = complianceHardPurge;
+  }
+  if (complianceMode !== undefined) {
+    normalized.compliance_mode = complianceMode;
   }
 
   return normalized;

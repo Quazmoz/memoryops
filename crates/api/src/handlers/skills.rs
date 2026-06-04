@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
 
 use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
@@ -7,10 +7,9 @@ use common::{
     auth::AuthContext,
     error::AppResult,
     models::AuditAction,
-    services::WorkspaceConfigService,
+    services::{invoke_workspace_skill, SkillInvocationSource, WorkspaceConfigService},
     AppError, AppState,
 };
-use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -35,7 +34,6 @@ const SKILL_VERSION_COLUMNS: &str =
 
 const DEFAULT_SKILL_LIMIT: i64 = 50;
 const MAX_SKILL_LIMIT: i64 = 100;
-const MAX_SKILL_TEST_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct SkillListQuery {
@@ -169,6 +167,7 @@ pub struct InvocationListQuery {
 pub enum SkillScopeVisibility {
     Private,
     Workspace,
+    Published,
 }
 
 impl SkillScopeVisibility {
@@ -176,6 +175,7 @@ impl SkillScopeVisibility {
         match self {
             SkillScopeVisibility::Private => "private",
             SkillScopeVisibility::Workspace => "workspace",
+            SkillScopeVisibility::Published => "published",
         }
     }
 }
@@ -263,6 +263,8 @@ pub async fn create_skill(
     let auth_secret_enc = encrypted_secret(&state, request.auth_secret.as_deref())?;
     validate_auth_pair(auth_header.as_ref(), auth_secret_enc.as_ref())?;
     let change_note = normalized_optional_text(request.change_note.as_deref());
+
+    enforce_change_note_for_compliance(&state, id, change_note.as_deref()).await?;
 
     let mut tx = state.db.begin().await.map_err(AppError::Database)?;
 
@@ -1006,7 +1008,7 @@ pub async fn test_skill(
         &name,
         request.body.as_ref(),
         request.headers.as_ref(),
-        InvocationSource::Test,
+        SkillInvocationSource::Test,
         &auth.actor(),
     )
     .await?;
@@ -1027,7 +1029,7 @@ pub async fn invoke_skill(
         &name,
         request.body.as_ref(),
         request.headers.as_ref(),
-        InvocationSource::Http,
+        SkillInvocationSource::Http,
         &auth.actor(),
     )
     .await?;
@@ -1204,241 +1206,24 @@ async fn import_one_skill(
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum InvocationSource {
-    Http,
-    Mcp,
-    Test,
-}
-
-impl InvocationSource {
-    fn as_str(self) -> &'static str {
-        match self {
-            InvocationSource::Http => "http",
-            InvocationSource::Mcp => "mcp",
-            InvocationSource::Test => "test",
-        }
-    }
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct InvokeSkillRow {
-    id: Uuid,
-    endpoint_url: String,
-    http_method: String,
-    auth_header: Option<String>,
-    auth_secret_enc: Option<String>,
-    enabled: bool,
-    version: i32,
-    scope_visibility: String,
-    rate_limit_per_minute: i32,
-    circuit_breaker_threshold: i32,
-    circuit_breaker_cooldown_seconds: i32,
-}
-
 pub async fn invoke_skill_core(
     state: &AppState,
     workspace_id: Uuid,
     name: &str,
     body: Option<&Value>,
     headers: Option<&HashMap<String, String>>,
-    source: InvocationSource,
+    source: SkillInvocationSource,
     actor: &str,
 ) -> AppResult<(SkillTestResponse, i32)> {
-    let skill = sqlx::query_as::<_, InvokeSkillRow>(
-        r#"
-        SELECT id, endpoint_url, http_method, auth_header, auth_secret_enc, enabled,
-               version, scope_visibility, rate_limit_per_minute,
-               circuit_breaker_threshold, circuit_breaker_cooldown_seconds
-        FROM workspace_skills
-        WHERE workspace_id = $1 AND name = $2
-        "#,
-    )
-    .bind(workspace_id)
-    .bind(name)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace_skill:{name}"),
-    })?;
-
-    if !skill.enabled {
-        return Err(AppError::Validation(format!(
-            "skill {name} is disabled"
-        )));
-    }
-
-    if matches!(source, InvocationSource::Mcp) && skill.scope_visibility == "private" {
-        return Err(AppError::Forbidden);
-    }
-
-    // Rate limit: count successful + failed invocations in the last 60s.
-    if skill.rate_limit_per_minute > 0 {
-        let count: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(*) FROM workspace_skill_invocations
-            WHERE skill_id = $1 AND occurred_at > NOW() - INTERVAL '60 seconds'
-            "#,
-        )
-        .bind(skill.id)
-        .fetch_one(&state.db)
-        .await
-        .map_err(AppError::Database)?;
-        if count >= skill.rate_limit_per_minute as i64 {
-            return Err(AppError::RateLimited {
-                retry_after_secs: 60,
-            });
-        }
-    }
-
-    // Circuit breaker: if >= threshold non-2xx invocations in last cooldown
-    // window, refuse.
-    if skill.circuit_breaker_threshold > 0 {
-        let failures: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(*) FROM workspace_skill_invocations
-            WHERE skill_id = $1
-              AND occurred_at > NOW() - make_interval(secs => $2)
-              AND (status_code < 200 OR status_code >= 300)
-            "#,
-        )
-        .bind(skill.id)
-        .bind(skill.circuit_breaker_cooldown_seconds as f64)
-        .fetch_one(&state.db)
-        .await
-        .map_err(AppError::Database)?;
-        if failures >= skill.circuit_breaker_threshold as i64 {
-            return Err(AppError::Conflict(format!(
-                "skill {name} circuit breaker open ({} failures in last {}s)",
-                failures, skill.circuit_breaker_cooldown_seconds
-            )));
-        }
-    }
-
-    validate_endpoint_url_dns(&skill.endpoint_url).await?;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| AppError::Internal(anyhow::anyhow!(error)))?;
-
-    let method = reqwest::Method::from_bytes(skill.http_method.as_bytes())
-        .unwrap_or(reqwest::Method::POST);
-    let mut req_builder = client.request(method, &skill.endpoint_url);
-
-    if let (Some(header_name), Some(enc)) = (
-        skill.auth_header.as_deref(),
-        skill.auth_secret_enc.as_deref(),
-    ) {
-        let decrypted =
-            decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), enc)?;
-        persist_migrated_ciphertext(&state.db, workspace_id, name, &decrypted).await?;
-        req_builder = req_builder.header(header_name, decrypted.plaintext);
-    }
-
-    const BLOCKED_REQUEST_HEADERS: &[&str] = &[
-        "authorization",
-        "proxy-authorization",
-        "cookie",
-        "set-cookie",
-        "host",
-        "content-length",
-        "transfer-encoding",
-        "connection",
-        "upgrade",
-        "te",
-        "expect",
-        "x-forwarded-for",
-        "x-real-ip",
-    ];
-    if let Some(caller_headers) = headers {
-        let auth_header_lower = skill
-            .auth_header
-            .as_deref()
-            .map(|h| h.to_ascii_lowercase())
-            .unwrap_or_default();
-        for (k, v) in caller_headers {
-            let normalized = k.to_ascii_lowercase();
-            if BLOCKED_REQUEST_HEADERS.contains(&normalized.as_str()) {
-                continue;
-            }
-            if !auth_header_lower.is_empty() && normalized == auth_header_lower {
-                continue;
-            }
-            req_builder = req_builder.header(k.as_str(), v.as_str());
-        }
-    }
-
-    if let Some(body) = body {
-        req_builder = req_builder
-            .header("Content-Type", "application/json")
-            .body(body.to_string());
-    }
-
-    let started = Instant::now();
-    let response = req_builder.send().await;
-    let latency_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-
-    let (status, body_value, error_text) = match response {
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            let body = read_skill_test_body(resp).await;
-            (status, body, None)
-        }
-        Err(error) => (
-            502u16,
-            json!({ "error": error.to_string() }),
-            Some(error.to_string()),
-        ),
-    };
-
-    let _ = sqlx::query(
-        r#"
-        INSERT INTO workspace_skill_invocations (
-            skill_id, workspace_id, skill_name, skill_version, actor,
-            source, status_code, latency_ms, error
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        "#,
-    )
-    .bind(skill.id)
-    .bind(workspace_id)
-    .bind(name)
-    .bind(skill.version)
-    .bind(actor)
-    .bind(source.as_str())
-    .bind(status as i32)
-    .bind(latency_ms.min(i32::MAX as u64) as i32)
-    .bind(error_text)
-    .execute(&state.db)
-    .await
-    .map_err(AppError::Database);
-
-    spawn_audit_log(
-        state.db.clone(),
-        workspace_id,
-        actor.to_string(),
-        AuditAction::SkillInvoked,
-        skill.id,
-        "workspace_skill",
-        Some(json!({
-            "name": name,
-            "version": skill.version,
-            "source": source.as_str(),
-            "status": status,
-            "latency_ms": latency_ms,
-        })),
-    );
-
+    let (response, version) =
+        invoke_workspace_skill(state, workspace_id, name, body, headers, source, actor).await?;
     Ok((
         SkillTestResponse {
-            status,
-            latency_ms,
-            body: body_value,
+            status: response.status,
+            latency_ms: response.latency_ms,
+            body: response.body,
         },
-        skill.version,
+        version,
     ))
 }
 
@@ -1460,30 +1245,6 @@ async fn enforce_change_note_for_compliance(
         ));
     }
     Ok(())
-}
-
-async fn read_skill_test_body(response: reqwest::Response) -> Value {
-    let mut stream = response.bytes_stream();
-    let mut bytes = Vec::new();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = match chunk {
-            Ok(chunk) => chunk,
-            Err(error) => {
-                return json!({ "error": format!("failed to read response body: {error}") })
-            }
-        };
-        if bytes.len().saturating_add(chunk.len()) > MAX_SKILL_TEST_RESPONSE_BYTES {
-            return json!({
-                "error": "response body exceeded size limit",
-                "limit_bytes": MAX_SKILL_TEST_RESPONSE_BYTES
-            });
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-
-    serde_json::from_slice::<Value>(&bytes)
-        .unwrap_or_else(|_| json!({ "error": "response was not JSON" }))
 }
 
 fn map_skill_insert_error(error: sqlx::Error) -> AppError {
