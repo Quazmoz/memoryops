@@ -4,6 +4,7 @@ pub mod feedback;
 pub mod observe;
 pub mod retrieve;
 pub mod search;
+pub mod skill;
 pub mod store;
 pub mod timeline;
 pub mod update;
@@ -88,6 +89,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         observe::list_observations_definition(),
         observe::observe_definition(),
         retrieve::definition(),
+        skill::definition(),
         search::definition(),
         store::definition(),
         timeline::definition(),

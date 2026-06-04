@@ -31,6 +31,12 @@ pub trait McpBackend: Send + Sync + 'static {
         input: tools::retrieve::RetrieveInput,
     ) -> Result<tools::retrieve::RetrieveOutput, JsonRpcError>;
 
+    async fn skill_invoke(
+        &self,
+        context: &AuthContext,
+        input: tools::skill::SkillInvokeInput,
+    ) -> Result<tools::skill::SkillInvokeOutput, JsonRpcError>;
+
     async fn memory_search(
         &self,
         context: &AuthContext,
@@ -119,6 +125,16 @@ impl McpBackend for RuntimeBackend {
         input: tools::retrieve::RetrieveInput,
     ) -> Result<tools::retrieve::RetrieveOutput, JsonRpcError> {
         tools::retrieve::run(&self.state, context.workspace_id, input)
+            .await
+            .map_err(app_error_to_rpc)
+    }
+
+    async fn skill_invoke(
+        &self,
+        context: &AuthContext,
+        input: tools::skill::SkillInvokeInput,
+    ) -> Result<tools::skill::SkillInvokeOutput, JsonRpcError> {
+        tools::skill::run(&self.state, context, input)
             .await
             .map_err(app_error_to_rpc)
     }
@@ -439,6 +455,11 @@ impl<B: McpBackend> McpServer<B> {
                         .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
                 serialize_tool_value(self.backend.memory_retrieve(&context, input).await?)
             }
+            "skill_invoke" => {
+                let input = serde_json::from_value::<tools::skill::SkillInvokeInput>(call.arguments)
+                    .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                serialize_tool_value(self.backend.skill_invoke(&context, input).await?)
+            }
             "memory_search" => {
                 let input = serde_json::from_value::<tools::search::SearchInput>(call.arguments)
                     .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
@@ -710,6 +731,20 @@ mod tests {
             })
         }
 
+        async fn skill_invoke(
+            &self,
+            _context: &AuthContext,
+            input: tools::skill::SkillInvokeInput,
+        ) -> Result<tools::skill::SkillInvokeOutput, JsonRpcError> {
+            Ok(tools::skill::SkillInvokeOutput {
+                name: input.name,
+                version: 3,
+                status: 200,
+                latency_ms: 42,
+                body: json!({ "ok": true }),
+            })
+        }
+
         async fn memory_search(
             &self,
             _context: &AuthContext,
@@ -961,6 +996,7 @@ mod tests {
                 "memory_list_observations",
                 "memory_observe",
                 "memory_retrieve",
+                "skill_invoke",
                 "memory_search",
                 "memory_store",
                 "memory_timeline",
@@ -1048,6 +1084,23 @@ mod tests {
             .get("tools")
             .and_then(Value::as_array)
             .is_some_and(|items| !items.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn skill_invoke_returns_response_shape() {
+        let server = initialized_server().await;
+        let response = call_tool(
+            &server,
+            "skill_invoke",
+            json!({ "name": "summarize_pr", "body": { "repo": "memoryops" } }),
+        )
+        .await;
+        let structured = structured_content(&response);
+
+        assert_eq!(structured.get("name"), Some(&json!("summarize_pr")));
+        assert_eq!(structured.get("version"), Some(&json!(3)));
+        assert_eq!(structured.get("status"), Some(&json!(200)));
+        assert!(structured.get("body").is_some());
     }
 
     #[tokio::test]

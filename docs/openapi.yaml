@@ -51,8 +51,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: '#/components/schemas/WorkspaceConfig'
       responses:
         '202':
           description: Event accepted for processing
@@ -2562,6 +2561,33 @@ components:
             Decay score below which a memory is soft-deleted.
             Defaults to 0.10 when null.
           example: 0.10
+        retention_max_age_days:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 3650
+          description: >
+            Maximum age in days before memories become eligible for compliance retention purge.
+            Leave null to disable automatic retention purging.
+          example: 365
+        skill_version_retention_days:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 3650
+          description: >
+            Maximum age in days before historical skill versions are pruned.
+            The latest snapshot per skill is always retained. Leave null to disable pruning.
+          example: 90
+        compliance_hard_purge:
+          type: boolean
+          description: >
+            When true, compliance deletion also hard-deletes the originating raw events.
+            When false, only memory units are affected.
+        compliance_mode:
+          type: boolean
+          description: >
+            When true, skill create, update, and rollback operations require a non-empty change note.
         sub_agent_pools:
           type: array
           items:
@@ -2661,7 +2687,7 @@ components:
           type: [string, 'null']
         scope_visibility:
           type: string
-          enum: [private, workspace]
+          enum: [private, workspace, published]
         rate_limit_per_minute:
           type: integer
           minimum: 0
@@ -2698,7 +2724,7 @@ components:
           type: [string, 'null']
         scope_visibility:
           type: string
-          enum: [private, workspace]
+          enum: [private, workspace, published]
         rate_limit_per_minute:
           type: integer
           minimum: 0
@@ -2763,7 +2789,7 @@ components:
           minimum: 1
         scope_visibility:
           type: string
-          enum: [private, workspace]
+          enum: [private, workspace, published]
         rate_limit_per_minute:
           type: integer
           minimum: 0
@@ -2829,7 +2855,7 @@ components:
           type: boolean
         scope_visibility:
           type: string
-          enum: [private, workspace]
+          enum: [private, workspace, published]
         change_note:
           type: [string, 'null']
         created_by:
@@ -2910,7 +2936,7 @@ components:
           type: boolean
         scope_visibility:
           type: string
-          enum: [private, workspace]
+          enum: [private, workspace, published]
         rate_limit_per_minute:
           type: integer
         circuit_breaker_threshold:

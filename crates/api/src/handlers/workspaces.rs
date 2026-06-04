@@ -55,7 +55,9 @@ const KNOWN_CONFIG_KEYS: &[&str] = &[
     "decay_half_life_days",
     "pruning_threshold",
     "retention_max_age_days",
+    "skill_version_retention_days",
     "compliance_hard_purge",
+    "compliance_mode",
     "contradiction_mode",
     "contradiction_threshold",
     "contradiction_candidates",
@@ -86,7 +88,10 @@ pub struct UpdateWorkspaceConfigRequest {
     pub pruning_threshold: Option<f32>,
     #[serde(default)]
     pub retention_max_age_days: Option<Option<u32>>,
+    #[serde(default)]
+    pub skill_version_retention_days: Option<Option<u32>>,
     pub compliance_hard_purge: Option<bool>,
+    pub compliance_mode: Option<bool>,
     pub contradiction_mode: Option<ContradictionMode>,
     pub contradiction_threshold: Option<f32>,
     pub contradiction_candidates: Option<usize>,
@@ -881,8 +886,20 @@ fn merge_workspace_config(
         }
         None => {}
     }
+    match patch.skill_version_retention_days {
+        Some(Some(value)) => {
+            object.insert("skill_version_retention_days".to_owned(), json!(value));
+        }
+        Some(None) => {
+            object.remove("skill_version_retention_days");
+        }
+        None => {}
+    }
     if let Some(value) = patch.compliance_hard_purge {
         object.insert("compliance_hard_purge".to_owned(), json!(value));
+    }
+    if let Some(value) = patch.compliance_mode {
+        object.insert("compliance_mode".to_owned(), json!(value));
     }
     if let Some(value) = patch.contradiction_mode {
         object.insert("contradiction_mode".to_owned(), json!(value));
@@ -1166,6 +1183,14 @@ fn validate_compliance_config(config: &UpdateWorkspaceConfigRequest) -> AppResul
         if !(1..=3650).contains(&days) {
             return Err(AppError::Validation(
                 "retention_max_age_days must be between 1 and 3650".to_owned(),
+            ));
+        }
+    }
+
+    if let Some(Some(days)) = config.skill_version_retention_days {
+        if !(1..=3650).contains(&days) {
+            return Err(AppError::Validation(
+                "skill_version_retention_days must be between 1 and 3650".to_owned(),
             ));
         }
     }
@@ -1597,7 +1622,9 @@ mod tests {
             decay_half_life_days,
             pruning_threshold,
             retention_max_age_days: None,
+            skill_version_retention_days: None,
             compliance_hard_purge: None,
+            compliance_mode: None,
             contradiction_mode: None,
             contradiction_threshold: None,
             contradiction_candidates: None,
@@ -1775,6 +1802,32 @@ mod tests {
             target["embedding_model"],
             serde_json::json!("text-embedding-3-large")
         );
+    }
+
+    #[test]
+    fn merge_workspace_config_applies_compliance_mode_field() {
+        let mut target = serde_json::json!({});
+        let mut patch = update_request(None, None);
+        patch.compliance_mode = Some(true);
+
+        if let Err(error) = merge_workspace_config(&mut target, &patch) {
+            panic!("compliance_mode should merge: {error}");
+        }
+
+        assert_eq!(target["compliance_mode"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn merge_workspace_config_applies_skill_version_retention_field() {
+        let mut target = serde_json::json!({});
+        let mut patch = update_request(None, None);
+        patch.skill_version_retention_days = Some(Some(45));
+
+        if let Err(error) = merge_workspace_config(&mut target, &patch) {
+            panic!("skill_version_retention_days should merge: {error}");
+        }
+
+        assert_eq!(target["skill_version_retention_days"], serde_json::json!(45));
     }
 
     #[test]

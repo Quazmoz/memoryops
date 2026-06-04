@@ -13,7 +13,7 @@ export interface Tool {
   auth_header: string | null;
   enabled: boolean;
   version: number;
-  scope_visibility: "private" | "workspace";
+  scope_visibility: "private" | "workspace" | "published";
   rate_limit_per_minute: number;
   circuit_breaker_threshold: number;
   circuit_breaker_cooldown_seconds: number;
@@ -34,7 +34,7 @@ export interface ToolVersion {
   output_schema: unknown;
   auth_header: string | null;
   enabled: boolean;
-  scope_visibility: "private" | "workspace";
+  scope_visibility: "private" | "workspace" | "published";
   change_note: string | null;
   created_by: string | null;
   created_at: string;
@@ -51,7 +51,7 @@ export interface CreateToolPayload {
   auth_secret?: string;
   enabled?: boolean;
   change_note?: string;
-  scope_visibility?: "private" | "workspace";
+  scope_visibility?: "private" | "workspace" | "published";
   rate_limit_per_minute?: number;
   circuit_breaker_threshold?: number;
   circuit_breaker_cooldown_seconds?: number;
@@ -80,7 +80,7 @@ export interface ExportedTool {
   output_schema: unknown;
   auth_header: string | null;
   enabled: boolean;
-  scope_visibility: "private" | "workspace";
+  scope_visibility: "private" | "workspace" | "published";
   rate_limit_per_minute: number;
   circuit_breaker_threshold: number;
   circuit_breaker_cooldown_seconds: number;

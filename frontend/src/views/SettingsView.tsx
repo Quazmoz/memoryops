@@ -36,7 +36,9 @@ export function SettingsView() {
   const [subAgentPools, setSubAgentPools] = useState("");
   const [contradictionMode, setContradictionMode] = useState<"quarantine" | "auto_resolve">("quarantine");
   const [retentionMaxAgeDays, setRetentionMaxAgeDays] = useState<number | undefined>(undefined);
+  const [skillVersionRetentionDays, setSkillVersionRetentionDays] = useState<number | undefined>(undefined);
   const [complianceHardPurge, setComplianceHardPurge] = useState(false);
+  const [complianceMode, setComplianceMode] = useState(false);
   const [eraseUserId, setEraseUserId] = useState("");
   const [confirmEraseUserId, setConfirmEraseUserId] = useState<string | null>(null);
   const [eraseNotice, setEraseNotice] = useState<string | null>(null);
@@ -109,7 +111,9 @@ export function SettingsView() {
       setLlmModel(workspace.llm_model ?? "llama3");
       setSubAgentPools((workspace.sub_agent_pools ?? []).join(", "));
       setRetentionMaxAgeDays(workspace.retention_max_age_days ?? undefined);
+      setSkillVersionRetentionDays(workspace.skill_version_retention_days ?? undefined);
       setComplianceHardPurge(workspace.compliance_hard_purge ?? false);
+      setComplianceMode(workspace.compliance_mode ?? false);
       const mode = workspace.contradiction_mode;
       if (mode === "quarantine" || mode === "auto_resolve") {
         setContradictionMode(mode);
@@ -159,7 +163,9 @@ export function SettingsView() {
       setLlmModel(workspaceQuery.data.llm_model ?? "llama3");
       setSubAgentPools((workspaceQuery.data.sub_agent_pools ?? []).join(", "));
       setRetentionMaxAgeDays(workspaceQuery.data.retention_max_age_days ?? undefined);
+      setSkillVersionRetentionDays(workspaceQuery.data.skill_version_retention_days ?? undefined);
       setComplianceHardPurge(workspaceQuery.data.compliance_hard_purge ?? false);
+      setComplianceMode(workspaceQuery.data.compliance_mode ?? false);
       const mode = workspaceQuery.data.contradiction_mode;
       if (mode === "quarantine" || mode === "auto_resolve") {
         setContradictionMode(mode);
@@ -261,6 +267,31 @@ export function SettingsView() {
     const next = !complianceHardPurge;
     setComplianceHardPurge(next);
     configMutation.mutate({ compliance_hard_purge: next });
+  }
+
+  function saveSkillVersionRetentionDays(value: string) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      setSkillVersionRetentionDays(undefined);
+      configMutation.mutate({ skill_version_retention_days: null });
+      return;
+    }
+
+    const days = Number(trimmed);
+    if (!Number.isInteger(days) || days < 1 || days > 3650) {
+      setConfigError("skill_version_retention_days must be between 1 and 3650");
+      return;
+    }
+
+    setConfigError(null);
+    setSkillVersionRetentionDays(days);
+    configMutation.mutate({ skill_version_retention_days: days });
+  }
+
+  function toggleComplianceMode() {
+    const next = !complianceMode;
+    setComplianceMode(next);
+    configMutation.mutate({ compliance_mode: next });
   }
 
   function requestEraseUserData() {
@@ -768,6 +799,31 @@ export function SettingsView() {
             />
           </div>
 
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
+            <div>
+              <p className="text-sm font-medium text-ink">
+                <InfoLabel label="Skill version retention days" tooltip="Maximum age in days before historical skill versions are pruned. The latest snapshot per skill is always kept." />
+              </p>
+              <p className="mt-1 text-xs text-ink/60">Prune older skill snapshots daily while preserving the newest version record for each skill. Leave blank to disable.</p>
+              {skillVersionRetentionDays ? (
+                <Badge variant="teal" className="mt-2">
+                  Active — historical skill versions older than {skillVersionRetentionDays} days will be pruned daily
+                </Badge>
+              ) : null}
+            </div>
+            <Input
+              data-testid="skill-version-retention-days-input"
+              type="number"
+              min={1}
+              max={3650}
+              placeholder="No limit"
+              value={skillVersionRetentionDays ?? ""}
+              onChange={(event) => saveSkillVersionRetentionDays(event.target.value)}
+              disabled={!canAct || configMutation.isPending}
+              className="w-full lg:w-48"
+            />
+          </div>
+
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-medium text-ink">
@@ -791,6 +847,34 @@ export function SettingsView() {
                 className={cn(
                   "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform",
                   complianceHardPurge ? "translate-x-5" : "translate-x-0",
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-ink">
+                <InfoLabel label="Compliance mode" tooltip="Require an explicit change note for skill create, update, and rollback operations." />
+              </p>
+              <p className="mt-1 text-xs text-ink/60">When enabled, skill mutations must include a non-empty change note for auditability.</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={complianceMode}
+              data-testid="compliance-mode-toggle"
+              onClick={toggleComplianceMode}
+              disabled={!canAct || configMutation.isPending}
+              className={cn(
+                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50",
+                complianceMode ? "bg-accent" : "bg-ink/20",
+              )}
+            >
+              <span
+                className={cn(
+                  "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform",
+                  complianceMode ? "translate-x-5" : "translate-x-0",
                 )}
               />
             </button>

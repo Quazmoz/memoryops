@@ -25,6 +25,8 @@ const MIN_DECAY_HALF_LIFE_DAYS: u32 = 1;
 const MAX_DECAY_HALF_LIFE_DAYS: u32 = 3650;
 const MIN_PRUNING_THRESHOLD: f32 = 0.01;
 const MAX_PRUNING_THRESHOLD: f32 = 0.50;
+const MIN_SKILL_VERSION_RETENTION_DAYS: u32 = 1;
+const MAX_SKILL_VERSION_RETENTION_DAYS: u32 = 3650;
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
 #[derive(Debug, Clone, Copy, FromRow)]
@@ -51,6 +53,7 @@ struct WorkspaceLifecycleSettings {
     workspace_id: Uuid,
     decay_half_life_days: u32,
     pruning_threshold: f32,
+    skill_version_retention_days: Option<u32>,
 }
 
 pub async fn run_scheduler(state: AppState) {
@@ -71,6 +74,9 @@ pub async fn run_scheduler(state: AppState) {
             }
             if let Err(error) = run_pruning_pass(&state).await {
                 tracing::error!(error = ?error, "pruning pass failed");
+            }
+            if let Err(error) = run_skill_version_prune_pass(&state).await {
+                tracing::error!(error = ?error, "skill version prune pass failed");
             }
             if let Err(error) = run_hard_delete_pass(&state).await {
                 tracing::error!(error = ?error, "hard delete pass failed");
@@ -376,6 +382,46 @@ pub async fn run_hard_delete_pass(state: &AppState) -> AppResult<u64> {
     }
 
     tracing::info!(deleted = total, "scheduler hard delete pass completed");
+    Ok(total)
+}
+
+pub async fn run_skill_version_prune_pass(state: &AppState) -> AppResult<u64> {
+    let batch_size = i64::from(state.config.decay.batch_size.max(1));
+    let mut total = 0_u64;
+    let mut cursor = None;
+
+    loop {
+        let workspaces =
+            list_workspace_lifecycle_settings_after(state, cursor, WORKSPACE_PAGE_SIZE).await?;
+        if workspaces.is_empty() {
+            break;
+        }
+
+        for workspace in &workspaces {
+            let Some(retention_days) = workspace.skill_version_retention_days else {
+                continue;
+            };
+
+            loop {
+                let pruned = prune_skill_version_batch(
+                    &state.db,
+                    workspace.workspace_id,
+                    retention_days_to_i32(retention_days)?,
+                    batch_size,
+                )
+                .await?;
+                if pruned == 0 {
+                    break;
+                }
+
+                total = total.saturating_add(pruned);
+            }
+        }
+
+        cursor = workspaces.last().map(|workspace| workspace.workspace_id);
+    }
+
+    tracing::info!(pruned = total, "scheduler skill version prune pass completed");
     Ok(total)
 }
 
@@ -812,6 +858,10 @@ fn lifecycle_settings_from_config(
         workspace_id,
         decay_half_life_days: valid_decay_half_life_days(decay_half_life_days, workspace_id),
         pruning_threshold: valid_pruning_threshold(pruning_threshold, workspace_id),
+        skill_version_retention_days: valid_skill_version_retention_days(
+            config.skill_version_retention_days,
+            workspace_id,
+        ),
     }
 }
 
@@ -821,6 +871,7 @@ impl WorkspaceLifecycleSettings {
             workspace_id,
             decay_half_life_days: DEFAULT_DECAY_HALF_LIFE_DAYS,
             pruning_threshold: DEFAULT_PRUNING_THRESHOLD,
+            skill_version_retention_days: None,
         }
     }
 }
@@ -852,6 +903,23 @@ fn valid_pruning_threshold(threshold: f32, workspace_id: Uuid) -> f32 {
     }
 }
 
+fn valid_skill_version_retention_days(days: Option<u32>, workspace_id: Uuid) -> Option<u32> {
+    let Some(days) = days else {
+        return None;
+    };
+
+    if (MIN_SKILL_VERSION_RETENTION_DAYS..=MAX_SKILL_VERSION_RETENTION_DAYS).contains(&days) {
+        Some(days)
+    } else {
+        tracing::warn!(
+            workspace_id = %workspace_id,
+            skill_version_retention_days = days,
+            "workspace skill version retention is out of range; disabling pruning"
+        );
+        None
+    }
+}
+
 fn half_life_secs(decay_half_life_days: u32) -> f64 {
     f64::from(decay_half_life_days) * SECONDS_PER_DAY
 }
@@ -869,6 +937,46 @@ pub fn decay_score(importance_score: f32, elapsed_secs: f64, half_life_secs: f64
 
     let score = f64::from(importance_score) * 0.5_f64.powf(elapsed_secs / half_life_secs);
     score.clamp(0.0, 1.0) as f32
+}
+
+async fn prune_skill_version_batch(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    retention_days: i32,
+    limit: i64,
+) -> AppResult<u64> {
+    let deleted = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        WITH ranked AS (
+            SELECT id
+            FROM (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY tool_id
+                        ORDER BY version DESC, created_at DESC, id DESC
+                    ) AS version_rank
+                FROM workspace_tool_versions
+                WHERE workspace_id = $1
+                  AND created_at < NOW() - ($2::INTEGER * INTERVAL '1 day')
+            ) candidates
+            WHERE version_rank > 1
+            ORDER BY id ASC
+            LIMIT $3
+        )
+        DELETE FROM workspace_tool_versions
+        WHERE id IN (SELECT id FROM ranked)
+        RETURNING id
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(retention_days)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::Database)?;
+
+    len_to_u64(deleted.len())
 }
 
 #[cfg(test)]
@@ -958,6 +1066,26 @@ mod tests {
         let settings = lifecycle_settings_from_config(Uuid::nil(), &WorkspaceConfig::default());
 
         assert_eq!(settings.pruning_threshold, DEFAULT_PRUNING_THRESHOLD);
+    }
+
+    #[test]
+    fn scheduler_uses_skill_version_retention_when_present() {
+        let settings = lifecycle_settings_from_config(
+            Uuid::nil(),
+            &WorkspaceConfig {
+                skill_version_retention_days: Some(45),
+                ..WorkspaceConfig::default()
+            },
+        );
+
+        assert_eq!(settings.skill_version_retention_days, Some(45));
+    }
+
+    #[test]
+    fn scheduler_disables_skill_version_retention_when_missing() {
+        let settings = lifecycle_settings_from_config(Uuid::nil(), &WorkspaceConfig::default());
+
+        assert_eq!(settings.skill_version_retention_days, None);
     }
 
     #[test]

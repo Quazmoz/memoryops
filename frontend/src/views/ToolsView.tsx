@@ -21,6 +21,7 @@ const emptyDraft = {
   description: "",
   endpoint_url: "https://",
   http_method: "POST",
+  scope_visibility: "workspace" as NonNullable<CreateToolPayload["scope_visibility"]>,
   auth_header: "",
   auth_secret: "",
   input_schema: "{}",
@@ -46,6 +47,7 @@ export function ToolsView() {
   const [historyToolName, setHistoryToolName] = useState<string | null>(null);
   const [rollbackNote, setRollbackNote] = useState("");
   const [confirmingRollback, setConfirmingRollback] = useState<number | null>(null);
+  const [comparisonVersions, setComparisonVersions] = useState<number[]>([]);
   const hasAuth = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
 
   const toolsQuery = useQuery({
@@ -126,6 +128,7 @@ export function ToolsView() {
     onSuccess: (tool) => {
       setConfirmingRollback(null);
       setRollbackNote("");
+      setComparisonVersions([]);
       queryClient.setQueryData<Tool[]>(toolsKey(workspaceId), (current) =>
         current?.map((item) => (item.id === tool.id ? tool : item)) ?? [tool],
       );
@@ -135,6 +138,16 @@ export function ToolsView() {
   });
 
   const rows = useMemo(() => toolsQuery.data ?? [], [toolsQuery.data]);
+  const comparedVersions = useMemo(
+    () => comparisonVersions
+      .map((version) => versionsQuery.data?.find((candidate) => candidate.version === version))
+      .filter((candidate): candidate is ToolVersion => Boolean(candidate)),
+    [comparisonVersions, versionsQuery.data],
+  );
+  const [leftComparedVersion, rightComparedVersion] = comparedVersions;
+  const comparisonDiffEntries = leftComparedVersion && rightComparedVersion
+    ? buildToolVersionDiffEntries(leftComparedVersion, rightComparedVersion)
+    : [];
   const formPending = createMutation.isPending || updateMutation.isPending;
 
   useEffect(() => {
@@ -157,6 +170,7 @@ export function ToolsView() {
       description: tool.description,
       endpoint_url: tool.endpoint_url,
       http_method: tool.http_method,
+      scope_visibility: tool.scope_visibility,
       auth_header: tool.auth_header ?? "",
       auth_secret: "",
       input_schema: JSON.stringify(tool.input_schema ?? {}, null, 2),
@@ -204,6 +218,7 @@ export function ToolsView() {
     }
     setTestingToolName(tool.name);
     setHistoryToolName(null);
+    setComparisonVersions([]);
     setTestBody(JSON.stringify(tool.input_schema ?? {}, null, 2));
     setTestResult(null);
     setTestError(null);
@@ -213,12 +228,27 @@ export function ToolsView() {
     if (historyToolName === tool.name) {
       setHistoryToolName(null);
       setConfirmingRollback(null);
+      setComparisonVersions([]);
       return;
     }
     setHistoryToolName(tool.name);
     setTestingToolName(null);
     setRollbackNote("");
     setConfirmingRollback(null);
+    setComparisonVersions([]);
+  }
+
+  function toggleVersionComparison(version: number) {
+    setComparisonVersions((current) => {
+      if (current.includes(version)) {
+        return current.filter((value) => value !== version);
+      }
+      if (current.length === 2) {
+        const latest = current[1];
+        return latest === undefined ? [version] : [latest, version];
+      }
+      return [...current, version];
+    });
   }
 
   function runTest(name: string) {
@@ -289,6 +319,9 @@ export function ToolsView() {
                       >
                         v{tool.version}
                       </span>
+                      <Badge variant={scopeBadgeVariant(tool.scope_visibility)} className="ml-2 align-middle">
+                        {formatToolScopeVisibility(tool.scope_visibility)}
+                      </Badge>
                     </td>
                     <td className="max-w-[22rem] px-4 py-4 align-middle text-sm text-ink/70">{previewText(tool.description, 96)}</td>
                     <td className="px-4 py-4 align-middle">
@@ -453,6 +486,20 @@ export function ToolsView() {
                             <h3 className="text-sm font-semibold text-ink">Version history</h3>
                             <span className="text-xs text-ink/55">Current: v{tool.version}</span>
                           </div>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-ink/55">
+                            {comparisonVersions.length === 0 ? (
+                              <span>Select up to two versions to compare.</span>
+                            ) : (
+                              <span>
+                                Comparing queue: {comparisonVersions.map((version) => `v${version}`).join(" vs ")}
+                              </span>
+                            )}
+                            {comparisonVersions.length > 0 ? (
+                              <Button type="button" variant="ghost" size="sm" onClick={() => setComparisonVersions([])}>
+                                Clear compare
+                              </Button>
+                            ) : null}
+                          </div>
                           {versionsQuery.isLoading ? <Skeleton className="h-24 w-full" /> : null}
                           {versionsQuery.isError ? <InlineError message={errorMessage(versionsQuery.error)} /> : null}
                           {rollbackMutation.isError ? <InlineError title="Rollback failed" message={errorMessage(rollbackMutation.error)} /> : null}
@@ -476,47 +523,83 @@ export function ToolsView() {
                                       <td className="px-3 py-2 font-mono text-xs text-ink/60">{v.created_by ?? "—"}</td>
                                       <td className="px-3 py-2 text-xs text-ink/70">{v.change_note ?? <span className="text-ink/40">—</span>}</td>
                                       <td className="px-3 py-2 text-right">
-                                        {v.version !== tool.version ? (
-                                          confirmingRollback === v.version ? (
-                                            <div className="inline-grid gap-2 rounded-md border border-line bg-white p-2 text-left shadow">
-                                              <Input
-                                                data-testid={`tool-rollback-note-${tool.name}-${v.version}`}
-                                                placeholder="Change note (optional)"
-                                                value={rollbackNote}
-                                                onChange={(e) => setRollbackNote(e.target.value)}
-                                              />
-                                              <div className="flex justify-end gap-1.5">
-                                                <Button type="button" variant="ghost" size="sm" onClick={() => { setConfirmingRollback(null); setRollbackNote(""); }}>Cancel</Button>
-                                                <Button
-                                                  type="button"
-                                                  size="sm"
-                                                  data-testid={`tool-rollback-confirm-${tool.name}-${v.version}`}
-                                                  disabled={rollbackMutation.isPending}
-                                                  onClick={() => rollbackMutation.mutate({ name: tool.name, version: v.version, change_note: rollbackNote.trim() || undefined })}
-                                                >
-                                                  {rollbackMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />}
-                                                  Confirm rollback
-                                                </Button>
+                                        <div className="inline-flex flex-wrap justify-end gap-1.5">
+                                          <Button
+                                            type="button"
+                                            variant={comparisonVersions.includes(v.version) ? "secondary" : "ghost"}
+                                            size="sm"
+                                            data-testid={`tool-compare-${tool.name}-${v.version}`}
+                                            onClick={() => toggleVersionComparison(v.version)}
+                                          >
+                                            {comparisonVersions.includes(v.version) ? "Selected" : "Compare"}
+                                          </Button>
+                                          {v.version !== tool.version ? (
+                                            confirmingRollback === v.version ? (
+                                              <div className="inline-grid gap-2 rounded-md border border-line bg-white p-2 text-left shadow">
+                                                <Input
+                                                  data-testid={`tool-rollback-note-${tool.name}-${v.version}`}
+                                                  placeholder="Change note (optional)"
+                                                  value={rollbackNote}
+                                                  onChange={(e) => setRollbackNote(e.target.value)}
+                                                />
+                                                <div className="flex justify-end gap-1.5">
+                                                  <Button type="button" variant="ghost" size="sm" onClick={() => { setConfirmingRollback(null); setRollbackNote(""); }}>Cancel</Button>
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    data-testid={`tool-rollback-confirm-${tool.name}-${v.version}`}
+                                                    disabled={rollbackMutation.isPending}
+                                                    onClick={() => rollbackMutation.mutate({ name: tool.name, version: v.version, change_note: rollbackNote.trim() || undefined })}
+                                                  >
+                                                    {rollbackMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />}
+                                                    Confirm rollback
+                                                  </Button>
+                                                </div>
                                               </div>
-                                            </div>
-                                          ) : (
-                                            <Button
-                                              type="button"
-                                              variant="ghost"
-                                              size="sm"
-                                              data-testid={`tool-rollback-${tool.name}-${v.version}`}
-                                              onClick={() => { setConfirmingRollback(v.version); setRollbackNote(""); }}
-                                            >
-                                              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-                                              Roll back
-                                            </Button>
-                                          )
-                                        ) : null}
+                                            ) : (
+                                              <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                data-testid={`tool-rollback-${tool.name}-${v.version}`}
+                                                onClick={() => { setConfirmingRollback(v.version); setRollbackNote(""); }}
+                                              >
+                                                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                                                Roll back
+                                              </Button>
+                                            )
+                                          ) : null}
+                                        </div>
                                       </td>
                                     </tr>
                                   ))}
                                 </tbody>
                               </table>
+                            </div>
+                          ) : null}
+                          {leftComparedVersion && rightComparedVersion ? (
+                            <div className="grid gap-3 rounded-md border border-line bg-white p-4" data-testid={`tool-diff-${tool.name}`}>
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <h4 className="text-sm font-semibold text-ink">Version diff</h4>
+                                  <p className="text-xs text-ink/55">Comparing v{leftComparedVersion.version} to v{rightComparedVersion.version}</p>
+                                </div>
+                                <Badge variant="accent">{comparisonDiffEntries.filter((entry) => entry.changed).length} fields changed</Badge>
+                              </div>
+                              <div className="grid gap-3">
+                                {comparisonDiffEntries.map((entry) => (
+                                  <section key={entry.key} className="rounded-md border border-line/80 bg-soft/20 p-3">
+                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                      <h5 className="text-sm font-medium text-ink">{entry.label}</h5>
+                                      <Badge variant={entry.changed ? "green" : "gray"}>{entry.changed ? "Changed" : "Same"}</Badge>
+                                    </div>
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      <DiffValueCard label={`v${leftComparedVersion.version}`} value={entry.before} code={entry.code} />
+                                      <DiffValueCard label={`v${rightComparedVersion.version}`} value={entry.after} code={entry.code} />
+                                    </div>
+                                  </section>
+                                ))}
+                              </div>
                             </div>
                           ) : null}
                           {versionsQuery.data && versionsQuery.data.length === 0 ? (
@@ -569,9 +652,24 @@ export function ToolsView() {
                     <option value="PUT">PUT</option>
                   </select>
                 </Field>
+                <Field label="Visibility" helpText="Private tools stay hidden from MCP retrieval and invocation. Workspace and published tools remain workspace-accessible, with published marking the tool as broadly reusable." error={errors.scope_visibility}>
+                  <select
+                    data-testid="tool-form-scope_visibility"
+                    value={draft.scope_visibility}
+                    onChange={(event) => updateDraft("scope_visibility", event.target.value)}
+                    className="h-10 rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  >
+                    <option value="private">Private</option>
+                    <option value="workspace">Workspace</option>
+                    <option value="published">Published</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Auth header" helpText="Header name MemoryOps should send when authenticating to the tool endpoint." error={errors.auth_header}>
                   <Input data-testid="tool-form-auth_header" value={draft.auth_header} onChange={(event) => updateDraft("auth_header", event.target.value)} placeholder="Authorization" />
                 </Field>
+                <div className="hidden sm:block" />
               </div>
               <Field label="Auth secret" helpText="Secret value stored encrypted by the backend. It is not re-displayed after save." error={errors.auth_secret}>
                 <Input data-testid="tool-form-auth_secret" type="password" value={draft.auth_secret} onChange={(event) => updateDraft("auth_secret", event.target.value)} />
@@ -638,6 +736,7 @@ function validateDraft(draft: ToolDraft, editing: boolean): { payload?: Partial<
     description,
     endpoint_url: endpointUrl,
     http_method: draft.http_method,
+    scope_visibility: draft.scope_visibility,
     input_schema: inputSchema,
     output_schema: outputSchema,
   };
@@ -719,4 +818,66 @@ function TooltipText({ value, children }: { value: string; children: React.React
       <TooltipContent>{value}</TooltipContent>
     </Tooltip>
   );
+}
+
+function DiffValueCard({ label, value, code }: { label: string; value: string; code: boolean }) {
+  return (
+    <div className="grid gap-1">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-ink/45">{label}</span>
+      {code ? (
+        <pre className="thin-scrollbar max-h-60 overflow-auto rounded-md bg-ink px-3 py-2 font-mono text-xs text-white/90 whitespace-pre-wrap break-words">{value}</pre>
+      ) : (
+        <div className="rounded-md border border-line bg-white px-3 py-2 text-xs text-ink/75 whitespace-pre-wrap break-words">{value}</div>
+      )}
+    </div>
+  );
+}
+
+type ToolVersionDiffEntry = {
+  key: string;
+  label: string;
+  before: string;
+  after: string;
+  changed: boolean;
+  code: boolean;
+};
+
+function buildToolVersionDiffEntries(left: ToolVersion, right: ToolVersion): ToolVersionDiffEntry[] {
+  const entries: Array<Omit<ToolVersionDiffEntry, "changed">> = [
+    { key: "description", label: "Description", before: left.description, after: right.description, code: false },
+    { key: "endpoint_url", label: "Endpoint URL", before: left.endpoint_url, after: right.endpoint_url, code: false },
+    { key: "http_method", label: "HTTP Method", before: left.http_method, after: right.http_method, code: false },
+    { key: "input_schema", label: "Input schema", before: formatToolDiffJson(left.input_schema), after: formatToolDiffJson(right.input_schema), code: true },
+    { key: "output_schema", label: "Output schema", before: formatToolDiffJson(left.output_schema), after: formatToolDiffJson(right.output_schema), code: true },
+    { key: "auth_header", label: "Auth header", before: formatToolAuthHeader(left.auth_header), after: formatToolAuthHeader(right.auth_header), code: false },
+    { key: "enabled", label: "Enabled", before: left.enabled ? "Enabled" : "Disabled", after: right.enabled ? "Enabled" : "Disabled", code: false },
+    { key: "scope_visibility", label: "Scope visibility", before: formatToolScopeVisibility(left.scope_visibility), after: formatToolScopeVisibility(right.scope_visibility), code: false },
+  ];
+
+  return entries.map((entry) => ({
+    ...entry,
+    changed: entry.before !== entry.after,
+  }));
+}
+
+function formatToolDiffJson(value: unknown): string {
+  return JSON.stringify(value ?? {}, null, 2);
+}
+
+function formatToolAuthHeader(value: string | null): string {
+  return value ? `Configured header: ${value}` : "No auth header configured";
+}
+
+function formatToolScopeVisibility(value: ToolVersion["scope_visibility"]): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function scopeBadgeVariant(value: ToolVersion["scope_visibility"]): "gray" | "green" | "teal" {
+  if (value === "published") {
+    return "teal";
+  }
+  if (value === "workspace") {
+    return "green";
+  }
+  return "gray";
 }
