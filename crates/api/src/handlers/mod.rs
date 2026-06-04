@@ -112,6 +112,22 @@ pub fn protected_router() -> Router<AppState> {
             axum::routing::post(skills::rollback_skill_version),
         )
         .route(
+            "/v1/workspaces/{id}/skills/{name}/invoke",
+            axum::routing::post(skills::invoke_skill),
+        )
+        .route(
+            "/v1/workspaces/{id}/skills/{name}/invocations",
+            get(skills::list_skill_invocations),
+        )
+        .route(
+            "/v1/workspaces/{id}/skills/export",
+            get(skills::export_skills),
+        )
+        .route(
+            "/v1/workspaces/{id}/skills/import",
+            axum::routing::post(skills::import_skills),
+        )
+        .route(
             "/v1/workspaces/{id}/integrations",
             axum::routing::post(integrations::create_integration)
                 .get(integrations::list_integrations),

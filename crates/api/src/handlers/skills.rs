@@ -2,7 +2,14 @@ use std::{collections::HashMap, time::Instant};
 
 use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
-use common::{auth::AuthContext, error::AppResult, AppError, AppState};
+use common::{
+    audit::spawn_audit_log,
+    auth::AuthContext,
+    error::AppResult,
+    models::AuditAction,
+    services::WorkspaceConfigService,
+    AppError, AppState,
+};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -12,6 +19,19 @@ use uuid::Uuid;
 use crate::security::{decrypt_secret_legacy_or_current, encrypt_secret};
 
 use super::require_workspace;
+
+/// Column list for SELECT/RETURNING on workspace_skills.
+const SKILL_COLUMNS: &str =
+    "id, workspace_id, name, description, endpoint_url, http_method, \
+     input_schema, output_schema, auth_header, enabled, version, \
+     scope_visibility, rate_limit_per_minute, circuit_breaker_threshold, \
+     circuit_breaker_cooldown_seconds, created_at, updated_at";
+
+/// Column list for SELECT on workspace_skill_versions.
+const SKILL_VERSION_COLUMNS: &str =
+    "id, skill_id, workspace_id, name, version, description, endpoint_url, \
+     http_method, input_schema, output_schema, auth_header, enabled, \
+     scope_visibility, change_note, created_by, created_at";
 
 const DEFAULT_SKILL_LIMIT: i64 = 50;
 const MAX_SKILL_LIMIT: i64 = 100;
@@ -34,6 +54,10 @@ pub struct CreateSkillRequest {
     pub auth_header: Option<String>,
     pub auth_secret: Option<String>,
     pub change_note: Option<String>,
+    pub scope_visibility: Option<SkillScopeVisibility>,
+    pub rate_limit_per_minute: Option<i32>,
+    pub circuit_breaker_threshold: Option<i32>,
+    pub circuit_breaker_cooldown_seconds: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,11 +71,113 @@ pub struct UpdateSkillRequest {
     pub auth_secret: Option<String>,
     pub enabled: Option<bool>,
     pub change_note: Option<String>,
+    pub scope_visibility: Option<SkillScopeVisibility>,
+    pub rate_limit_per_minute: Option<i32>,
+    pub circuit_breaker_threshold: Option<i32>,
+    pub circuit_breaker_cooldown_seconds: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RollbackSkillRequest {
     pub change_note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InvokeSkillRequest {
+    pub body: Option<Value>,
+    pub headers: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportSkillsRequest {
+    pub skills: Vec<ImportSkillItem>,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportSkillItem {
+    pub name: String,
+    pub description: String,
+    pub endpoint_url: String,
+    pub http_method: Option<HttpMethod>,
+    pub input_schema: Option<Value>,
+    pub output_schema: Option<Value>,
+    pub auth_header: Option<String>,
+    pub auth_secret: Option<String>,
+    pub enabled: Option<bool>,
+    pub scope_visibility: Option<SkillScopeVisibility>,
+    pub rate_limit_per_minute: Option<i32>,
+    pub circuit_breaker_threshold: Option<i32>,
+    pub circuit_breaker_cooldown_seconds: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportSkillsResponse {
+    pub created: usize,
+    pub updated: usize,
+    pub skipped: usize,
+    pub errors: Vec<ImportSkillError>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportSkillError {
+    pub name: String,
+    pub error: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportedSkill {
+    pub name: String,
+    pub description: String,
+    pub endpoint_url: String,
+    pub http_method: String,
+    pub input_schema: Value,
+    pub output_schema: Value,
+    pub auth_header: Option<String>,
+    pub enabled: bool,
+    pub scope_visibility: String,
+    pub rate_limit_per_minute: i32,
+    pub circuit_breaker_threshold: i32,
+    pub circuit_breaker_cooldown_seconds: i32,
+    pub version: i32,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct SkillInvocation {
+    pub id: i64,
+    pub skill_id: Uuid,
+    pub workspace_id: Uuid,
+    pub skill_name: String,
+    pub skill_version: i32,
+    pub actor: String,
+    pub source: String,
+    pub status_code: i32,
+    pub latency_ms: i32,
+    pub error: Option<String>,
+    pub occurred_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InvocationListQuery {
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+pub enum SkillScopeVisibility {
+    Private,
+    Workspace,
+}
+
+impl SkillScopeVisibility {
+    fn as_str(self) -> &'static str {
+        match self {
+            SkillScopeVisibility::Private => "private",
+            SkillScopeVisibility::Workspace => "workspace",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -85,6 +211,10 @@ pub struct SkillResponse {
     pub auth_header: Option<String>,
     pub enabled: bool,
     pub version: i32,
+    pub scope_visibility: String,
+    pub rate_limit_per_minute: i32,
+    pub circuit_breaker_threshold: i32,
+    pub circuit_breaker_cooldown_seconds: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -103,6 +233,7 @@ pub struct SkillVersionResponse {
     pub output_schema: Value,
     pub auth_header: Option<String>,
     pub enabled: bool,
+    pub scope_visibility: String,
     pub change_note: Option<String>,
     pub created_by: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -135,17 +266,22 @@ pub async fn create_skill(
 
     let mut tx = state.db.begin().await.map_err(AppError::Database)?;
 
-    let skill = sqlx::query_as::<_, SkillResponse>(
+    let skill = sqlx::query_as::<_, SkillResponse>(&format!(
         r#"
         INSERT INTO workspace_skills (
             workspace_id, name, description, endpoint_url, http_method,
-            input_schema, output_schema, auth_header, auth_secret_enc
+            input_schema, output_schema, auth_header, auth_secret_enc,
+            scope_visibility, rate_limit_per_minute,
+            circuit_breaker_threshold, circuit_breaker_cooldown_seconds
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING id, workspace_id, name, description, endpoint_url, http_method,
-                  input_schema, output_schema, auth_header, enabled, version, created_at, updated_at
-        "#,
-    )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                COALESCE($10, 'workspace'),
+                COALESCE($11, 0),
+                COALESCE($12, 0),
+                COALESCE($13, 60))
+        RETURNING {SKILL_COLUMNS}
+        "#
+    ))
     .bind(id)
     .bind(request.name.trim())
     .bind(request.description.trim())
@@ -155,6 +291,10 @@ pub async fn create_skill(
     .bind(request.output_schema.unwrap_or_else(|| json!({})))
     .bind(auth_header)
     .bind(auth_secret_enc)
+    .bind(request.scope_visibility.map(SkillScopeVisibility::as_str))
+    .bind(request.rate_limit_per_minute)
+    .bind(request.circuit_breaker_threshold)
+    .bind(request.circuit_breaker_cooldown_seconds)
     .fetch_one(&mut *tx)
     .await
     .map_err(map_skill_insert_error)?;
@@ -168,6 +308,16 @@ pub async fn create_skill(
     .await?;
 
     tx.commit().await.map_err(AppError::Database)?;
+
+    spawn_audit_log(
+        state.db.clone(),
+        id,
+        auth.actor(),
+        AuditAction::SkillCreated,
+        skill.id,
+        "workspace_skill",
+        Some(json!({ "name": skill.name, "version": skill.version })),
+    );
 
     Ok(Json(skill))
 }
@@ -184,13 +334,9 @@ pub async fn list_skills(
         .limit
         .unwrap_or(DEFAULT_SKILL_LIMIT)
         .clamp(1, MAX_SKILL_LIMIT);
-    let mut builder = QueryBuilder::<Postgres>::new(
-        r#"
-        SELECT id, workspace_id, name, description, endpoint_url, http_method,
-               input_schema, output_schema, auth_header, enabled, version, created_at, updated_at
-        FROM workspace_skills
-        WHERE workspace_id = "#,
-    );
+    let mut builder = QueryBuilder::<Postgres>::new(format!(
+        "SELECT {SKILL_COLUMNS} FROM workspace_skills WHERE workspace_id = "
+    ));
     builder.push_bind(id);
 
     if let Some(after) = query.after {
@@ -251,6 +397,8 @@ pub async fn update_skill(
     let auth_secret_enc = encrypted_secret(&state, request.auth_secret.as_deref())?;
     let change_note = normalized_optional_text(request.change_note.as_deref());
 
+    enforce_change_note_for_compliance(&state, id, change_note.as_deref()).await?;
+
     let mut tx = state.db.begin().await.map_err(AppError::Database)?;
 
     if auth_secret_enc.is_some() && auth_header.is_none() {
@@ -266,7 +414,7 @@ pub async fn update_skill(
         validate_auth_pair(existing_header.as_ref(), auth_secret_enc.as_ref())?;
     }
 
-    let skill = sqlx::query_as::<_, SkillResponse>(
+    let skill = sqlx::query_as::<_, SkillResponse>(&format!(
         r#"
         UPDATE workspace_skills
         SET description = COALESCE($3, description),
@@ -277,12 +425,15 @@ pub async fn update_skill(
             auth_header = COALESCE($8, auth_header),
             auth_secret_enc = COALESCE($9, auth_secret_enc),
             enabled = COALESCE($10, enabled),
+            scope_visibility = COALESCE($11, scope_visibility),
+            rate_limit_per_minute = COALESCE($12, rate_limit_per_minute),
+            circuit_breaker_threshold = COALESCE($13, circuit_breaker_threshold),
+            circuit_breaker_cooldown_seconds = COALESCE($14, circuit_breaker_cooldown_seconds),
             version = version + 1
         WHERE workspace_id = $1 AND name = $2
-        RETURNING id, workspace_id, name, description, endpoint_url, http_method,
-                  input_schema, output_schema, auth_header, enabled, version, created_at, updated_at
-        "#,
-    )
+        RETURNING {SKILL_COLUMNS}
+        "#
+    ))
     .bind(id)
     .bind(&name)
     .bind(request.description.as_deref().map(str::trim))
@@ -293,6 +444,10 @@ pub async fn update_skill(
     .bind(auth_header)
     .bind(auth_secret_enc)
     .bind(request.enabled)
+    .bind(request.scope_visibility.map(SkillScopeVisibility::as_str))
+    .bind(request.rate_limit_per_minute)
+    .bind(request.circuit_breaker_threshold)
+    .bind(request.circuit_breaker_cooldown_seconds)
     .fetch_optional(&mut *tx)
     .await
     .map_err(AppError::Database)?
@@ -310,6 +465,20 @@ pub async fn update_skill(
 
     tx.commit().await.map_err(AppError::Database)?;
 
+    spawn_audit_log(
+        state.db.clone(),
+        id,
+        auth.actor(),
+        AuditAction::SkillUpdated,
+        skill.id,
+        "workspace_skill",
+        Some(json!({
+            "name": skill.name,
+            "version": skill.version,
+            "change_note": change_note,
+        })),
+    );
+
     Ok(Json(skill))
 }
 
@@ -320,18 +489,29 @@ pub async fn delete_skill(
     Path((id, name)): Path<(Uuid, String)>,
 ) -> AppResult<Json<Value>> {
     require_workspace(&auth, id)?;
-    let deleted = sqlx::query("DELETE FROM workspace_skills WHERE workspace_id = $1 AND name = $2")
-        .bind(id)
-        .bind(&name)
-        .execute(&state.db)
-        .await
-        .map_err(AppError::Database)?
-        .rows_affected();
-    if deleted == 0 {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "DELETE FROM workspace_skills WHERE workspace_id = $1 AND name = $2 RETURNING id",
+    )
+    .bind(id)
+    .bind(&name)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+    let Some((skill_id,)) = row else {
         return Err(AppError::NotFound {
             resource: format!("workspace_skill:{name}"),
         });
-    }
+    };
+
+    spawn_audit_log(
+        state.db.clone(),
+        id,
+        auth.actor(),
+        AuditAction::SkillDeleted,
+        skill_id,
+        "workspace_skill",
+        Some(json!({ "name": name })),
+    );
 
     Ok(Json(json!({ "deleted": true })))
 }
@@ -375,14 +555,9 @@ pub async fn get_skill_secret(
 }
 
 async fn fetch_skill(state: &AppState, workspace_id: Uuid, name: &str) -> AppResult<SkillResponse> {
-    sqlx::query_as::<_, SkillResponse>(
-        r#"
-        SELECT id, workspace_id, name, description, endpoint_url, http_method,
-               input_schema, output_schema, auth_header, enabled, version, created_at, updated_at
-        FROM workspace_skills
-        WHERE workspace_id = $1 AND name = $2
-        "#,
-    )
+    sqlx::query_as::<_, SkillResponse>(&format!(
+        "SELECT {SKILL_COLUMNS} FROM workspace_skills WHERE workspace_id = $1 AND name = $2"
+    ))
     .bind(workspace_id)
     .bind(name)
     .fetch_optional(&state.db)
@@ -412,9 +587,9 @@ async fn insert_skill_version_snapshot(
         INSERT INTO workspace_skill_versions (
             skill_id, workspace_id, name, version, description, endpoint_url,
             http_method, input_schema, output_schema, auth_header, auth_secret_enc,
-            enabled, change_note, created_by
+            enabled, change_note, created_by, scope_visibility
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         "#,
     )
     .bind(skill.id)
@@ -431,6 +606,7 @@ async fn insert_skill_version_snapshot(
     .bind(skill.enabled)
     .bind(change_note)
     .bind(created_by)
+    .bind(&skill.scope_visibility)
     .execute(&mut **tx)
     .await
     .map_err(AppError::Database)?;
@@ -446,16 +622,14 @@ pub async fn list_skill_versions(
 ) -> AppResult<Json<Vec<SkillVersionResponse>>> {
     require_workspace(&auth, id)?;
 
-    let versions = sqlx::query_as::<_, SkillVersionResponse>(
+    let versions = sqlx::query_as::<_, SkillVersionResponse>(&format!(
         r#"
-        SELECT id, skill_id, workspace_id, name, version, description, endpoint_url,
-               http_method, input_schema, output_schema, auth_header, enabled,
-               change_note, created_by, created_at
+        SELECT {SKILL_VERSION_COLUMNS}
         FROM workspace_skill_versions
         WHERE workspace_id = $1 AND name = $2
         ORDER BY version DESC
-        "#,
-    )
+        "#
+    ))
     .bind(id)
     .bind(&name)
     .fetch_all(&state.db)
@@ -478,15 +652,13 @@ pub async fn get_skill_version(
 ) -> AppResult<Json<SkillVersionResponse>> {
     require_workspace(&auth, id)?;
 
-    let row = sqlx::query_as::<_, SkillVersionResponse>(
+    let row = sqlx::query_as::<_, SkillVersionResponse>(&format!(
         r#"
-        SELECT id, skill_id, workspace_id, name, version, description, endpoint_url,
-               http_method, input_schema, output_schema, auth_header, enabled,
-               change_note, created_by, created_at
+        SELECT {SKILL_VERSION_COLUMNS}
         FROM workspace_skill_versions
         WHERE workspace_id = $1 AND name = $2 AND version = $3
-        "#,
-    )
+        "#
+    ))
     .bind(id)
     .bind(&name)
     .bind(version)
@@ -509,6 +681,9 @@ pub async fn rollback_skill_version(
 ) -> AppResult<Json<SkillResponse>> {
     require_workspace(&auth, id)?;
 
+    let change_note = normalized_optional_text(request.change_note.as_deref());
+    enforce_change_note_for_compliance(&state, id, change_note.as_deref()).await?;
+
     let mut tx = state.db.begin().await.map_err(AppError::Database)?;
 
     #[derive(sqlx::FromRow)]
@@ -521,12 +696,13 @@ pub async fn rollback_skill_version(
         auth_header: Option<String>,
         auth_secret_enc: Option<String>,
         enabled: bool,
+        scope_visibility: String,
     }
 
     let snapshot = sqlx::query_as::<_, VersionSnapshot>(
         r#"
         SELECT description, endpoint_url, http_method, input_schema, output_schema,
-               auth_header, auth_secret_enc, enabled
+               auth_header, auth_secret_enc, enabled, scope_visibility
         FROM workspace_skill_versions
         WHERE workspace_id = $1 AND name = $2 AND version = $3
         "#,
@@ -545,7 +721,7 @@ pub async fn rollback_skill_version(
     validate_endpoint_url(&snapshot.endpoint_url)?;
     validate_endpoint_url_dns(&snapshot.endpoint_url).await?;
 
-    let skill = sqlx::query_as::<_, SkillResponse>(
+    let skill = sqlx::query_as::<_, SkillResponse>(&format!(
         r#"
         UPDATE workspace_skills
         SET description = $3,
@@ -556,12 +732,12 @@ pub async fn rollback_skill_version(
             auth_header = $8,
             auth_secret_enc = $9,
             enabled = $10,
+            scope_visibility = $11,
             version = version + 1
         WHERE workspace_id = $1 AND name = $2
-        RETURNING id, workspace_id, name, description, endpoint_url, http_method,
-                  input_schema, output_schema, auth_header, enabled, version, created_at, updated_at
-        "#,
-    )
+        RETURNING {SKILL_COLUMNS}
+        "#
+    ))
     .bind(id)
     .bind(&name)
     .bind(&snapshot.description)
@@ -572,6 +748,7 @@ pub async fn rollback_skill_version(
     .bind(snapshot.auth_header.as_deref())
     .bind(snapshot.auth_secret_enc.as_deref())
     .bind(snapshot.enabled)
+    .bind(&snapshot.scope_visibility)
     .fetch_optional(&mut *tx)
     .await
     .map_err(AppError::Database)?
@@ -579,12 +756,25 @@ pub async fn rollback_skill_version(
         resource: format!("workspace_skill:{name}"),
     })?;
 
-    let note = normalized_optional_text(request.change_note.as_deref())
-        .unwrap_or_else(|| format!("rollback to v{version}"));
+    let note = change_note.unwrap_or_else(|| format!("rollback to v{version}"));
     insert_skill_version_snapshot(&mut tx, &skill, Some(&note), Some(auth.actor().as_str()))
         .await?;
 
     tx.commit().await.map_err(AppError::Database)?;
+
+    spawn_audit_log(
+        state.db.clone(),
+        id,
+        auth.actor(),
+        AuditAction::SkillRolledBack,
+        skill.id,
+        "workspace_skill",
+        Some(json!({
+            "name": skill.name,
+            "version": skill.version,
+            "rolled_back_to": version,
+        })),
+    );
 
     Ok(Json(skill))
 }
@@ -810,20 +1000,262 @@ pub async fn test_skill(
     Json(request): Json<SkillTestRequest>,
 ) -> AppResult<Json<SkillTestResponse>> {
     require_workspace(&auth, id)?;
+    let (response, _version) = invoke_skill_core(
+        &state,
+        id,
+        &name,
+        request.body.as_ref(),
+        request.headers.as_ref(),
+        InvocationSource::Test,
+        &auth.actor(),
+    )
+    .await?;
+    Ok(Json(response))
+}
 
-    #[derive(Debug, sqlx::FromRow)]
-    struct SkillForTest {
-        endpoint_url: String,
-        http_method: String,
-        auth_header: Option<String>,
-        auth_secret_enc: Option<String>,
-    }
+#[axum::debug_handler]
+pub async fn invoke_skill(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((id, name)): Path<(Uuid, String)>,
+    Json(request): Json<InvokeSkillRequest>,
+) -> AppResult<Json<SkillTestResponse>> {
+    require_workspace(&auth, id)?;
+    let (response, _version) = invoke_skill_core(
+        &state,
+        id,
+        &name,
+        request.body.as_ref(),
+        request.headers.as_ref(),
+        InvocationSource::Http,
+        &auth.actor(),
+    )
+    .await?;
+    Ok(Json(response))
+}
 
-    let skill = sqlx::query_as::<_, SkillForTest>(
-        "SELECT endpoint_url, http_method, auth_header, auth_secret_enc FROM workspace_skills WHERE workspace_id = $1 AND name = $2",
+#[axum::debug_handler]
+pub async fn list_skill_invocations(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((id, name)): Path<(Uuid, String)>,
+    Query(query): Query<InvocationListQuery>,
+) -> AppResult<Json<Vec<SkillInvocation>>> {
+    require_workspace(&auth, id)?;
+    let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    let rows = sqlx::query_as::<_, SkillInvocation>(
+        r#"
+        SELECT id, skill_id, workspace_id, skill_name, skill_version, actor,
+               source, status_code, latency_ms, error, occurred_at
+        FROM workspace_skill_invocations
+        WHERE workspace_id = $1 AND skill_name = $2
+        ORDER BY occurred_at DESC
+        LIMIT $3
+        "#,
     )
     .bind(id)
     .bind(&name)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+    Ok(Json(rows))
+}
+
+#[axum::debug_handler]
+pub async fn export_skills(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Vec<ExportedSkill>>> {
+    require_workspace(&auth, id)?;
+    let rows = sqlx::query_as::<_, ExportedSkill>(
+        r#"
+        SELECT name, description, endpoint_url, http_method, input_schema,
+               output_schema, auth_header, enabled, scope_visibility,
+               rate_limit_per_minute, circuit_breaker_threshold,
+               circuit_breaker_cooldown_seconds, version
+        FROM workspace_skills
+        WHERE workspace_id = $1
+        ORDER BY name
+        "#,
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+    Ok(Json(rows))
+}
+
+#[axum::debug_handler]
+pub async fn import_skills(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    Json(request): Json<ImportSkillsRequest>,
+) -> AppResult<Json<ImportSkillsResponse>> {
+    require_workspace(&auth, id)?;
+
+    let mut created = 0usize;
+    let mut updated = 0usize;
+    let mut skipped = 0usize;
+    let mut errors = Vec::new();
+
+    for item in request.skills {
+        let name = item.name.trim().to_string();
+        match import_one_skill(&state, &auth, id, item, request.overwrite).await {
+            Ok(Some(true)) => created += 1,
+            Ok(Some(false)) => updated += 1,
+            Ok(None) => skipped += 1,
+            Err(error) => errors.push(ImportSkillError {
+                name,
+                error: format!("{error}"),
+            }),
+        }
+    }
+
+    Ok(Json(ImportSkillsResponse {
+        created,
+        updated,
+        skipped,
+        errors,
+    }))
+}
+
+async fn import_one_skill(
+    state: &AppState,
+    auth: &AuthContext,
+    workspace_id: Uuid,
+    item: ImportSkillItem,
+    overwrite: bool,
+) -> AppResult<Option<bool>> {
+    validate_name(&item.name)?;
+    validate_description(&item.description)?;
+    validate_endpoint_url(&item.endpoint_url)?;
+    validate_endpoint_url_dns(&item.endpoint_url).await?;
+    validate_schema(item.input_schema.as_ref(), "input_schema")?;
+    validate_schema(item.output_schema.as_ref(), "output_schema")?;
+
+    let auth_header = normalized_optional_text(item.auth_header.as_deref());
+    let auth_secret_enc = encrypted_secret(state, item.auth_secret.as_deref())?;
+    validate_auth_pair(auth_header.as_ref(), auth_secret_enc.as_ref())?;
+
+    let exists: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM workspace_skills WHERE workspace_id = $1 AND name = $2",
+    )
+    .bind(workspace_id)
+    .bind(&item.name)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if exists.is_some() && !overwrite {
+        return Ok(None);
+    }
+
+    if exists.is_some() {
+        let update_request = UpdateSkillRequest {
+            description: Some(item.description),
+            endpoint_url: Some(item.endpoint_url),
+            http_method: item.http_method,
+            input_schema: item.input_schema,
+            output_schema: item.output_schema,
+            auth_header: item.auth_header,
+            auth_secret: item.auth_secret,
+            enabled: item.enabled,
+            change_note: Some("imported".to_string()),
+            scope_visibility: item.scope_visibility,
+            rate_limit_per_minute: item.rate_limit_per_minute,
+            circuit_breaker_threshold: item.circuit_breaker_threshold,
+            circuit_breaker_cooldown_seconds: item.circuit_breaker_cooldown_seconds,
+        };
+        update_skill(
+            State(state.clone()),
+            Extension(auth.clone()),
+            Path((workspace_id, item.name.clone())),
+            Json(update_request),
+        )
+        .await?;
+        Ok(Some(false))
+    } else {
+        let create_request = CreateSkillRequest {
+            name: item.name.clone(),
+            description: item.description,
+            endpoint_url: item.endpoint_url,
+            http_method: item.http_method,
+            input_schema: item.input_schema,
+            output_schema: item.output_schema,
+            auth_header: item.auth_header,
+            auth_secret: item.auth_secret,
+            change_note: Some("imported".to_string()),
+            scope_visibility: item.scope_visibility,
+            rate_limit_per_minute: item.rate_limit_per_minute,
+            circuit_breaker_threshold: item.circuit_breaker_threshold,
+            circuit_breaker_cooldown_seconds: item.circuit_breaker_cooldown_seconds,
+        };
+        create_skill(
+            State(state.clone()),
+            Extension(auth.clone()),
+            Path(workspace_id),
+            Json(create_request),
+        )
+        .await?;
+        Ok(Some(true))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum InvocationSource {
+    Http,
+    Mcp,
+    Test,
+}
+
+impl InvocationSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            InvocationSource::Http => "http",
+            InvocationSource::Mcp => "mcp",
+            InvocationSource::Test => "test",
+        }
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct InvokeSkillRow {
+    id: Uuid,
+    endpoint_url: String,
+    http_method: String,
+    auth_header: Option<String>,
+    auth_secret_enc: Option<String>,
+    enabled: bool,
+    version: i32,
+    scope_visibility: String,
+    rate_limit_per_minute: i32,
+    circuit_breaker_threshold: i32,
+    circuit_breaker_cooldown_seconds: i32,
+}
+
+pub async fn invoke_skill_core(
+    state: &AppState,
+    workspace_id: Uuid,
+    name: &str,
+    body: Option<&Value>,
+    headers: Option<&HashMap<String, String>>,
+    source: InvocationSource,
+    actor: &str,
+) -> AppResult<(SkillTestResponse, i32)> {
+    let skill = sqlx::query_as::<_, InvokeSkillRow>(
+        r#"
+        SELECT id, endpoint_url, http_method, auth_header, auth_secret_enc, enabled,
+               version, scope_visibility, rate_limit_per_minute,
+               circuit_breaker_threshold, circuit_breaker_cooldown_seconds
+        FROM workspace_skills
+        WHERE workspace_id = $1 AND name = $2
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(name)
     .fetch_optional(&state.db)
     .await
     .map_err(AppError::Database)?
@@ -831,7 +1263,59 @@ pub async fn test_skill(
         resource: format!("workspace_skill:{name}"),
     })?;
 
-    // Validate the stored endpoint URL at call time (DNS rebinding defence)
+    if !skill.enabled {
+        return Err(AppError::Validation(format!(
+            "skill {name} is disabled"
+        )));
+    }
+
+    if matches!(source, InvocationSource::Mcp) && skill.scope_visibility == "private" {
+        return Err(AppError::Forbidden);
+    }
+
+    // Rate limit: count successful + failed invocations in the last 60s.
+    if skill.rate_limit_per_minute > 0 {
+        let count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM workspace_skill_invocations
+            WHERE skill_id = $1 AND occurred_at > NOW() - INTERVAL '60 seconds'
+            "#,
+        )
+        .bind(skill.id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(AppError::Database)?;
+        if count >= skill.rate_limit_per_minute as i64 {
+            return Err(AppError::RateLimited {
+                retry_after_secs: 60,
+            });
+        }
+    }
+
+    // Circuit breaker: if >= threshold non-2xx invocations in last cooldown
+    // window, refuse.
+    if skill.circuit_breaker_threshold > 0 {
+        let failures: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM workspace_skill_invocations
+            WHERE skill_id = $1
+              AND occurred_at > NOW() - make_interval(secs => $2)
+              AND (status_code < 200 OR status_code >= 300)
+            "#,
+        )
+        .bind(skill.id)
+        .bind(skill.circuit_breaker_cooldown_seconds as f64)
+        .fetch_one(&state.db)
+        .await
+        .map_err(AppError::Database)?;
+        if failures >= skill.circuit_breaker_threshold as i64 {
+            return Err(AppError::Conflict(format!(
+                "skill {name} circuit breaker open ({} failures in last {}s)",
+                failures, skill.circuit_breaker_cooldown_seconds
+            )));
+        }
+    }
+
     validate_endpoint_url_dns(&skill.endpoint_url).await?;
 
     let client = reqwest::Client::builder()
@@ -840,25 +1324,20 @@ pub async fn test_skill(
         .build()
         .map_err(|error| AppError::Internal(anyhow::anyhow!(error)))?;
 
-    let method =
-        reqwest::Method::from_bytes(skill.http_method.as_bytes()).unwrap_or(reqwest::Method::POST);
-
+    let method = reqwest::Method::from_bytes(skill.http_method.as_bytes())
+        .unwrap_or(reqwest::Method::POST);
     let mut req_builder = client.request(method, &skill.endpoint_url);
 
-    // Inject auth header server-side (never expose the secret to the client)
     if let (Some(header_name), Some(enc)) = (
         skill.auth_header.as_deref(),
         skill.auth_secret_enc.as_deref(),
     ) {
         let decrypted =
             decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), enc)?;
-        persist_migrated_ciphertext(&state.db, id, &name, &decrypted).await?;
+        persist_migrated_ciphertext(&state.db, workspace_id, name, &decrypted).await?;
         req_builder = req_builder.header(header_name, decrypted.plaintext);
     }
 
-    // Forward a safe subset of caller-supplied headers.
-    // Headers that could override auth, change routing, or affect connection
-    // management are blocked regardless of what the caller sends.
     const BLOCKED_REQUEST_HEADERS: &[&str] = &[
         "authorization",
         "proxy-authorization",
@@ -874,7 +1353,7 @@ pub async fn test_skill(
         "x-forwarded-for",
         "x-real-ip",
     ];
-    if let Some(caller_headers) = &request.headers {
+    if let Some(caller_headers) = headers {
         let auth_header_lower = skill
             .auth_header
             .as_deref()
@@ -885,7 +1364,6 @@ pub async fn test_skill(
             if BLOCKED_REQUEST_HEADERS.contains(&normalized.as_str()) {
                 continue;
             }
-            // Also block whatever header name the skill uses for auth
             if !auth_header_lower.is_empty() && normalized == auth_header_lower {
                 continue;
             }
@@ -893,7 +1371,7 @@ pub async fn test_skill(
         }
     }
 
-    if let Some(body) = &request.body {
+    if let Some(body) = body {
         req_builder = req_builder
             .header("Content-Type", "application/json")
             .body(body.to_string());
@@ -903,22 +1381,85 @@ pub async fn test_skill(
     let response = req_builder.send().await;
     let latency_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
 
-    match response {
+    let (status, body_value, error_text) = match response {
         Ok(resp) => {
             let status = resp.status().as_u16();
             let body = read_skill_test_body(resp).await;
-            Ok(Json(SkillTestResponse {
-                status,
-                latency_ms,
-                body,
-            }))
+            (status, body, None)
         }
-        Err(error) => Ok(Json(SkillTestResponse {
-            status: 502,
-            latency_ms,
-            body: json!({ "error": error.to_string() }),
+        Err(error) => (
+            502u16,
+            json!({ "error": error.to_string() }),
+            Some(error.to_string()),
+        ),
+    };
+
+    let _ = sqlx::query(
+        r#"
+        INSERT INTO workspace_skill_invocations (
+            skill_id, workspace_id, skill_name, skill_version, actor,
+            source, status_code, latency_ms, error
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        "#,
+    )
+    .bind(skill.id)
+    .bind(workspace_id)
+    .bind(name)
+    .bind(skill.version)
+    .bind(actor)
+    .bind(source.as_str())
+    .bind(status as i32)
+    .bind(latency_ms.min(i32::MAX as u64) as i32)
+    .bind(error_text)
+    .execute(&state.db)
+    .await
+    .map_err(AppError::Database);
+
+    spawn_audit_log(
+        state.db.clone(),
+        workspace_id,
+        actor.to_string(),
+        AuditAction::SkillInvoked,
+        skill.id,
+        "workspace_skill",
+        Some(json!({
+            "name": name,
+            "version": skill.version,
+            "source": source.as_str(),
+            "status": status,
+            "latency_ms": latency_ms,
         })),
+    );
+
+    Ok((
+        SkillTestResponse {
+            status,
+            latency_ms,
+            body: body_value,
+        },
+        skill.version,
+    ))
+}
+
+async fn enforce_change_note_for_compliance(
+    state: &AppState,
+    workspace_id: Uuid,
+    change_note: Option<&str>,
+) -> AppResult<()> {
+    let config = WorkspaceConfigService::new(state.db.clone())
+        .load(workspace_id)
+        .await?;
+    if config.compliance_mode
+        && change_note
+            .map(|note| note.trim().is_empty())
+            .unwrap_or(true)
+    {
+        return Err(AppError::Validation(
+            "change_note is required when compliance_mode is enabled".to_owned(),
+        ));
     }
+    Ok(())
 }
 
 async fn read_skill_test_body(response: reqwest::Response) -> Value {

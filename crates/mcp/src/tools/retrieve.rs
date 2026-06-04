@@ -158,7 +158,7 @@ async fn load_enabled_skills(
         r#"
         SELECT name, description, endpoint_url, http_method, input_schema, output_schema, version
         FROM workspace_skills
-        WHERE workspace_id = $1 AND enabled = TRUE
+        WHERE workspace_id = $1 AND enabled = TRUE AND scope_visibility <> 'private'
         ORDER BY name ASC
         "#,
     )

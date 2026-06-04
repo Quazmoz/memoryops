@@ -559,6 +559,29 @@ export class MemoryOpsClient {
     return expectSkill(response, "MemoryOps returned an unexpected rollback response.");
   }
 
+  async invokeSkill(name: string, body: unknown): Promise<SkillTestResult> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/skills/${encodeURIComponent(name)}/invoke`,
+      { method: "POST", authenticated: true, body: { body } },
+    );
+    if (!isRecord(response)) {
+      return { status: 0, latency_ms: 0, body: response };
+    }
+    return {
+      status: numberOrDefault(response.status, 0),
+      latency_ms: numberOrDefault(response.latency_ms, 0),
+      body: response.body,
+    };
+  }
+
+  async listSkillInvocations(name: string, limit = 50): Promise<unknown[]> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/skills/${encodeURIComponent(name)}/invocations?limit=${limit}`,
+      { method: "GET", authenticated: true, idempotent: true },
+    );
+    return Array.isArray(response) ? response : [];
+  }
+
   private async request(path: string, options: {
     method: "GET" | "POST" | "PATCH" | "DELETE";
     authenticated: boolean;

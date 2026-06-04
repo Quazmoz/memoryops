@@ -1050,6 +1050,107 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/skills/{name}/invoke:
+    post:
+      tags: [Skills]
+      operationId: invokeSkill
+      summary: Invoke a workspace skill (production call)
+      description: |
+        Calls the skill endpoint with rate-limit and circuit-breaker enforcement
+        and records the invocation to the workspace audit log.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/SkillName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Skill invocation response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillTestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          description: Skill rate limit exceeded
+  /v1/workspaces/{id}/skills/{name}/invocations:
+    get:
+      tags: [Skills]
+      operationId: listSkillInvocations
+      summary: List recent invocations for a skill
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/SkillName'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Recent invocations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SkillInvocation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/skills/export:
+    get:
+      tags: [Skills]
+      operationId: exportSkills
+      summary: Export workspace skills as a JSON bundle (secrets excluded)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Exported skill definitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ExportedSkill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/skills/import:
+    post:
+      tags: [Skills]
+      operationId: importSkills
+      summary: Import a JSON bundle of skill definitions
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportSkillsRequest'
+      responses:
+        '200':
+          description: Import summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportSkillsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v1/workspaces/{id}/contradictions:
     get:
       tags: [Contradictions]
@@ -2509,6 +2610,18 @@ components:
           type: [string, 'null']
         change_note:
           type: [string, 'null']
+        scope_visibility:
+          type: string
+          enum: [private, workspace]
+        rate_limit_per_minute:
+          type: integer
+          minimum: 0
+        circuit_breaker_threshold:
+          type: integer
+          minimum: 0
+        circuit_breaker_cooldown_seconds:
+          type: integer
+          minimum: 1
     SkillUpdateRequest:
       type: object
       properties:
@@ -2534,6 +2647,18 @@ components:
           type: boolean
         change_note:
           type: [string, 'null']
+        scope_visibility:
+          type: string
+          enum: [private, workspace]
+        rate_limit_per_minute:
+          type: integer
+          minimum: 0
+        circuit_breaker_threshold:
+          type: integer
+          minimum: 0
+        circuit_breaker_cooldown_seconds:
+          type: integer
+          minimum: 1
     SkillRollbackRequest:
       type: object
       properties:
@@ -2552,6 +2677,10 @@ components:
         - output_schema
         - enabled
         - version
+        - scope_visibility
+        - rate_limit_per_minute
+        - circuit_breaker_threshold
+        - circuit_breaker_cooldown_seconds
         - created_at
         - updated_at
       properties:
@@ -2583,6 +2712,18 @@ components:
         version:
           type: integer
           minimum: 1
+        scope_visibility:
+          type: string
+          enum: [private, workspace]
+        rate_limit_per_minute:
+          type: integer
+          minimum: 0
+        circuit_breaker_threshold:
+          type: integer
+          minimum: 0
+        circuit_breaker_cooldown_seconds:
+          type: integer
+          minimum: 1
         created_at:
           type: string
           format: date-time
@@ -2603,6 +2744,7 @@ components:
         - input_schema
         - output_schema
         - enabled
+        - scope_visibility
         - created_at
       properties:
         id:
@@ -2636,6 +2778,9 @@ components:
           type: [string, 'null']
         enabled:
           type: boolean
+        scope_visibility:
+          type: string
+          enum: [private, workspace]
         change_note:
           type: [string, 'null']
         created_by:
@@ -2661,6 +2806,103 @@ components:
           type: integer
         body:
           description: JSON response body returned by the skill endpoint.
+    SkillInvocation:
+      type: object
+      required: [id, skill_id, workspace_id, skill_name, skill_version, actor, source, status_code, latency_ms, occurred_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        skill_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        skill_name:
+          type: string
+        skill_version:
+          type: integer
+        actor:
+          type: string
+        source:
+          type: string
+          enum: [http, mcp, test]
+        status_code:
+          type: integer
+        latency_ms:
+          type: integer
+        error:
+          type: [string, 'null']
+        occurred_at:
+          type: string
+          format: date-time
+    ExportedSkill:
+      type: object
+      required: [name, description, endpoint_url, http_method, input_schema, output_schema, enabled, scope_visibility, rate_limit_per_minute, circuit_breaker_threshold, circuit_breaker_cooldown_seconds, version]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        endpoint_url:
+          type: string
+        http_method:
+          type: string
+        input_schema:
+          type: object
+          additionalProperties: true
+        output_schema:
+          type: object
+          additionalProperties: true
+        auth_header:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+        scope_visibility:
+          type: string
+          enum: [private, workspace]
+        rate_limit_per_minute:
+          type: integer
+        circuit_breaker_threshold:
+          type: integer
+        circuit_breaker_cooldown_seconds:
+          type: integer
+        version:
+          type: integer
+    ImportSkillsRequest:
+      type: object
+      required: [skills]
+      properties:
+        overwrite:
+          type: boolean
+          default: false
+        skills:
+          type: array
+          items:
+            type: object
+            required: [name, description, endpoint_url]
+            additionalProperties: true
+    ImportSkillsResponse:
+      type: object
+      required: [created, updated, skipped, errors]
+      properties:
+        created:
+          type: integer
+        updated:
+          type: integer
+        skipped:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+            required: [name, error]
+            properties:
+              name:
+                type: string
+              error:
+                type: string
     ContradictionListResponse:
       type: object
       required: [items]

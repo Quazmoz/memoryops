@@ -13,6 +13,10 @@ export interface Skill {
   auth_header: string | null;
   enabled: boolean;
   version: number;
+  scope_visibility: "private" | "workspace";
+  rate_limit_per_minute: number;
+  circuit_breaker_threshold: number;
+  circuit_breaker_cooldown_seconds: number;
   created_at: string;
   updated_at: string;
 }
@@ -30,6 +34,7 @@ export interface SkillVersion {
   output_schema: unknown;
   auth_header: string | null;
   enabled: boolean;
+  scope_visibility: "private" | "workspace";
   change_note: string | null;
   created_by: string | null;
   created_at: string;
@@ -46,6 +51,47 @@ export interface CreateSkillPayload {
   auth_secret?: string;
   enabled?: boolean;
   change_note?: string;
+  scope_visibility?: "private" | "workspace";
+  rate_limit_per_minute?: number;
+  circuit_breaker_threshold?: number;
+  circuit_breaker_cooldown_seconds?: number;
+}
+
+export interface SkillInvocation {
+  id: number;
+  skill_id: string;
+  workspace_id: string;
+  skill_name: string;
+  skill_version: number;
+  actor: string;
+  source: "http" | "mcp" | "test";
+  status_code: number;
+  latency_ms: number;
+  error: string | null;
+  occurred_at: string;
+}
+
+export interface ExportedSkill {
+  name: string;
+  description: string;
+  endpoint_url: string;
+  http_method: string;
+  input_schema: unknown;
+  output_schema: unknown;
+  auth_header: string | null;
+  enabled: boolean;
+  scope_visibility: "private" | "workspace";
+  rate_limit_per_minute: number;
+  circuit_breaker_threshold: number;
+  circuit_breaker_cooldown_seconds: number;
+  version: number;
+}
+
+export interface ImportSkillsResponse {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: { name: string; error: string }[];
 }
 
 export async function listSkills(workspaceId: string): Promise<Skill[]> {
@@ -107,6 +153,42 @@ export async function rollbackSkillVersion(
   return apiRequest<Skill>(`/v1/workspaces/${workspaceId}/skills/${name}/versions/${version}/rollback`, {
     method: "POST",
     body: changeNote ? { change_note: changeNote } : {},
+  });
+}
+
+export async function invokeSkill(
+  workspaceId: string,
+  name: string,
+  request: SkillTestRequest,
+): Promise<SkillTestResponse> {
+  return apiRequest<SkillTestResponse>(`/v1/workspaces/${workspaceId}/skills/${name}/invoke`, {
+    method: "POST",
+    body: request as unknown as Record<string, JsonValue>,
+  });
+}
+
+export async function listSkillInvocations(
+  workspaceId: string,
+  name: string,
+  limit = 50,
+): Promise<SkillInvocation[]> {
+  return apiRequest<SkillInvocation[]>(
+    `/v1/workspaces/${workspaceId}/skills/${name}/invocations?limit=${limit}`,
+  );
+}
+
+export async function exportSkills(workspaceId: string): Promise<ExportedSkill[]> {
+  return apiRequest<ExportedSkill[]>(`/v1/workspaces/${workspaceId}/skills/export`);
+}
+
+export async function importSkills(
+  workspaceId: string,
+  skills: unknown[],
+  overwrite = false,
+): Promise<ImportSkillsResponse> {
+  return apiRequest<ImportSkillsResponse>(`/v1/workspaces/${workspaceId}/skills/import`, {
+    method: "POST",
+    body: { skills, overwrite } as Record<string, JsonValue>,
   });
 }
 

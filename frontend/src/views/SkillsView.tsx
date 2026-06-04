@@ -121,7 +121,7 @@ export function SkillsView() {
 
   const rollbackMutation = useMutation({
     mutationKey: ["workspace", workspaceId, "skills", "rollback"],
-    mutationFn: ({ name, version, change_note }: { name: string; version: number; change_note?: string }) =>
+    mutationFn: ({ name, version, change_note }: { name: string; version: number; change_note?: string | undefined }) =>
       rollbackSkillVersion(workspaceId, name, version, change_note),
     onSuccess: (skill) => {
       setConfirmingRollback(null);

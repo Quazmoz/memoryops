@@ -59,6 +59,10 @@ pub struct WorkspaceConfig {
     /// originating raw_events. When false, only memory_units are affected.
     #[serde(default)]
     pub compliance_hard_purge: bool,
+    /// When true, mutating skill operations (update, rollback) require an
+    /// explicit non-empty `change_note` for auditability.
+    #[serde(default)]
+    pub compliance_mode: bool,
 }
 
 impl Default for WorkspaceConfig {
@@ -82,6 +86,7 @@ impl Default for WorkspaceConfig {
             sub_agent_pools: Vec::new(),
             retention_max_age_days: None,
             compliance_hard_purge: false,
+            compliance_mode: false,
         }
     }
 }
