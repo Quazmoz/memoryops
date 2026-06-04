@@ -33,6 +33,7 @@ pub struct CreateSkillRequest {
     pub output_schema: Option<Value>,
     pub auth_header: Option<String>,
     pub auth_secret: Option<String>,
+    pub change_note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +46,12 @@ pub struct UpdateSkillRequest {
     pub auth_header: Option<String>,
     pub auth_secret: Option<String>,
     pub enabled: Option<bool>,
+    pub change_note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RollbackSkillRequest {
+    pub change_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -77,8 +84,28 @@ pub struct SkillResponse {
     pub output_schema: Value,
     pub auth_header: Option<String>,
     pub enabled: bool,
+    pub version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct SkillVersionResponse {
+    pub id: Uuid,
+    pub skill_id: Uuid,
+    pub workspace_id: Uuid,
+    pub name: String,
+    pub version: i32,
+    pub description: String,
+    pub endpoint_url: String,
+    pub http_method: String,
+    pub input_schema: Value,
+    pub output_schema: Value,
+    pub auth_header: Option<String>,
+    pub enabled: bool,
+    pub change_note: Option<String>,
+    pub created_by: Option<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -104,6 +131,9 @@ pub async fn create_skill(
     let auth_header = normalized_optional_text(request.auth_header.as_deref());
     let auth_secret_enc = encrypted_secret(&state, request.auth_secret.as_deref())?;
     validate_auth_pair(auth_header.as_ref(), auth_secret_enc.as_ref())?;
+    let change_note = normalized_optional_text(request.change_note.as_deref());
+
+    let mut tx = state.db.begin().await.map_err(AppError::Database)?;
 
     let skill = sqlx::query_as::<_, SkillResponse>(
         r#"
@@ -113,7 +143,7 @@ pub async fn create_skill(
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id, workspace_id, name, description, endpoint_url, http_method,
-                  input_schema, output_schema, auth_header, enabled, created_at, updated_at
+                  input_schema, output_schema, auth_header, enabled, version, created_at, updated_at
         "#,
     )
     .bind(id)
@@ -125,9 +155,19 @@ pub async fn create_skill(
     .bind(request.output_schema.unwrap_or_else(|| json!({})))
     .bind(auth_header)
     .bind(auth_secret_enc)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await
     .map_err(map_skill_insert_error)?;
+
+    insert_skill_version_snapshot(
+        &mut tx,
+        &skill,
+        change_note.as_deref(),
+        Some(auth.actor().as_str()),
+    )
+    .await?;
+
+    tx.commit().await.map_err(AppError::Database)?;
 
     Ok(Json(skill))
 }
@@ -147,7 +187,7 @@ pub async fn list_skills(
     let mut builder = QueryBuilder::<Postgres>::new(
         r#"
         SELECT id, workspace_id, name, description, endpoint_url, http_method,
-               input_schema, output_schema, auth_header, enabled, created_at, updated_at
+               input_schema, output_schema, auth_header, enabled, version, created_at, updated_at
         FROM workspace_skills
         WHERE workspace_id = "#,
     );
@@ -209,13 +249,17 @@ pub async fn update_skill(
         .as_deref()
         .and_then(|value| normalized_optional_text(Some(value)));
     let auth_secret_enc = encrypted_secret(&state, request.auth_secret.as_deref())?;
+    let change_note = normalized_optional_text(request.change_note.as_deref());
+
+    let mut tx = state.db.begin().await.map_err(AppError::Database)?;
+
     if auth_secret_enc.is_some() && auth_header.is_none() {
         let existing_header = sqlx::query_scalar::<_, Option<String>>(
             "SELECT auth_header FROM workspace_skills WHERE workspace_id = $1 AND name = $2",
         )
         .bind(id)
         .bind(&name)
-        .fetch_optional(&state.db)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(AppError::Database)?
         .flatten();
@@ -232,10 +276,11 @@ pub async fn update_skill(
             output_schema = COALESCE($7, output_schema),
             auth_header = COALESCE($8, auth_header),
             auth_secret_enc = COALESCE($9, auth_secret_enc),
-            enabled = COALESCE($10, enabled)
+            enabled = COALESCE($10, enabled),
+            version = version + 1
         WHERE workspace_id = $1 AND name = $2
         RETURNING id, workspace_id, name, description, endpoint_url, http_method,
-                  input_schema, output_schema, auth_header, enabled, created_at, updated_at
+                  input_schema, output_schema, auth_header, enabled, version, created_at, updated_at
         "#,
     )
     .bind(id)
@@ -248,12 +293,22 @@ pub async fn update_skill(
     .bind(auth_header)
     .bind(auth_secret_enc)
     .bind(request.enabled)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(AppError::Database)?
     .ok_or_else(|| AppError::NotFound {
         resource: format!("workspace_skill:{name}"),
     })?;
+
+    insert_skill_version_snapshot(
+        &mut tx,
+        &skill,
+        change_note.as_deref(),
+        Some(auth.actor().as_str()),
+    )
+    .await?;
+
+    tx.commit().await.map_err(AppError::Database)?;
 
     Ok(Json(skill))
 }
@@ -323,7 +378,7 @@ async fn fetch_skill(state: &AppState, workspace_id: Uuid, name: &str) -> AppRes
     sqlx::query_as::<_, SkillResponse>(
         r#"
         SELECT id, workspace_id, name, description, endpoint_url, http_method,
-               input_schema, output_schema, auth_header, enabled, created_at, updated_at
+               input_schema, output_schema, auth_header, enabled, version, created_at, updated_at
         FROM workspace_skills
         WHERE workspace_id = $1 AND name = $2
         "#,
@@ -336,6 +391,202 @@ async fn fetch_skill(state: &AppState, workspace_id: Uuid, name: &str) -> AppRes
     .ok_or_else(|| AppError::NotFound {
         resource: format!("workspace_skill:{name}"),
     })
+}
+
+async fn insert_skill_version_snapshot(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    skill: &SkillResponse,
+    change_note: Option<&str>,
+    created_by: Option<&str>,
+) -> AppResult<()> {
+    let auth_secret_enc = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT auth_secret_enc FROM workspace_skills WHERE id = $1",
+    )
+    .bind(skill.id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(AppError::Database)?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO workspace_skill_versions (
+            skill_id, workspace_id, name, version, description, endpoint_url,
+            http_method, input_schema, output_schema, auth_header, auth_secret_enc,
+            enabled, change_note, created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        "#,
+    )
+    .bind(skill.id)
+    .bind(skill.workspace_id)
+    .bind(&skill.name)
+    .bind(skill.version)
+    .bind(&skill.description)
+    .bind(&skill.endpoint_url)
+    .bind(&skill.http_method)
+    .bind(&skill.input_schema)
+    .bind(&skill.output_schema)
+    .bind(skill.auth_header.as_deref())
+    .bind(auth_secret_enc)
+    .bind(skill.enabled)
+    .bind(change_note)
+    .bind(created_by)
+    .execute(&mut **tx)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(())
+}
+
+#[axum::debug_handler]
+pub async fn list_skill_versions(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((id, name)): Path<(Uuid, String)>,
+) -> AppResult<Json<Vec<SkillVersionResponse>>> {
+    require_workspace(&auth, id)?;
+
+    let versions = sqlx::query_as::<_, SkillVersionResponse>(
+        r#"
+        SELECT id, skill_id, workspace_id, name, version, description, endpoint_url,
+               http_method, input_schema, output_schema, auth_header, enabled,
+               change_note, created_by, created_at
+        FROM workspace_skill_versions
+        WHERE workspace_id = $1 AND name = $2
+        ORDER BY version DESC
+        "#,
+    )
+    .bind(id)
+    .bind(&name)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if versions.is_empty() {
+        // Distinguish unknown skill from empty history (should not happen post-create).
+        let _ = fetch_skill(&state, id, &name).await?;
+    }
+
+    Ok(Json(versions))
+}
+
+#[axum::debug_handler]
+pub async fn get_skill_version(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((id, name, version)): Path<(Uuid, String, i32)>,
+) -> AppResult<Json<SkillVersionResponse>> {
+    require_workspace(&auth, id)?;
+
+    let row = sqlx::query_as::<_, SkillVersionResponse>(
+        r#"
+        SELECT id, skill_id, workspace_id, name, version, description, endpoint_url,
+               http_method, input_schema, output_schema, auth_header, enabled,
+               change_note, created_by, created_at
+        FROM workspace_skill_versions
+        WHERE workspace_id = $1 AND name = $2 AND version = $3
+        "#,
+    )
+    .bind(id)
+    .bind(&name)
+    .bind(version)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound {
+        resource: format!("workspace_skill_version:{name}@{version}"),
+    })?;
+
+    Ok(Json(row))
+}
+
+#[axum::debug_handler]
+pub async fn rollback_skill_version(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((id, name, version)): Path<(Uuid, String, i32)>,
+    Json(request): Json<RollbackSkillRequest>,
+) -> AppResult<Json<SkillResponse>> {
+    require_workspace(&auth, id)?;
+
+    let mut tx = state.db.begin().await.map_err(AppError::Database)?;
+
+    #[derive(sqlx::FromRow)]
+    struct VersionSnapshot {
+        description: String,
+        endpoint_url: String,
+        http_method: String,
+        input_schema: Value,
+        output_schema: Value,
+        auth_header: Option<String>,
+        auth_secret_enc: Option<String>,
+        enabled: bool,
+    }
+
+    let snapshot = sqlx::query_as::<_, VersionSnapshot>(
+        r#"
+        SELECT description, endpoint_url, http_method, input_schema, output_schema,
+               auth_header, auth_secret_enc, enabled
+        FROM workspace_skill_versions
+        WHERE workspace_id = $1 AND name = $2 AND version = $3
+        "#,
+    )
+    .bind(id)
+    .bind(&name)
+    .bind(version)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound {
+        resource: format!("workspace_skill_version:{name}@{version}"),
+    })?;
+
+    // Validate the snapshot's URL at rollback time (defends against newly-blocked hosts).
+    validate_endpoint_url(&snapshot.endpoint_url)?;
+    validate_endpoint_url_dns(&snapshot.endpoint_url).await?;
+
+    let skill = sqlx::query_as::<_, SkillResponse>(
+        r#"
+        UPDATE workspace_skills
+        SET description = $3,
+            endpoint_url = $4,
+            http_method = $5,
+            input_schema = $6,
+            output_schema = $7,
+            auth_header = $8,
+            auth_secret_enc = $9,
+            enabled = $10,
+            version = version + 1
+        WHERE workspace_id = $1 AND name = $2
+        RETURNING id, workspace_id, name, description, endpoint_url, http_method,
+                  input_schema, output_schema, auth_header, enabled, version, created_at, updated_at
+        "#,
+    )
+    .bind(id)
+    .bind(&name)
+    .bind(&snapshot.description)
+    .bind(&snapshot.endpoint_url)
+    .bind(&snapshot.http_method)
+    .bind(&snapshot.input_schema)
+    .bind(&snapshot.output_schema)
+    .bind(snapshot.auth_header.as_deref())
+    .bind(snapshot.auth_secret_enc.as_deref())
+    .bind(snapshot.enabled)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound {
+        resource: format!("workspace_skill:{name}"),
+    })?;
+
+    let note = normalized_optional_text(request.change_note.as_deref())
+        .unwrap_or_else(|| format!("rollback to v{version}"));
+    insert_skill_version_snapshot(&mut tx, &skill, Some(&note), Some(auth.actor().as_str()))
+        .await?;
+
+    tx.commit().await.map_err(AppError::Database)?;
+
+    Ok(Json(skill))
 }
 
 fn validate_name(value: &str) -> AppResult<()> {
@@ -712,6 +963,26 @@ mod tests {
         assert_eq!(HttpMethod::Get.as_str(), "GET");
         assert_eq!(HttpMethod::Post.as_str(), "POST");
         assert_eq!(HttpMethod::Put.as_str(), "PUT");
+    }
+
+    #[test]
+    fn rollback_request_accepts_empty_body() {
+        let parsed: RollbackSkillRequest = serde_json::from_str("{}").expect("empty object");
+        assert!(parsed.change_note.is_none());
+    }
+
+    #[test]
+    fn rollback_request_parses_change_note() {
+        let parsed: RollbackSkillRequest =
+            serde_json::from_str(r#"{"change_note":"revert bad URL"}"#).expect("body");
+        assert_eq!(parsed.change_note.as_deref(), Some("revert bad URL"));
+    }
+
+    #[test]
+    fn create_request_change_note_is_optional() {
+        let body = r#"{"name":"x","description":"y","endpoint_url":"https://e.example/x"}"#;
+        let parsed: CreateSkillRequest = serde_json::from_str(body).expect("body");
+        assert!(parsed.change_note.is_none());
     }
 
     #[test]

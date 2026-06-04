@@ -43,6 +43,7 @@ pub struct SkillToolResult {
     pub http_method: String,
     pub input_schema: Value,
     pub output_schema: Value,
+    pub version: i32,
 }
 
 impl MemoryToolResult {

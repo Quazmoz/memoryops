@@ -12,8 +12,27 @@ export interface Skill {
   output_schema: unknown;
   auth_header: string | null;
   enabled: boolean;
+  version: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface SkillVersion {
+  id: string;
+  skill_id: string;
+  workspace_id: string;
+  name: string;
+  version: number;
+  description: string;
+  endpoint_url: string;
+  http_method: string;
+  input_schema: unknown;
+  output_schema: unknown;
+  auth_header: string | null;
+  enabled: boolean;
+  change_note: string | null;
+  created_by: string | null;
+  created_at: string;
 }
 
 export interface CreateSkillPayload {
@@ -26,6 +45,7 @@ export interface CreateSkillPayload {
   auth_header?: string;
   auth_secret?: string;
   enabled?: boolean;
+  change_note?: string;
 }
 
 export async function listSkills(workspaceId: string): Promise<Skill[]> {
@@ -67,6 +87,26 @@ export async function testSkill(workspaceId: string, name: string, request: Skil
   return apiRequest<SkillTestResponse>(`/v1/workspaces/${workspaceId}/skills/${name}/test`, {
     method: "POST",
     body: request as unknown as Record<string, JsonValue>,
+  });
+}
+
+export async function listSkillVersions(workspaceId: string, name: string): Promise<SkillVersion[]> {
+  return apiRequest<SkillVersion[]>(`/v1/workspaces/${workspaceId}/skills/${name}/versions`);
+}
+
+export async function getSkillVersion(workspaceId: string, name: string, version: number): Promise<SkillVersion> {
+  return apiRequest<SkillVersion>(`/v1/workspaces/${workspaceId}/skills/${name}/versions/${version}`);
+}
+
+export async function rollbackSkillVersion(
+  workspaceId: string,
+  name: string,
+  version: number,
+  changeNote?: string,
+): Promise<Skill> {
+  return apiRequest<Skill>(`/v1/workspaces/${workspaceId}/skills/${name}/versions/${version}/rollback`, {
+    method: "POST",
+    body: changeNote ? { change_note: changeNote } : {},
   });
 }
 

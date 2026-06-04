@@ -156,7 +156,7 @@ async fn load_enabled_skills(
 ) -> AppResult<Vec<SkillToolResult>> {
     sqlx::query_as::<_, SkillRow>(
         r#"
-        SELECT name, description, endpoint_url, http_method, input_schema, output_schema
+        SELECT name, description, endpoint_url, http_method, input_schema, output_schema, version
         FROM workspace_skills
         WHERE workspace_id = $1 AND enabled = TRUE
         ORDER BY name ASC
@@ -177,6 +177,7 @@ struct SkillRow {
     http_method: String,
     input_schema: serde_json::Value,
     output_schema: serde_json::Value,
+    version: i32,
 }
 
 impl From<SkillRow> for SkillToolResult {
@@ -188,6 +189,7 @@ impl From<SkillRow> for SkillToolResult {
             http_method: row.http_method,
             input_schema: row.input_schema,
             output_schema: row.output_schema,
+            version: row.version,
         }
     }
 }

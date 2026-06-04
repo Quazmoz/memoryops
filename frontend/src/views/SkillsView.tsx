@@ -243,7 +243,16 @@ export function SkillsView() {
                 {rows.map((skill) => (
                   <Fragment key={skill.id}>
                   <tr data-testid={`skill-row-${skill.name}`} className="border-b border-line/80 last:border-b-0">
-                    <td className="px-4 py-4 align-middle font-mono text-sm text-ink">{skill.name}</td>
+                    <td className="px-4 py-4 align-middle font-mono text-sm text-ink">
+                      <span>{skill.name}</span>
+                      <span
+                        className="ml-2 inline-flex items-center rounded border border-line bg-soft px-1.5 py-0.5 text-[10px] font-semibold text-ink/60"
+                        title={`Current version: ${skill.version}`}
+                        data-testid={`skill-version-${skill.name}`}
+                      >
+                        v{skill.version}
+                      </span>
+                    </td>
                     <td className="max-w-[22rem] px-4 py-4 align-middle text-sm text-ink/70">{previewText(skill.description, 96)}</td>
                     <td className="px-4 py-4 align-middle">
                       <Badge variant="gray">{skill.http_method}</Badge>

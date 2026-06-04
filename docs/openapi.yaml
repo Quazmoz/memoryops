@@ -981,6 +981,75 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/skills/{name}/versions:
+    get:
+      tags: [Skills]
+      operationId: listSkillVersions
+      summary: List versions of a workspace skill
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/SkillName'
+      responses:
+        '200':
+          description: Skill version history (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SkillVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/skills/{name}/versions/{version}:
+    get:
+      tags: [Skills]
+      operationId: getSkillVersion
+      summary: Get a specific skill version
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/SkillName'
+        - $ref: '#/components/parameters/SkillVersion'
+      responses:
+        '200':
+          description: Skill version snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/skills/{name}/versions/{version}/rollback:
+    post:
+      tags: [Skills]
+      operationId: rollbackSkillVersion
+      summary: Restore a prior skill version as a new version
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/SkillName'
+        - $ref: '#/components/parameters/SkillVersion'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillRollbackRequest'
+      responses:
+        '200':
+          description: Skill rolled back (new version created)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/workspaces/{id}/contradictions:
     get:
       tags: [Contradictions]
@@ -1512,6 +1581,13 @@ components:
       required: true
       schema:
         type: string
+    SkillVersion:
+      name: version
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
     FlagId:
       name: flag_id
       in: path
@@ -2431,6 +2507,8 @@ components:
           type: [string, 'null']
         auth_secret:
           type: [string, 'null']
+        change_note:
+          type: [string, 'null']
     SkillUpdateRequest:
       type: object
       properties:
@@ -2454,6 +2532,13 @@ components:
           type: [string, 'null']
         enabled:
           type: boolean
+        change_note:
+          type: [string, 'null']
+    SkillRollbackRequest:
+      type: object
+      properties:
+        change_note:
+          type: [string, 'null']
     Skill:
       type: object
       required:
@@ -2466,6 +2551,7 @@ components:
         - input_schema
         - output_schema
         - enabled
+        - version
         - created_at
         - updated_at
       properties:
@@ -2494,10 +2580,67 @@ components:
           type: [string, 'null']
         enabled:
           type: boolean
+        version:
+          type: integer
+          minimum: 1
         created_at:
           type: string
           format: date-time
         updated_at:
+          type: string
+          format: date-time
+    SkillVersion:
+      type: object
+      required:
+        - id
+        - skill_id
+        - workspace_id
+        - name
+        - version
+        - description
+        - endpoint_url
+        - http_method
+        - input_schema
+        - output_schema
+        - enabled
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        skill_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        description:
+          type: string
+        endpoint_url:
+          type: string
+          format: uri
+        http_method:
+          type: string
+        input_schema:
+          type: object
+          additionalProperties: true
+        output_schema:
+          type: object
+          additionalProperties: true
+        auth_header:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+        change_note:
+          type: [string, 'null']
+        created_by:
+          type: [string, 'null']
+        created_at:
           type: string
           format: date-time
     SkillSecret:

@@ -705,6 +705,7 @@ mod tests {
                     http_method: "POST".to_owned(),
                     input_schema: json!({}),
                     output_schema: json!({}),
+                    version: 1,
                 }],
             })
         }

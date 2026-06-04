@@ -100,6 +100,18 @@ pub fn protected_router() -> Router<AppState> {
             axum::routing::post(skills::test_skill),
         )
         .route(
+            "/v1/workspaces/{id}/skills/{name}/versions",
+            get(skills::list_skill_versions),
+        )
+        .route(
+            "/v1/workspaces/{id}/skills/{name}/versions/{version}",
+            get(skills::get_skill_version),
+        )
+        .route(
+            "/v1/workspaces/{id}/skills/{name}/versions/{version}/rollback",
+            axum::routing::post(skills::rollback_skill_version),
+        )
+        .route(
             "/v1/workspaces/{id}/integrations",
             axum::routing::post(integrations::create_integration)
                 .get(integrations::list_integrations),
