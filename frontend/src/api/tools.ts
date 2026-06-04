@@ -1,7 +1,7 @@
 import { apiRequest } from "./client";
 import type { JsonValue } from "./types";
 
-export interface Skill {
+export interface Tool {
   id: string;
   workspace_id: string;
   name: string;
@@ -21,9 +21,9 @@ export interface Skill {
   updated_at: string;
 }
 
-export interface SkillVersion {
+export interface ToolVersion {
   id: string;
-  skill_id: string;
+  tool_id: string;
   workspace_id: string;
   name: string;
   version: number;
@@ -40,7 +40,7 @@ export interface SkillVersion {
   created_at: string;
 }
 
-export interface CreateSkillPayload {
+export interface CreateToolPayload {
   name: string;
   description: string;
   endpoint_url: string;
@@ -57,12 +57,12 @@ export interface CreateSkillPayload {
   circuit_breaker_cooldown_seconds?: number;
 }
 
-export interface SkillInvocation {
+export interface ToolInvocation {
   id: number;
-  skill_id: string;
+  tool_id: string;
   workspace_id: string;
-  skill_name: string;
-  skill_version: number;
+  tool_name: string;
+  tool_version: number;
   actor: string;
   source: "http" | "mcp" | "test";
   status_code: number;
@@ -71,7 +71,7 @@ export interface SkillInvocation {
   occurred_at: string;
 }
 
-export interface ExportedSkill {
+export interface ExportedTool {
   name: string;
   description: string;
   endpoint_url: string;
@@ -87,112 +87,112 @@ export interface ExportedSkill {
   version: number;
 }
 
-export interface ImportSkillsResponse {
+export interface ImportToolsResponse {
   created: number;
   updated: number;
   skipped: number;
   errors: { name: string; error: string }[];
 }
 
-export async function listSkills(workspaceId: string): Promise<Skill[]> {
-  return apiRequest<Skill[]>(`/v1/workspaces/${workspaceId}/skills`);
+export async function listTools(workspaceId: string): Promise<Tool[]> {
+  return apiRequest<Tool[]>(`/v1/workspaces/${workspaceId}/tools`);
 }
 
-export async function createSkill(workspaceId: string, payload: CreateSkillPayload): Promise<Skill> {
-  return apiRequest<Skill>(`/v1/workspaces/${workspaceId}/skills`, {
+export async function createTool(workspaceId: string, payload: CreateToolPayload): Promise<Tool> {
+  return apiRequest<Tool>(`/v1/workspaces/${workspaceId}/tools`, {
     method: "POST",
-    body: skillPayload(payload),
+    body: toolPayload(payload),
   });
 }
 
-export async function updateSkill(workspaceId: string, name: string, patch: Partial<CreateSkillPayload>): Promise<Skill> {
-  return apiRequest<Skill>(`/v1/workspaces/${workspaceId}/skills/${name}`, {
+export async function updateTool(workspaceId: string, name: string, patch: Partial<CreateToolPayload>): Promise<Tool> {
+  return apiRequest<Tool>(`/v1/workspaces/${workspaceId}/tools/${name}`, {
     method: "PATCH",
-    body: skillPayload(patch),
+    body: toolPayload(patch),
   });
 }
 
-export async function deleteSkill(workspaceId: string, name: string): Promise<void> {
-  await apiRequest<unknown>(`/v1/workspaces/${workspaceId}/skills/${name}`, {
+export async function deleteTool(workspaceId: string, name: string): Promise<void> {
+  await apiRequest<unknown>(`/v1/workspaces/${workspaceId}/tools/${name}`, {
     method: "DELETE",
   });
 }
 
-export interface SkillTestRequest {
+export interface ToolTestRequest {
   body?: JsonValue;
   headers?: Record<string, string>;
 }
 
-export interface SkillTestResponse {
+export interface ToolTestResponse {
   status: number;
   latency_ms: number;
   body: JsonValue;
 }
 
-export async function testSkill(workspaceId: string, name: string, request: SkillTestRequest): Promise<SkillTestResponse> {
-  return apiRequest<SkillTestResponse>(`/v1/workspaces/${workspaceId}/skills/${name}/test`, {
+export async function testTool(workspaceId: string, name: string, request: ToolTestRequest): Promise<ToolTestResponse> {
+  return apiRequest<ToolTestResponse>(`/v1/workspaces/${workspaceId}/tools/${name}/test`, {
     method: "POST",
     body: request as unknown as Record<string, JsonValue>,
   });
 }
 
-export async function listSkillVersions(workspaceId: string, name: string): Promise<SkillVersion[]> {
-  return apiRequest<SkillVersion[]>(`/v1/workspaces/${workspaceId}/skills/${name}/versions`);
+export async function listToolVersions(workspaceId: string, name: string): Promise<ToolVersion[]> {
+  return apiRequest<ToolVersion[]>(`/v1/workspaces/${workspaceId}/tools/${name}/versions`);
 }
 
-export async function getSkillVersion(workspaceId: string, name: string, version: number): Promise<SkillVersion> {
-  return apiRequest<SkillVersion>(`/v1/workspaces/${workspaceId}/skills/${name}/versions/${version}`);
+export async function getToolVersion(workspaceId: string, name: string, version: number): Promise<ToolVersion> {
+  return apiRequest<ToolVersion>(`/v1/workspaces/${workspaceId}/tools/${name}/versions/${version}`);
 }
 
-export async function rollbackSkillVersion(
+export async function rollbackToolVersion(
   workspaceId: string,
   name: string,
   version: number,
   changeNote?: string,
-): Promise<Skill> {
-  return apiRequest<Skill>(`/v1/workspaces/${workspaceId}/skills/${name}/versions/${version}/rollback`, {
+): Promise<Tool> {
+  return apiRequest<Tool>(`/v1/workspaces/${workspaceId}/tools/${name}/versions/${version}/rollback`, {
     method: "POST",
     body: changeNote ? { change_note: changeNote } : {},
   });
 }
 
-export async function invokeSkill(
+export async function invokeTool(
   workspaceId: string,
   name: string,
-  request: SkillTestRequest,
-): Promise<SkillTestResponse> {
-  return apiRequest<SkillTestResponse>(`/v1/workspaces/${workspaceId}/skills/${name}/invoke`, {
+  request: ToolTestRequest,
+): Promise<ToolTestResponse> {
+  return apiRequest<ToolTestResponse>(`/v1/workspaces/${workspaceId}/tools/${name}/invoke`, {
     method: "POST",
     body: request as unknown as Record<string, JsonValue>,
   });
 }
 
-export async function listSkillInvocations(
+export async function listToolInvocations(
   workspaceId: string,
   name: string,
   limit = 50,
-): Promise<SkillInvocation[]> {
-  return apiRequest<SkillInvocation[]>(
-    `/v1/workspaces/${workspaceId}/skills/${name}/invocations?limit=${limit}`,
+): Promise<ToolInvocation[]> {
+  return apiRequest<ToolInvocation[]>(
+    `/v1/workspaces/${workspaceId}/tools/${name}/invocations?limit=${limit}`,
   );
 }
 
-export async function exportSkills(workspaceId: string): Promise<ExportedSkill[]> {
-  return apiRequest<ExportedSkill[]>(`/v1/workspaces/${workspaceId}/skills/export`);
+export async function exportTools(workspaceId: string): Promise<ExportedTool[]> {
+  return apiRequest<ExportedTool[]>(`/v1/workspaces/${workspaceId}/tools/export`);
 }
 
-export async function importSkills(
+export async function importTools(
   workspaceId: string,
-  skills: unknown[],
+  tools: unknown[],
   overwrite = false,
-): Promise<ImportSkillsResponse> {
-  return apiRequest<ImportSkillsResponse>(`/v1/workspaces/${workspaceId}/skills/import`, {
+): Promise<ImportToolsResponse> {
+  return apiRequest<ImportToolsResponse>(`/v1/workspaces/${workspaceId}/tools/import`, {
     method: "POST",
-    body: { skills, overwrite } as Record<string, JsonValue>,
+    body: { tools, overwrite } as Record<string, JsonValue>,
   });
 }
 
-function skillPayload(payload: Partial<CreateSkillPayload>): Record<string, JsonValue> {
+function toolPayload(payload: Partial<CreateToolPayload>): Record<string, JsonValue> {
   return Object.fromEntries(
     Object.entries(payload)
       .filter(([, value]) => value !== undefined)

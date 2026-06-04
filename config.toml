@@ -40,7 +40,7 @@ model = "llama3"
 #
 #     Local dev (bare metal / WSL):  base_url = "http://localhost:11434"
 #     Docker Desktop (Mac / Windows): base_url = "http://host.docker.internal:11434"
-base_url = "http://localhost:11434"
+base_url = "http://host.docker.internal:11434"
 timeout_secs = 3
 
 # Ollama Cloud / hosted Ollama (e.g. https://api.ollama.ai):

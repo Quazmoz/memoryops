@@ -13,7 +13,7 @@ if (!API_KEY) {
 }
 
 let MEMORIES_CREATED = 0;
-let SKILLS_CREATED = 0;
+let TOOLS_CREATED = 0;
 
 function log(msg) {
   const time = new Date().toISOString().substring(11, 19);
@@ -78,14 +78,14 @@ function findMemoryIdByContent(content, listJson) {
   return item ? (item.memory_id || item.id) : null;
 }
 
-async function upsertSkill(skillName, skillDescription) {
-  const listRes = await apiRequest('GET', `/v1/workspaces/${WORKSPACE_ID}/skills`);
+async function upsertTool(toolName, toolDescription) {
+  const listRes = await apiRequest('GET', `/v1/workspaces/${WORKSPACE_ID}/tools`);
   if (listRes.status === 404 || listRes.status === 405) {
-    log(`Skills endpoint unavailable; skipping skills seeding.`);
+    log(`Tools endpoint unavailable; skipping tools seeding.`);
     return 2;
   }
   if (listRes.status < 200 || listRes.status >= 300) {
-    die(`Failed to query skills endpoint: HTTP ${listRes.status} - ${listRes.body}`);
+    die(`Failed to query tools endpoint: HTTP ${listRes.status} - ${listRes.body}`);
   }
 
   let items = [];
@@ -93,25 +93,25 @@ async function upsertSkill(skillName, skillDescription) {
   else if (listRes.json.items && Array.isArray(listRes.json.items)) items = listRes.json.items;
   else if (listRes.json.data && Array.isArray(listRes.json.data)) items = listRes.json.data;
 
-  const existing = items.find(i => i.name === skillName);
+  const existing = items.find(i => i.name === toolName);
   if (existing) {
-    log(`Skill ${skillName} already exists; skipping.`);
+    log(`Tool ${toolName} already exists; skipping.`);
     return 0;
   }
 
   const payload = {
-    name: skillName,
-    description: skillDescription,
-    endpoint_url: `https://example.com/skills/${skillName}`
+    name: toolName,
+    description: toolDescription,
+    endpoint_url: `https://example.com/tools/${toolName}`
   };
 
-  const createRes = await apiRequest('POST', `/v1/workspaces/${WORKSPACE_ID}/skills`, payload);
+  const createRes = await apiRequest('POST', `/v1/workspaces/${WORKSPACE_ID}/tools`, payload);
   if (createRes.status < 200 || createRes.status >= 300) {
-    die(`Failed to create skill ${skillName}: HTTP ${createRes.status} - ${createRes.body}`);
+    die(`Failed to create tool ${toolName}: HTTP ${createRes.status} - ${createRes.body}`);
   }
 
-  SKILLS_CREATED++;
-  log(`Created skill: ${skillName}`);
+  TOOLS_CREATED++;
+  log(`Created tool: ${toolName}`);
   return 0;
 }
 
@@ -313,25 +313,25 @@ async function main() {
     log(`Pinned memory id=${memoryId}`);
   }
 
-  log("Step 5/6: Seeding 3 agent skills when endpoint exists");
-  let skillsSupported = true;
-  let rc = await upsertSkill("incident_responder", "Handles on-call triage workflows");
+  log("Step 5/6: Seeding 3 agent tools when endpoint exists");
+  let toolsSupported = true;
+  let rc = await upsertTool("incident_responder", "Handles on-call triage workflows");
   if (rc === 2) {
-    skillsSupported = false;
+    toolsSupported = false;
   } else if (rc !== 0) {
     process.exit(rc);
   }
 
-  if (skillsSupported) {
-    await upsertSkill("code_reviewer", "Reviews PRs and suggests improvements");
-    await upsertSkill("deploy_monitor", "Monitors deployment pipelines and alerts");
+  if (toolsSupported) {
+    await upsertTool("code_reviewer", "Reviews PRs and suggests improvements");
+    await upsertTool("deploy_monitor", "Monitors deployment pipelines and alerts");
   }
 
   log("Step 6/6: Summary");
   console.log(`workspace_id=${WORKSPACE_ID}`);
   console.log(`api_key=${API_KEY}`);
   console.log(`memories_created=${MEMORIES_CREATED}`);
-  console.log(`skills_created=${skillsSupported ? SKILLS_CREATED : 'skipped(endpoint unavailable)'}`);
+  console.log(`tools_created=${toolsSupported ? TOOLS_CREATED : 'skipped(endpoint unavailable)'}`);
   console.log(`verify_command=curl -H "X-API-Key: ${API_KEY}" "${API_BASE_URL}/v1/memory?workspace_id=${WORKSPACE_ID}"`);
   console.log("Done.");
 }

@@ -698,7 +698,7 @@ mod tests {
 
             Ok(tools::retrieve::RetrieveOutput {
                 memories,
-                skills: vec![tools::SkillToolResult {
+                tools: vec![tools::ToolToolResult {
                     name: "summarize_pr".to_owned(),
                     description: "Summarize pull requests".to_owned(),
                     endpoint_url: "https://example.com/summarize".to_owned(),
@@ -1045,7 +1045,7 @@ mod tests {
         assert!(first.get("content").is_some());
         assert!(first.get("score").is_some());
         assert!(structured
-            .get("skills")
+            .get("tools")
             .and_then(Value::as_array)
             .is_some_and(|items| !items.is_empty()));
     }

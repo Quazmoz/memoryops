@@ -47,10 +47,10 @@ Usage:
   node memoryops-client.js <command> [arguments]
 
 Commands:
-  retrieve "<query>"       Retrieve relevant memories and skills matching query
+  retrieve "<query>"       Retrieve relevant memories and tools matching query
   store "<content>" [tags] Directly persist an episodic memory
   observe "<content>" [tags] Submit a raw observation to the classification queue
-  skills                   List all registered workspace skills
+  tools                   List all registered workspace tools
   help                     Show this help message
 
 Environment Variables:
@@ -152,8 +152,8 @@ async function run() {
         console.log(JSON.stringify(res, null, 2));
         break;
       }
-      case 'skills': {
-        const endpoint = `/v1/workspaces/${workspaceId}/skills`;
+      case 'tools': {
+        const endpoint = `/v1/workspaces/${workspaceId}/tools`;
         const res = await apiRequest('GET', endpoint);
         console.log(JSON.stringify(res, null, 2));
         break;

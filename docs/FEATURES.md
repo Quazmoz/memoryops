@@ -45,7 +45,7 @@ This document tracks all planned features across the platform with current statu
 | M22 | Metrics dashboard (OTel summary endpoint + UI panel) | 🟢 Complete |
 | M23 | Property-based tests for token packing (proptest) | 🟢 Complete |
 | M24 | Playwright E2E test suite | 🟢 Complete |
-| M25 | HTTP Skills (agent-callable skill registry) | 🟢 Complete |
+| M25 | HTTP Tools (agent-callable tool registry) | 🟢 Complete |
 | M26 | Contradiction detection | 🟢 Complete |
 | M27 | Provenance graph + lineage API | 🟢 Complete |
 | M28 | Point-in-time memory queries | 🟢 Complete |
@@ -202,11 +202,11 @@ This document tracks all planned features across the platform with current statu
 | GET /v1/workspaces/:id/stats/history | 🟢 | M18 | Daily aggregate: created, promoted, soft-deleted per day |
 | GET /v1/workspaces/:id/tags | 🟢 | M20 | Tag name + count enumeration |
 | POST /v1/workspaces/:id/import | 🟢 | M21 | JSONL import; idempotent on id |
-| POST/GET/PATCH/DELETE /v1/workspaces/:id/skills[/:name] | 🟢 | M25 | Workspace HTTP Skills registry; secret read is isolated at /secret |
+| POST/GET/PATCH/DELETE /v1/workspaces/:id/tools[/:name] | 🟢 | M25 | Workspace HTTP tools registry; secret read is isolated at /secret |
 | GET /v1/workspaces/:id/contradictions, POST /v1/workspaces/:id/contradictions/:flag_id/resolve, GET /v1/workspaces/:id/contradictions/count | 🟢 | M26 | Review and resolve contradiction flags |
 | POST /v1/workspaces/:id/contradictions/bulk-dismiss | 🟢 | M34 | Dismiss up to 50 open contradiction flags in one call |
 | POST /v1/workspaces/:id/reindex | 🟢 | M34 | Trigger cursor-paginated re-embedding for missing/stale embedding_ids; force=true clears all first |
-| POST /v1/workspaces/:id/skills/:name/test | 🟢 | M34 | Server-side skill test proxy (injects auth, returns status+latency+body) |
+| POST /v1/workspaces/:id/tools/:name/test | 🟢 | M34 | Server-side tool test proxy (injects auth, returns status+latency+body) |
 | GET /health/system | 🟢 | M34 | Structured health check for Postgres, Redis, Qdrant, Ollama, FastEmbed |
 | GET /v1/memory/:id/provenance | 🟢 | M27 | Source events, source episodes, merge audit records, and access summary as DAG |
 | GET /v1/memory?as_of=... | 🟢 | M28 | Reconstructs active memories as of an ISO8601 timestamp |
@@ -229,7 +229,7 @@ This document tracks all planned features across the platform with current statu
 | memory_store tool | 🟢 | M11 | stores an episodic MemoryUnit and enqueues slow-path processing |
 | stdio + HTTP SSE transports | 🟢 | M11 | MCP 2025-06-18 spec |
 | MCP endpoint in docker-compose | 🟢 | M11 | profile-gated service on port 3003 |
-| memory_retrieve returns enabled workspace skills | 🟢 | M25 | Skills array includes endpoint and JSON schemas without secrets |
+| memory_retrieve returns enabled workspace tools | 🟢 | M25 | Tools array includes endpoint and JSON schemas without secrets |
 | memory_retrieve include_workspace_pool | 🟢 | M29 | Tool schema supports workspace-pool inheritance for agent context |
 | memory_retrieve feedback batch | 🟢 | M30 | Optional feedback payload records ratings after retrieval response assembly |
 
@@ -306,7 +306,7 @@ This document tracks all planned features across the platform with current statu
 | Dashboard trend charts (30-day memory activity) | 🟢 | M18 | GET /v1/workspaces/:id/stats/history |
 | Tag browser (enumerate + filter by tag) | 🟢 | M20 | GET /v1/workspaces/:id/tags |
 | Dashboard Metrics panel (3×3 telemetry grid, auto-refresh 30s) | 🟢 | M22 | useMetrics hook → /v1/workspaces/:id/metrics |
-| Skills registry view | 🟢 | M25 | CRUD table, drawer form, schema validation, enabled toggle |
+| Tools registry view | 🟢 | M25 | CRUD table, drawer form, schema validation, enabled toggle |
 | Contradiction review view | 🟢 | M26 | Status tabs, side-by-side memory previews, resolve notes |
 | Dashboard contradiction badge | 🟢 | M26 | Open-count badge links to review queue |
 | MemoryDetail lineage panel | 🟢 | M27 | Tree view for provenance graph |
@@ -322,7 +322,7 @@ This document tracks all planned features across the platform with current statu
 | Memory-type filter with URL persistence | 🟢 | M34 | All / Episodic / Semantic chips in MemoryExplorer persist via ?type= query param |
 | Auto-resolve contradiction config toggle | 🟢 | M34 | Toggle between quarantine and auto_resolve modes in SettingsView |
 | Workspace re-index trigger | 🟢 | M34 | Confirmation flow + enqueued count display in SettingsView |
-| Skills test button + inline test panel | 🟢 | M34 | Per-row FlaskConical button expands Method/URL/body editor + Run/response panel |
+| Tools test button + inline test panel | 🟢 | M34 | Per-row FlaskConical button expands Method/URL/body editor + Run/response panel |
 | System health panel | 🟢 | M34 | Live status strip in SettingsView with per-check latency badges |
 | CodeBlock component | 🟢 | M35 | Dark pre/code block with copy button and live {{WORKSPACE_ID}}/{{API_KEY}}/{{API_URL}} substitution |
 | GuideView (/guide) | 🟢 | M35 | Two-panel layout, 14 content sections, sticky TOC sidebar, connection status strip |
@@ -387,7 +387,7 @@ This document tracks all planned features across the platform with current statu
 
 | Feature | Status | Milestone | Notes |
 |---------|--------|-----------|-------|
-| HTTP Skills (agent-callable skill registry) | 🟢 | M25 | Workspace registry + MCP retrieve integration |
+| HTTP Tools (agent-callable tool registry) | 🟢 | M25 | Workspace registry + MCP retrieve integration |
 
 ---
 
@@ -438,7 +438,7 @@ This document tracks all planned features across the platform with current statu
 | 0013_slack.sql | Slack signing secret + channel/thread metadata + channel index | 🟢 M9 |
 | 0014_linear_jira.sql | Linear/Jira signing secret support + active integration indexes | 🟢 M10 |
 | 0015_scope_indexes.sql | Scope-filter generated columns + composite active-memory index | 🟢 M19 |
-| 0016_skills.sql | HTTP Skills registry with encrypted auth secrets | 🟢 M25 |
+| 0016_skills.sql | HTTP tools registry with encrypted auth secrets | 🟢 M25 |
 | 0017_contradictions.sql | Contradiction flags and resolution status | 🟢 M26 |
 | 0018_provenance_indexes.sql | Source-event, source-episode, and memory audit lineage indexes | 🟢 M27 |
 | 0019_point_in_time.sql | Historical as-of query indexes for memory_units and memory_versions | 🟢 M28 |

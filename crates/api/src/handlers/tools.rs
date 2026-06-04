@@ -20,31 +20,31 @@ use crate::security::{decrypt_secret_legacy_or_current, encrypt_secret};
 
 use super::require_workspace;
 
-/// Column list for SELECT/RETURNING on workspace_skills.
-const SKILL_COLUMNS: &str =
+/// Column list for SELECT/RETURNING on workspace_tools.
+const TOOL_COLUMNS: &str =
     "id, workspace_id, name, description, endpoint_url, http_method, \
      input_schema, output_schema, auth_header, enabled, version, \
      scope_visibility, rate_limit_per_minute, circuit_breaker_threshold, \
      circuit_breaker_cooldown_seconds, created_at, updated_at";
 
-/// Column list for SELECT on workspace_skill_versions.
-const SKILL_VERSION_COLUMNS: &str =
-    "id, skill_id, workspace_id, name, version, description, endpoint_url, \
+/// Column list for SELECT on workspace_tool_versions.
+const TOOL_VERSION_COLUMNS: &str =
+    "id, tool_id, workspace_id, name, version, description, endpoint_url, \
      http_method, input_schema, output_schema, auth_header, enabled, \
      scope_visibility, change_note, created_by, created_at";
 
-const DEFAULT_SKILL_LIMIT: i64 = 50;
-const MAX_SKILL_LIMIT: i64 = 100;
-const MAX_SKILL_TEST_RESPONSE_BYTES: usize = 1024 * 1024;
+const DEFAULT_TOOL_LIMIT: i64 = 50;
+const MAX_TOOL_LIMIT: i64 = 100;
+const MAX_TOOL_TEST_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
-pub struct SkillListQuery {
+pub struct ToolListQuery {
     pub after: Option<Uuid>,
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateSkillRequest {
+pub struct CreateToolRequest {
     pub name: String,
     pub description: String,
     pub endpoint_url: String,
@@ -54,14 +54,14 @@ pub struct CreateSkillRequest {
     pub auth_header: Option<String>,
     pub auth_secret: Option<String>,
     pub change_note: Option<String>,
-    pub scope_visibility: Option<SkillScopeVisibility>,
+    pub scope_visibility: Option<ToolScopeVisibility>,
     pub rate_limit_per_minute: Option<i32>,
     pub circuit_breaker_threshold: Option<i32>,
     pub circuit_breaker_cooldown_seconds: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateSkillRequest {
+pub struct UpdateToolRequest {
     pub description: Option<String>,
     pub endpoint_url: Option<String>,
     pub http_method: Option<HttpMethod>,
@@ -71,32 +71,32 @@ pub struct UpdateSkillRequest {
     pub auth_secret: Option<String>,
     pub enabled: Option<bool>,
     pub change_note: Option<String>,
-    pub scope_visibility: Option<SkillScopeVisibility>,
+    pub scope_visibility: Option<ToolScopeVisibility>,
     pub rate_limit_per_minute: Option<i32>,
     pub circuit_breaker_threshold: Option<i32>,
     pub circuit_breaker_cooldown_seconds: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RollbackSkillRequest {
+pub struct RollbackToolRequest {
     pub change_note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct InvokeSkillRequest {
+pub struct InvokeToolRequest {
     pub body: Option<Value>,
     pub headers: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ImportSkillsRequest {
-    pub skills: Vec<ImportSkillItem>,
+pub struct ImportToolsRequest {
+    pub tools: Vec<ImportToolItem>,
     #[serde(default)]
     pub overwrite: bool,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ImportSkillItem {
+pub struct ImportToolItem {
     pub name: String,
     pub description: String,
     pub endpoint_url: String,
@@ -106,28 +106,28 @@ pub struct ImportSkillItem {
     pub auth_header: Option<String>,
     pub auth_secret: Option<String>,
     pub enabled: Option<bool>,
-    pub scope_visibility: Option<SkillScopeVisibility>,
+    pub scope_visibility: Option<ToolScopeVisibility>,
     pub rate_limit_per_minute: Option<i32>,
     pub circuit_breaker_threshold: Option<i32>,
     pub circuit_breaker_cooldown_seconds: Option<i32>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ImportSkillsResponse {
+pub struct ImportToolsResponse {
     pub created: usize,
     pub updated: usize,
     pub skipped: usize,
-    pub errors: Vec<ImportSkillError>,
+    pub errors: Vec<ImportToolError>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ImportSkillError {
+pub struct ImportToolError {
     pub name: String,
     pub error: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ExportedSkill {
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ExportedTool {
     pub name: String,
     pub description: String,
     pub endpoint_url: String,
@@ -144,12 +144,12 @@ pub struct ExportedSkill {
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct SkillInvocation {
+pub struct ToolInvocation {
     pub id: i64,
-    pub skill_id: Uuid,
+    pub tool_id: Uuid,
     pub workspace_id: Uuid,
-    pub skill_name: String,
-    pub skill_version: i32,
+    pub tool_name: String,
+    pub tool_version: i32,
     pub actor: String,
     pub source: String,
     pub status_code: i32,
@@ -166,16 +166,16 @@ pub struct InvocationListQuery {
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, sqlx::Type)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "TEXT", rename_all = "lowercase")]
-pub enum SkillScopeVisibility {
+pub enum ToolScopeVisibility {
     Private,
     Workspace,
 }
 
-impl SkillScopeVisibility {
+impl ToolScopeVisibility {
     fn as_str(self) -> &'static str {
         match self {
-            SkillScopeVisibility::Private => "private",
-            SkillScopeVisibility::Workspace => "workspace",
+            ToolScopeVisibility::Private => "private",
+            ToolScopeVisibility::Workspace => "workspace",
         }
     }
 }
@@ -199,7 +199,7 @@ impl HttpMethod {
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct SkillResponse {
+pub struct ToolResponse {
     pub id: Uuid,
     pub workspace_id: Uuid,
     pub name: String,
@@ -220,9 +220,9 @@ pub struct SkillResponse {
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct SkillVersionResponse {
+pub struct ToolVersionResponse {
     pub id: Uuid,
-    pub skill_id: Uuid,
+    pub tool_id: Uuid,
     pub workspace_id: Uuid,
     pub name: String,
     pub version: i32,
@@ -240,18 +240,18 @@ pub struct SkillVersionResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct SkillSecretResponse {
+pub struct ToolSecretResponse {
     pub auth_header: Option<String>,
     pub plaintext_secret: String,
 }
 
 #[axum::debug_handler]
-pub async fn create_skill(
+pub async fn create_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(request): Json<CreateSkillRequest>,
-) -> AppResult<Json<SkillResponse>> {
+    Json(request): Json<CreateToolRequest>,
+) -> AppResult<Json<ToolResponse>> {
     require_workspace(&auth, id)?;
     validate_name(&request.name)?;
     validate_description(&request.description)?;
@@ -266,9 +266,9 @@ pub async fn create_skill(
 
     let mut tx = state.db.begin().await.map_err(AppError::Database)?;
 
-    let skill = sqlx::query_as::<_, SkillResponse>(&format!(
+    let tool = sqlx::query_as::<_, ToolResponse>(&format!(
         r#"
-        INSERT INTO workspace_skills (
+        INSERT INTO workspace_tools (
             workspace_id, name, description, endpoint_url, http_method,
             input_schema, output_schema, auth_header, auth_secret_enc,
             scope_visibility, rate_limit_per_minute,
@@ -279,7 +279,7 @@ pub async fn create_skill(
                 COALESCE($11, 0),
                 COALESCE($12, 0),
                 COALESCE($13, 60))
-        RETURNING {SKILL_COLUMNS}
+        RETURNING {TOOL_COLUMNS}
         "#
     ))
     .bind(id)
@@ -291,17 +291,17 @@ pub async fn create_skill(
     .bind(request.output_schema.unwrap_or_else(|| json!({})))
     .bind(auth_header)
     .bind(auth_secret_enc)
-    .bind(request.scope_visibility.map(SkillScopeVisibility::as_str))
+    .bind(request.scope_visibility.map(ToolScopeVisibility::as_str))
     .bind(request.rate_limit_per_minute)
     .bind(request.circuit_breaker_threshold)
     .bind(request.circuit_breaker_cooldown_seconds)
     .fetch_one(&mut *tx)
     .await
-    .map_err(map_skill_insert_error)?;
+    .map_err(map_tool_insert_error)?;
 
-    insert_skill_version_snapshot(
+    insert_tool_version_snapshot(
         &mut tx,
-        &skill,
+        &tool,
         change_note.as_deref(),
         Some(auth.actor().as_str()),
     )
@@ -313,35 +313,35 @@ pub async fn create_skill(
         state.db.clone(),
         id,
         auth.actor(),
-        AuditAction::SkillCreated,
-        skill.id,
-        "workspace_skill",
-        Some(json!({ "name": skill.name, "version": skill.version })),
+        AuditAction::ToolCreated,
+        tool.id,
+        "workspace_tool",
+        Some(json!({ "name": tool.name, "version": tool.version })),
     );
 
-    Ok(Json(skill))
+    Ok(Json(tool))
 }
 
 #[axum::debug_handler]
-pub async fn list_skills(
+pub async fn list_tools(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Query(query): Query<SkillListQuery>,
-) -> AppResult<Json<Vec<SkillResponse>>> {
+    Query(query): Query<ToolListQuery>,
+) -> AppResult<Json<Vec<ToolResponse>>> {
     require_workspace(&auth, id)?;
     let limit = query
         .limit
-        .unwrap_or(DEFAULT_SKILL_LIMIT)
-        .clamp(1, MAX_SKILL_LIMIT);
+        .unwrap_or(DEFAULT_TOOL_LIMIT)
+        .clamp(1, MAX_TOOL_LIMIT);
     let mut builder = QueryBuilder::<Postgres>::new(format!(
-        "SELECT {SKILL_COLUMNS} FROM workspace_skills WHERE workspace_id = "
+        "SELECT {TOOL_COLUMNS} FROM workspace_tools WHERE workspace_id = "
     ));
     builder.push_bind(id);
 
     if let Some(after) = query.after {
         builder.push(
-            " AND (created_at, id) < (SELECT created_at, id FROM workspace_skills WHERE workspace_id = ",
+            " AND (created_at, id) < (SELECT created_at, id FROM workspace_tools WHERE workspace_id = ",
         );
         builder.push_bind(id);
         builder.push(" AND id = ");
@@ -352,33 +352,33 @@ pub async fn list_skills(
     builder.push(" ORDER BY created_at DESC, id DESC LIMIT ");
     builder.push_bind(limit);
 
-    let skills = builder
-        .build_query_as::<SkillResponse>()
+    let tools = builder
+        .build_query_as::<ToolResponse>()
         .fetch_all(&state.db)
         .await
         .map_err(AppError::Database)?;
 
-    Ok(Json(skills))
+    Ok(Json(tools))
 }
 
 #[axum::debug_handler]
-pub async fn get_skill(
+pub async fn get_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path((id, name)): Path<(Uuid, String)>,
-) -> AppResult<Json<SkillResponse>> {
+) -> AppResult<Json<ToolResponse>> {
     require_workspace(&auth, id)?;
-    let skill = fetch_skill(&state, id, &name).await?;
-    Ok(Json(skill))
+    let tool = fetch_tool(&state, id, &name).await?;
+    Ok(Json(tool))
 }
 
 #[axum::debug_handler]
-pub async fn update_skill(
+pub async fn update_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path((id, name)): Path<(Uuid, String)>,
-    Json(request): Json<UpdateSkillRequest>,
-) -> AppResult<Json<SkillResponse>> {
+    Json(request): Json<UpdateToolRequest>,
+) -> AppResult<Json<ToolResponse>> {
     require_workspace(&auth, id)?;
     if let Some(description) = &request.description {
         validate_description(description)?;
@@ -403,7 +403,7 @@ pub async fn update_skill(
 
     if auth_secret_enc.is_some() && auth_header.is_none() {
         let existing_header = sqlx::query_scalar::<_, Option<String>>(
-            "SELECT auth_header FROM workspace_skills WHERE workspace_id = $1 AND name = $2",
+            "SELECT auth_header FROM workspace_tools WHERE workspace_id = $1 AND name = $2",
         )
         .bind(id)
         .bind(&name)
@@ -414,9 +414,9 @@ pub async fn update_skill(
         validate_auth_pair(existing_header.as_ref(), auth_secret_enc.as_ref())?;
     }
 
-    let skill = sqlx::query_as::<_, SkillResponse>(&format!(
+    let tool = sqlx::query_as::<_, ToolResponse>(&format!(
         r#"
-        UPDATE workspace_skills
+        UPDATE workspace_tools
         SET description = COALESCE($3, description),
             endpoint_url = COALESCE($4, endpoint_url),
             http_method = COALESCE($5, http_method),
@@ -431,7 +431,7 @@ pub async fn update_skill(
             circuit_breaker_cooldown_seconds = COALESCE($14, circuit_breaker_cooldown_seconds),
             version = version + 1
         WHERE workspace_id = $1 AND name = $2
-        RETURNING {SKILL_COLUMNS}
+        RETURNING {TOOL_COLUMNS}
         "#
     ))
     .bind(id)
@@ -444,7 +444,7 @@ pub async fn update_skill(
     .bind(auth_header)
     .bind(auth_secret_enc)
     .bind(request.enabled)
-    .bind(request.scope_visibility.map(SkillScopeVisibility::as_str))
+    .bind(request.scope_visibility.map(ToolScopeVisibility::as_str))
     .bind(request.rate_limit_per_minute)
     .bind(request.circuit_breaker_threshold)
     .bind(request.circuit_breaker_cooldown_seconds)
@@ -452,12 +452,12 @@ pub async fn update_skill(
     .await
     .map_err(AppError::Database)?
     .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace_skill:{name}"),
+        resource: format!("workspace_tool:{name}"),
     })?;
 
-    insert_skill_version_snapshot(
+    insert_tool_version_snapshot(
         &mut tx,
-        &skill,
+        &tool,
         change_note.as_deref(),
         Some(auth.actor().as_str()),
     )
@@ -469,37 +469,37 @@ pub async fn update_skill(
         state.db.clone(),
         id,
         auth.actor(),
-        AuditAction::SkillUpdated,
-        skill.id,
-        "workspace_skill",
+        AuditAction::ToolUpdated,
+        tool.id,
+        "workspace_tool",
         Some(json!({
-            "name": skill.name,
-            "version": skill.version,
+            "name": tool.name,
+            "version": tool.version,
             "change_note": change_note,
         })),
     );
 
-    Ok(Json(skill))
+    Ok(Json(tool))
 }
 
 #[axum::debug_handler]
-pub async fn delete_skill(
+pub async fn delete_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path((id, name)): Path<(Uuid, String)>,
 ) -> AppResult<Json<Value>> {
     require_workspace(&auth, id)?;
     let row: Option<(Uuid,)> = sqlx::query_as(
-        "DELETE FROM workspace_skills WHERE workspace_id = $1 AND name = $2 RETURNING id",
+        "DELETE FROM workspace_tools WHERE workspace_id = $1 AND name = $2 RETURNING id",
     )
     .bind(id)
     .bind(&name)
     .fetch_optional(&state.db)
     .await
     .map_err(AppError::Database)?;
-    let Some((skill_id,)) = row else {
+    let Some((tool_id,)) = row else {
         return Err(AppError::NotFound {
-            resource: format!("workspace_skill:{name}"),
+            resource: format!("workspace_tool:{name}"),
         });
     };
 
@@ -507,9 +507,9 @@ pub async fn delete_skill(
         state.db.clone(),
         id,
         auth.actor(),
-        AuditAction::SkillDeleted,
-        skill_id,
-        "workspace_skill",
+        AuditAction::ToolDeleted,
+        tool_id,
+        "workspace_tool",
         Some(json!({ "name": name })),
     );
 
@@ -517,11 +517,11 @@ pub async fn delete_skill(
 }
 
 #[axum::debug_handler]
-pub async fn get_skill_secret(
+pub async fn get_tool_secret(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path((id, name)): Path<(Uuid, String)>,
-) -> AppResult<Json<SkillSecretResponse>> {
+) -> AppResult<Json<ToolSecretResponse>> {
     require_workspace(&auth, id)?;
 
     #[derive(Debug, sqlx::FromRow)]
@@ -531,7 +531,7 @@ pub async fn get_skill_secret(
     }
 
     let row = sqlx::query_as::<_, SecretRow>(
-        "SELECT auth_header, auth_secret_enc FROM workspace_skills WHERE workspace_id = $1 AND name = $2",
+        "SELECT auth_header, auth_secret_enc FROM workspace_tools WHERE workspace_id = $1 AND name = $2",
     )
     .bind(id)
     .bind(&name)
@@ -539,24 +539,24 @@ pub async fn get_skill_secret(
     .await
     .map_err(AppError::Database)?
     .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace_skill:{name}"),
+        resource: format!("workspace_tool:{name}"),
     })?;
     let ciphertext = row.auth_secret_enc.ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace_skill_secret:{name}"),
+        resource: format!("workspace_tool_secret:{name}"),
     })?;
     let decrypted =
         decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), &ciphertext)?;
     persist_migrated_ciphertext(&state.db, id, &name, &decrypted).await?;
 
-    Ok(Json(SkillSecretResponse {
+    Ok(Json(ToolSecretResponse {
         auth_header: row.auth_header,
         plaintext_secret: decrypted.plaintext,
     }))
 }
 
-async fn fetch_skill(state: &AppState, workspace_id: Uuid, name: &str) -> AppResult<SkillResponse> {
-    sqlx::query_as::<_, SkillResponse>(&format!(
-        "SELECT {SKILL_COLUMNS} FROM workspace_skills WHERE workspace_id = $1 AND name = $2"
+async fn fetch_tool(state: &AppState, workspace_id: Uuid, name: &str) -> AppResult<ToolResponse> {
+    sqlx::query_as::<_, ToolResponse>(&format!(
+        "SELECT {TOOL_COLUMNS} FROM workspace_tools WHERE workspace_id = $1 AND name = $2"
     ))
     .bind(workspace_id)
     .bind(name)
@@ -564,49 +564,49 @@ async fn fetch_skill(state: &AppState, workspace_id: Uuid, name: &str) -> AppRes
     .await
     .map_err(AppError::Database)?
     .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace_skill:{name}"),
+        resource: format!("workspace_tool:{name}"),
     })
 }
 
-async fn insert_skill_version_snapshot(
+async fn insert_tool_version_snapshot(
     tx: &mut sqlx::Transaction<'_, Postgres>,
-    skill: &SkillResponse,
+    tool: &ToolResponse,
     change_note: Option<&str>,
     created_by: Option<&str>,
 ) -> AppResult<()> {
     let auth_secret_enc = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT auth_secret_enc FROM workspace_skills WHERE id = $1",
+        "SELECT auth_secret_enc FROM workspace_tools WHERE id = $1",
     )
-    .bind(skill.id)
+    .bind(tool.id)
     .fetch_one(&mut **tx)
     .await
     .map_err(AppError::Database)?;
 
     sqlx::query(
         r#"
-        INSERT INTO workspace_skill_versions (
-            skill_id, workspace_id, name, version, description, endpoint_url,
+        INSERT INTO workspace_tool_versions (
+            tool_id, workspace_id, name, version, description, endpoint_url,
             http_method, input_schema, output_schema, auth_header, auth_secret_enc,
             enabled, change_note, created_by, scope_visibility
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         "#,
     )
-    .bind(skill.id)
-    .bind(skill.workspace_id)
-    .bind(&skill.name)
-    .bind(skill.version)
-    .bind(&skill.description)
-    .bind(&skill.endpoint_url)
-    .bind(&skill.http_method)
-    .bind(&skill.input_schema)
-    .bind(&skill.output_schema)
-    .bind(skill.auth_header.as_deref())
+    .bind(tool.id)
+    .bind(tool.workspace_id)
+    .bind(&tool.name)
+    .bind(tool.version)
+    .bind(&tool.description)
+    .bind(&tool.endpoint_url)
+    .bind(&tool.http_method)
+    .bind(&tool.input_schema)
+    .bind(&tool.output_schema)
+    .bind(tool.auth_header.as_deref())
     .bind(auth_secret_enc)
-    .bind(skill.enabled)
+    .bind(tool.enabled)
     .bind(change_note)
     .bind(created_by)
-    .bind(&skill.scope_visibility)
+    .bind(&tool.scope_visibility)
     .execute(&mut **tx)
     .await
     .map_err(AppError::Database)?;
@@ -615,17 +615,17 @@ async fn insert_skill_version_snapshot(
 }
 
 #[axum::debug_handler]
-pub async fn list_skill_versions(
+pub async fn list_tool_versions(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path((id, name)): Path<(Uuid, String)>,
-) -> AppResult<Json<Vec<SkillVersionResponse>>> {
+) -> AppResult<Json<Vec<ToolVersionResponse>>> {
     require_workspace(&auth, id)?;
 
-    let versions = sqlx::query_as::<_, SkillVersionResponse>(&format!(
+    let versions = sqlx::query_as::<_, ToolVersionResponse>(&format!(
         r#"
-        SELECT {SKILL_VERSION_COLUMNS}
-        FROM workspace_skill_versions
+        SELECT {TOOL_VERSION_COLUMNS}
+        FROM workspace_tool_versions
         WHERE workspace_id = $1 AND name = $2
         ORDER BY version DESC
         "#
@@ -637,25 +637,25 @@ pub async fn list_skill_versions(
     .map_err(AppError::Database)?;
 
     if versions.is_empty() {
-        // Distinguish unknown skill from empty history (should not happen post-create).
-        let _ = fetch_skill(&state, id, &name).await?;
+        // Distinguish unknown tool from empty history (should not happen post-create).
+        let _ = fetch_tool(&state, id, &name).await?;
     }
 
     Ok(Json(versions))
 }
 
 #[axum::debug_handler]
-pub async fn get_skill_version(
+pub async fn get_tool_version(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path((id, name, version)): Path<(Uuid, String, i32)>,
-) -> AppResult<Json<SkillVersionResponse>> {
+) -> AppResult<Json<ToolVersionResponse>> {
     require_workspace(&auth, id)?;
 
-    let row = sqlx::query_as::<_, SkillVersionResponse>(&format!(
+    let row = sqlx::query_as::<_, ToolVersionResponse>(&format!(
         r#"
-        SELECT {SKILL_VERSION_COLUMNS}
-        FROM workspace_skill_versions
+        SELECT {TOOL_VERSION_COLUMNS}
+        FROM workspace_tool_versions
         WHERE workspace_id = $1 AND name = $2 AND version = $3
         "#
     ))
@@ -666,19 +666,19 @@ pub async fn get_skill_version(
     .await
     .map_err(AppError::Database)?
     .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace_skill_version:{name}@{version}"),
+        resource: format!("workspace_tool_version:{name}@{version}"),
     })?;
 
     Ok(Json(row))
 }
 
 #[axum::debug_handler]
-pub async fn rollback_skill_version(
+pub async fn rollback_tool_version(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path((id, name, version)): Path<(Uuid, String, i32)>,
-    Json(request): Json<RollbackSkillRequest>,
-) -> AppResult<Json<SkillResponse>> {
+    Json(request): Json<RollbackToolRequest>,
+) -> AppResult<Json<ToolResponse>> {
     require_workspace(&auth, id)?;
 
     let change_note = normalized_optional_text(request.change_note.as_deref());
@@ -703,7 +703,7 @@ pub async fn rollback_skill_version(
         r#"
         SELECT description, endpoint_url, http_method, input_schema, output_schema,
                auth_header, auth_secret_enc, enabled, scope_visibility
-        FROM workspace_skill_versions
+        FROM workspace_tool_versions
         WHERE workspace_id = $1 AND name = $2 AND version = $3
         "#,
     )
@@ -714,16 +714,16 @@ pub async fn rollback_skill_version(
     .await
     .map_err(AppError::Database)?
     .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace_skill_version:{name}@{version}"),
+        resource: format!("workspace_tool_version:{name}@{version}"),
     })?;
 
     // Validate the snapshot's URL at rollback time (defends against newly-blocked hosts).
     validate_endpoint_url(&snapshot.endpoint_url)?;
     validate_endpoint_url_dns(&snapshot.endpoint_url).await?;
 
-    let skill = sqlx::query_as::<_, SkillResponse>(&format!(
+    let tool = sqlx::query_as::<_, ToolResponse>(&format!(
         r#"
-        UPDATE workspace_skills
+        UPDATE workspace_tools
         SET description = $3,
             endpoint_url = $4,
             http_method = $5,
@@ -735,7 +735,7 @@ pub async fn rollback_skill_version(
             scope_visibility = $11,
             version = version + 1
         WHERE workspace_id = $1 AND name = $2
-        RETURNING {SKILL_COLUMNS}
+        RETURNING {TOOL_COLUMNS}
         "#
     ))
     .bind(id)
@@ -753,11 +753,11 @@ pub async fn rollback_skill_version(
     .await
     .map_err(AppError::Database)?
     .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace_skill:{name}"),
+        resource: format!("workspace_tool:{name}"),
     })?;
 
     let note = change_note.unwrap_or_else(|| format!("rollback to v{version}"));
-    insert_skill_version_snapshot(&mut tx, &skill, Some(&note), Some(auth.actor().as_str()))
+    insert_tool_version_snapshot(&mut tx, &tool, Some(&note), Some(auth.actor().as_str()))
         .await?;
 
     tx.commit().await.map_err(AppError::Database)?;
@@ -766,38 +766,38 @@ pub async fn rollback_skill_version(
         state.db.clone(),
         id,
         auth.actor(),
-        AuditAction::SkillRolledBack,
-        skill.id,
-        "workspace_skill",
+        AuditAction::ToolRolledBack,
+        tool.id,
+        "workspace_tool",
         Some(json!({
-            "name": skill.name,
-            "version": skill.version,
+            "name": tool.name,
+            "version": tool.version,
             "rolled_back_to": version,
         })),
     );
 
-    Ok(Json(skill))
+    Ok(Json(tool))
 }
 
 fn validate_name(value: &str) -> AppResult<()> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.len() > 64 {
         return Err(AppError::Validation(
-            "skill name must be 1-64 characters".to_owned(),
+            "tool name must be 1-64 characters".to_owned(),
         ));
     }
     let mut chars = trimmed.chars();
     let Some(first) = chars.next() else {
-        return Err(AppError::Validation("skill name is required".to_owned()));
+        return Err(AppError::Validation("tool name is required".to_owned()));
     };
     if !first.is_ascii_lowercase() {
         return Err(AppError::Validation(
-            "skill name must start with a lowercase letter".to_owned(),
+            "tool name must start with a lowercase letter".to_owned(),
         ));
     }
     if chars.any(|ch| !(ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')) {
         return Err(AppError::Validation(
-            "skill name must match ^[a-z][a-z0-9_]{0,63}$".to_owned(),
+            "tool name must match ^[a-z][a-z0-9_]{0,63}$".to_owned(),
         ));
     }
     Ok(())
@@ -807,7 +807,7 @@ fn validate_description(value: &str) -> AppResult<()> {
     let length = value.trim().chars().count();
     if !(1..=500).contains(&length) {
         return Err(AppError::Validation(
-            "skill description must be 1-500 characters".to_owned(),
+            "tool description must be 1-500 characters".to_owned(),
         ));
     }
     Ok(())
@@ -815,23 +815,23 @@ fn validate_description(value: &str) -> AppResult<()> {
 
 fn validate_endpoint_url(value: &str) -> AppResult<()> {
     let url = reqwest::Url::parse(value.trim())
-        .map_err(|_| AppError::Validation("skill endpoint_url is not a valid URL".to_owned()))?;
+        .map_err(|_| AppError::Validation("tool endpoint_url is not a valid URL".to_owned()))?;
 
     if url.scheme() != "https" {
         return Err(AppError::Validation(
-            "skill endpoint_url must use the https scheme".to_owned(),
+            "tool endpoint_url must use the https scheme".to_owned(),
         ));
     }
 
     if !url.username().is_empty() || url.password().is_some() {
         return Err(AppError::Validation(
-            "skill endpoint_url must not contain credentials".to_owned(),
+            "tool endpoint_url must not contain credentials".to_owned(),
         ));
     }
 
     let host = url
         .host_str()
-        .ok_or_else(|| AppError::Validation("skill endpoint_url must have a host".to_owned()))?;
+        .ok_or_else(|| AppError::Validation("tool endpoint_url must have a host".to_owned()))?;
 
     reject_forbidden_host(host)?;
 
@@ -846,7 +846,7 @@ fn reject_forbidden_host(host: &str) -> AppResult<()> {
 
     if lower == "localhost" || lower.ends_with(".localhost") {
         return Err(AppError::Validation(
-            "skill endpoint_url host is not permitted".to_owned(),
+            "tool endpoint_url host is not permitted".to_owned(),
         ));
     }
 
@@ -872,14 +872,14 @@ fn reject_forbidden_ip(ip: std::net::IpAddr) -> AppResult<()> {
                 || v4.is_multicast()
             {
                 return Err(AppError::Validation(
-                    "skill endpoint_url resolves to a forbidden address".to_owned(),
+                    "tool endpoint_url resolves to a forbidden address".to_owned(),
                 ));
             }
         }
         std::net::IpAddr::V6(v6) => {
             if v6.is_loopback() || v6.is_multicast() || v6.is_unspecified() {
                 return Err(AppError::Validation(
-                    "skill endpoint_url resolves to a forbidden address".to_owned(),
+                    "tool endpoint_url resolves to a forbidden address".to_owned(),
                 ));
             }
             // Reject IPv4-mapped / IPv4-compatible addresses (e.g. ::ffff:10.0.0.1)
@@ -910,7 +910,7 @@ async fn validate_endpoint_url_dns(url: &str) -> AppResult<()> {
 
     let addrs = tokio::net::lookup_host(&*addr_str)
         .await
-        .map_err(|_| AppError::Validation("skill endpoint_url could not be resolved".to_owned()))?;
+        .map_err(|_| AppError::Validation("tool endpoint_url could not be resolved".to_owned()))?;
 
     for sock_addr in addrs {
         reject_forbidden_ip(sock_addr.ip())?;
@@ -965,7 +965,7 @@ async fn persist_migrated_ciphertext(
     };
 
     sqlx::query(
-        "UPDATE workspace_skills SET auth_secret_enc = $3 WHERE workspace_id = $1 AND name = $2",
+        "UPDATE workspace_tools SET auth_secret_enc = $3 WHERE workspace_id = $1 AND name = $2",
     )
     .bind(workspace_id)
     .bind(name)
@@ -977,30 +977,30 @@ async fn persist_migrated_ciphertext(
     Ok(())
 }
 
-/// Request body for the skill test proxy.
+/// Request body for the tool test proxy.
 #[derive(Debug, Deserialize)]
-pub struct SkillTestRequest {
+pub struct ToolTestRequest {
     pub body: Option<Value>,
     pub headers: Option<HashMap<String, String>>,
 }
 
-/// Response from the skill test proxy.
+/// Response from the tool test proxy.
 #[derive(Debug, Serialize)]
-pub struct SkillTestResponse {
+pub struct ToolTestResponse {
     pub status: u16,
     pub latency_ms: u64,
     pub body: Value,
 }
 
 #[axum::debug_handler]
-pub async fn test_skill(
+pub async fn test_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path((id, name)): Path<(Uuid, String)>,
-    Json(request): Json<SkillTestRequest>,
-) -> AppResult<Json<SkillTestResponse>> {
+    Json(request): Json<ToolTestRequest>,
+) -> AppResult<Json<ToolTestResponse>> {
     require_workspace(&auth, id)?;
-    let (response, _version) = invoke_skill_core(
+    let (response, _version) = invoke_tool_core(
         &state,
         id,
         &name,
@@ -1014,14 +1014,14 @@ pub async fn test_skill(
 }
 
 #[axum::debug_handler]
-pub async fn invoke_skill(
+pub async fn invoke_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path((id, name)): Path<(Uuid, String)>,
-    Json(request): Json<InvokeSkillRequest>,
-) -> AppResult<Json<SkillTestResponse>> {
+    Json(request): Json<InvokeToolRequest>,
+) -> AppResult<Json<ToolTestResponse>> {
     require_workspace(&auth, id)?;
-    let (response, _version) = invoke_skill_core(
+    let (response, _version) = invoke_tool_core(
         &state,
         id,
         &name,
@@ -1035,20 +1035,20 @@ pub async fn invoke_skill(
 }
 
 #[axum::debug_handler]
-pub async fn list_skill_invocations(
+pub async fn list_tool_invocations(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path((id, name)): Path<(Uuid, String)>,
     Query(query): Query<InvocationListQuery>,
-) -> AppResult<Json<Vec<SkillInvocation>>> {
+) -> AppResult<Json<Vec<ToolInvocation>>> {
     require_workspace(&auth, id)?;
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
-    let rows = sqlx::query_as::<_, SkillInvocation>(
+    let rows = sqlx::query_as::<_, ToolInvocation>(
         r#"
-        SELECT id, skill_id, workspace_id, skill_name, skill_version, actor,
+        SELECT id, tool_id, workspace_id, tool_name, tool_version, actor,
                source, status_code, latency_ms, error, occurred_at
-        FROM workspace_skill_invocations
-        WHERE workspace_id = $1 AND skill_name = $2
+        FROM workspace_tool_invocations
+        WHERE workspace_id = $1 AND tool_name = $2
         ORDER BY occurred_at DESC
         LIMIT $3
         "#,
@@ -1063,19 +1063,19 @@ pub async fn list_skill_invocations(
 }
 
 #[axum::debug_handler]
-pub async fn export_skills(
+pub async fn export_tools(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-) -> AppResult<Json<Vec<ExportedSkill>>> {
+) -> AppResult<Json<Vec<ExportedTool>>> {
     require_workspace(&auth, id)?;
-    let rows = sqlx::query_as::<_, ExportedSkill>(
+    let rows = sqlx::query_as::<_, ExportedTool>(
         r#"
         SELECT name, description, endpoint_url, http_method, input_schema,
                output_schema, auth_header, enabled, scope_visibility,
                rate_limit_per_minute, circuit_breaker_threshold,
                circuit_breaker_cooldown_seconds, version
-        FROM workspace_skills
+        FROM workspace_tools
         WHERE workspace_id = $1
         ORDER BY name
         "#,
@@ -1088,12 +1088,12 @@ pub async fn export_skills(
 }
 
 #[axum::debug_handler]
-pub async fn import_skills(
+pub async fn import_tools(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(request): Json<ImportSkillsRequest>,
-) -> AppResult<Json<ImportSkillsResponse>> {
+    Json(request): Json<ImportToolsRequest>,
+) -> AppResult<Json<ImportToolsResponse>> {
     require_workspace(&auth, id)?;
 
     let mut created = 0usize;
@@ -1101,20 +1101,20 @@ pub async fn import_skills(
     let mut skipped = 0usize;
     let mut errors = Vec::new();
 
-    for item in request.skills {
+    for item in request.tools {
         let name = item.name.trim().to_string();
-        match import_one_skill(&state, &auth, id, item, request.overwrite).await {
+        match import_one_tool(&state, &auth, id, item, request.overwrite).await {
             Ok(Some(true)) => created += 1,
             Ok(Some(false)) => updated += 1,
             Ok(None) => skipped += 1,
-            Err(error) => errors.push(ImportSkillError {
+            Err(error) => errors.push(ImportToolError {
                 name,
                 error: format!("{error}"),
             }),
         }
     }
 
-    Ok(Json(ImportSkillsResponse {
+    Ok(Json(ImportToolsResponse {
         created,
         updated,
         skipped,
@@ -1122,11 +1122,11 @@ pub async fn import_skills(
     }))
 }
 
-async fn import_one_skill(
+async fn import_one_tool(
     state: &AppState,
     auth: &AuthContext,
     workspace_id: Uuid,
-    item: ImportSkillItem,
+    item: ImportToolItem,
     overwrite: bool,
 ) -> AppResult<Option<bool>> {
     validate_name(&item.name)?;
@@ -1141,7 +1141,7 @@ async fn import_one_skill(
     validate_auth_pair(auth_header.as_ref(), auth_secret_enc.as_ref())?;
 
     let exists: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM workspace_skills WHERE workspace_id = $1 AND name = $2",
+        "SELECT id FROM workspace_tools WHERE workspace_id = $1 AND name = $2",
     )
     .bind(workspace_id)
     .bind(&item.name)
@@ -1154,7 +1154,7 @@ async fn import_one_skill(
     }
 
     if exists.is_some() {
-        let update_request = UpdateSkillRequest {
+        let update_request = UpdateToolRequest {
             description: Some(item.description),
             endpoint_url: Some(item.endpoint_url),
             http_method: item.http_method,
@@ -1169,7 +1169,7 @@ async fn import_one_skill(
             circuit_breaker_threshold: item.circuit_breaker_threshold,
             circuit_breaker_cooldown_seconds: item.circuit_breaker_cooldown_seconds,
         };
-        update_skill(
+        let _ = update_tool(
             State(state.clone()),
             Extension(auth.clone()),
             Path((workspace_id, item.name.clone())),
@@ -1178,7 +1178,7 @@ async fn import_one_skill(
         .await?;
         Ok(Some(false))
     } else {
-        let create_request = CreateSkillRequest {
+        let create_request = CreateToolRequest {
             name: item.name.clone(),
             description: item.description,
             endpoint_url: item.endpoint_url,
@@ -1193,7 +1193,7 @@ async fn import_one_skill(
             circuit_breaker_threshold: item.circuit_breaker_threshold,
             circuit_breaker_cooldown_seconds: item.circuit_breaker_cooldown_seconds,
         };
-        create_skill(
+        let _ = create_tool(
             State(state.clone()),
             Extension(auth.clone()),
             Path(workspace_id),
@@ -1207,6 +1207,7 @@ async fn import_one_skill(
 #[derive(Debug, Clone, Copy)]
 pub enum InvocationSource {
     Http,
+    #[allow(dead_code)]
     Mcp,
     Test,
 }
@@ -1222,7 +1223,7 @@ impl InvocationSource {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct InvokeSkillRow {
+struct InvokeToolRow {
     id: Uuid,
     endpoint_url: String,
     http_method: String,
@@ -1236,7 +1237,7 @@ struct InvokeSkillRow {
     circuit_breaker_cooldown_seconds: i32,
 }
 
-pub async fn invoke_skill_core(
+pub async fn invoke_tool_core(
     state: &AppState,
     workspace_id: Uuid,
     name: &str,
@@ -1244,13 +1245,13 @@ pub async fn invoke_skill_core(
     headers: Option<&HashMap<String, String>>,
     source: InvocationSource,
     actor: &str,
-) -> AppResult<(SkillTestResponse, i32)> {
-    let skill = sqlx::query_as::<_, InvokeSkillRow>(
+) -> AppResult<(ToolTestResponse, i32)> {
+    let tool = sqlx::query_as::<_, InvokeToolRow>(
         r#"
         SELECT id, endpoint_url, http_method, auth_header, auth_secret_enc, enabled,
                version, scope_visibility, rate_limit_per_minute,
                circuit_breaker_threshold, circuit_breaker_cooldown_seconds
-        FROM workspace_skills
+        FROM workspace_tools
         WHERE workspace_id = $1 AND name = $2
         "#,
     )
@@ -1260,32 +1261,32 @@ pub async fn invoke_skill_core(
     .await
     .map_err(AppError::Database)?
     .ok_or_else(|| AppError::NotFound {
-        resource: format!("workspace_skill:{name}"),
+        resource: format!("workspace_tool:{name}"),
     })?;
 
-    if !skill.enabled {
+    if !tool.enabled {
         return Err(AppError::Validation(format!(
-            "skill {name} is disabled"
+            "tool {name} is disabled"
         )));
     }
 
-    if matches!(source, InvocationSource::Mcp) && skill.scope_visibility == "private" {
+    if matches!(source, InvocationSource::Mcp) && tool.scope_visibility == "private" {
         return Err(AppError::Forbidden);
     }
 
     // Rate limit: count successful + failed invocations in the last 60s.
-    if skill.rate_limit_per_minute > 0 {
+    if tool.rate_limit_per_minute > 0 {
         let count: i64 = sqlx::query_scalar(
             r#"
-            SELECT COUNT(*) FROM workspace_skill_invocations
-            WHERE skill_id = $1 AND occurred_at > NOW() - INTERVAL '60 seconds'
+            SELECT COUNT(*) FROM workspace_tool_invocations
+            WHERE tool_id = $1 AND occurred_at > NOW() - INTERVAL '60 seconds'
             "#,
         )
-        .bind(skill.id)
+        .bind(tool.id)
         .fetch_one(&state.db)
         .await
         .map_err(AppError::Database)?;
-        if count >= skill.rate_limit_per_minute as i64 {
+        if count >= tool.rate_limit_per_minute as i64 {
             return Err(AppError::RateLimited {
                 retry_after_secs: 60,
             });
@@ -1294,29 +1295,29 @@ pub async fn invoke_skill_core(
 
     // Circuit breaker: if >= threshold non-2xx invocations in last cooldown
     // window, refuse.
-    if skill.circuit_breaker_threshold > 0 {
+    if tool.circuit_breaker_threshold > 0 {
         let failures: i64 = sqlx::query_scalar(
             r#"
-            SELECT COUNT(*) FROM workspace_skill_invocations
-            WHERE skill_id = $1
+            SELECT COUNT(*) FROM workspace_tool_invocations
+            WHERE tool_id = $1
               AND occurred_at > NOW() - make_interval(secs => $2)
               AND (status_code < 200 OR status_code >= 300)
             "#,
         )
-        .bind(skill.id)
-        .bind(skill.circuit_breaker_cooldown_seconds as f64)
+        .bind(tool.id)
+        .bind(tool.circuit_breaker_cooldown_seconds as f64)
         .fetch_one(&state.db)
         .await
         .map_err(AppError::Database)?;
-        if failures >= skill.circuit_breaker_threshold as i64 {
+        if failures >= tool.circuit_breaker_threshold as i64 {
             return Err(AppError::Conflict(format!(
-                "skill {name} circuit breaker open ({} failures in last {}s)",
-                failures, skill.circuit_breaker_cooldown_seconds
+                "tool {name} circuit breaker open ({} failures in last {}s)",
+                failures, tool.circuit_breaker_cooldown_seconds
             )));
         }
     }
 
-    validate_endpoint_url_dns(&skill.endpoint_url).await?;
+    validate_endpoint_url_dns(&tool.endpoint_url).await?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -1324,13 +1325,13 @@ pub async fn invoke_skill_core(
         .build()
         .map_err(|error| AppError::Internal(anyhow::anyhow!(error)))?;
 
-    let method = reqwest::Method::from_bytes(skill.http_method.as_bytes())
+    let method = reqwest::Method::from_bytes(tool.http_method.as_bytes())
         .unwrap_or(reqwest::Method::POST);
-    let mut req_builder = client.request(method, &skill.endpoint_url);
+    let mut req_builder = client.request(method, &tool.endpoint_url);
 
     if let (Some(header_name), Some(enc)) = (
-        skill.auth_header.as_deref(),
-        skill.auth_secret_enc.as_deref(),
+        tool.auth_header.as_deref(),
+        tool.auth_secret_enc.as_deref(),
     ) {
         let decrypted =
             decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), enc)?;
@@ -1354,7 +1355,7 @@ pub async fn invoke_skill_core(
         "x-real-ip",
     ];
     if let Some(caller_headers) = headers {
-        let auth_header_lower = skill
+        let auth_header_lower = tool
             .auth_header
             .as_deref()
             .map(|h| h.to_ascii_lowercase())
@@ -1384,7 +1385,7 @@ pub async fn invoke_skill_core(
     let (status, body_value, error_text) = match response {
         Ok(resp) => {
             let status = resp.status().as_u16();
-            let body = read_skill_test_body(resp).await;
+            let body = read_tool_test_body(resp).await;
             (status, body, None)
         }
         Err(error) => (
@@ -1396,17 +1397,17 @@ pub async fn invoke_skill_core(
 
     let _ = sqlx::query(
         r#"
-        INSERT INTO workspace_skill_invocations (
-            skill_id, workspace_id, skill_name, skill_version, actor,
+        INSERT INTO workspace_tool_invocations (
+            tool_id, workspace_id, tool_name, tool_version, actor,
             source, status_code, latency_ms, error
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#,
     )
-    .bind(skill.id)
+    .bind(tool.id)
     .bind(workspace_id)
     .bind(name)
-    .bind(skill.version)
+    .bind(tool.version)
     .bind(actor)
     .bind(source.as_str())
     .bind(status as i32)
@@ -1420,12 +1421,12 @@ pub async fn invoke_skill_core(
         state.db.clone(),
         workspace_id,
         actor.to_string(),
-        AuditAction::SkillInvoked,
-        skill.id,
-        "workspace_skill",
+        AuditAction::ToolInvoked,
+        tool.id,
+        "workspace_tool",
         Some(json!({
             "name": name,
-            "version": skill.version,
+            "version": tool.version,
             "source": source.as_str(),
             "status": status,
             "latency_ms": latency_ms,
@@ -1433,12 +1434,12 @@ pub async fn invoke_skill_core(
     );
 
     Ok((
-        SkillTestResponse {
+        ToolTestResponse {
             status,
             latency_ms,
             body: body_value,
         },
-        skill.version,
+        tool.version,
     ))
 }
 
@@ -1462,7 +1463,7 @@ async fn enforce_change_note_for_compliance(
     Ok(())
 }
 
-async fn read_skill_test_body(response: reqwest::Response) -> Value {
+async fn read_tool_test_body(response: reqwest::Response) -> Value {
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
 
@@ -1473,10 +1474,10 @@ async fn read_skill_test_body(response: reqwest::Response) -> Value {
                 return json!({ "error": format!("failed to read response body: {error}") })
             }
         };
-        if bytes.len().saturating_add(chunk.len()) > MAX_SKILL_TEST_RESPONSE_BYTES {
+        if bytes.len().saturating_add(chunk.len()) > MAX_TOOL_TEST_RESPONSE_BYTES {
             return json!({
                 "error": "response body exceeded size limit",
-                "limit_bytes": MAX_SKILL_TEST_RESPONSE_BYTES
+                "limit_bytes": MAX_TOOL_TEST_RESPONSE_BYTES
             });
         }
         bytes.extend_from_slice(&chunk);
@@ -1486,10 +1487,10 @@ async fn read_skill_test_body(response: reqwest::Response) -> Value {
         .unwrap_or_else(|_| json!({ "error": "response was not JSON" }))
 }
 
-fn map_skill_insert_error(error: sqlx::Error) -> AppError {
+fn map_tool_insert_error(error: sqlx::Error) -> AppError {
     if let sqlx::Error::Database(database_error) = &error {
         if database_error.is_unique_violation() {
-            return AppError::Conflict("skill name already exists in workspace".to_owned());
+            return AppError::Conflict("tool name already exists in workspace".to_owned());
         }
     }
     AppError::Database(error)
@@ -1508,13 +1509,13 @@ mod tests {
 
     #[test]
     fn rollback_request_accepts_empty_body() {
-        let parsed: RollbackSkillRequest = serde_json::from_str("{}").expect("empty object");
+        let parsed: RollbackToolRequest = serde_json::from_str("{}").expect("empty object");
         assert!(parsed.change_note.is_none());
     }
 
     #[test]
     fn rollback_request_parses_change_note() {
-        let parsed: RollbackSkillRequest =
+        let parsed: RollbackToolRequest =
             serde_json::from_str(r#"{"change_note":"revert bad URL"}"#).expect("body");
         assert_eq!(parsed.change_note.as_deref(), Some("revert bad URL"));
     }
@@ -1522,21 +1523,21 @@ mod tests {
     #[test]
     fn create_request_change_note_is_optional() {
         let body = r#"{"name":"x","description":"y","endpoint_url":"https://e.example/x"}"#;
-        let parsed: CreateSkillRequest = serde_json::from_str(body).expect("body");
+        let parsed: CreateToolRequest = serde_json::from_str(body).expect("body");
         assert!(parsed.change_note.is_none());
     }
 
     #[test]
-    fn skill_test_response_encodes_502_on_connection_error() {
+    fn tool_test_response_encodes_502_on_connection_error() {
         let body = serde_json::json!({ "error": "connection refused" });
-        let resp = SkillTestResponse {
+        let resp = ToolTestResponse {
             status: 502,
             latency_ms: 5,
             body,
         };
         let encoded = match serde_json::to_value(&resp) {
             Ok(encoded) => encoded,
-            Err(error) => panic!("SkillTestResponse should serialize: {error}"),
+            Err(error) => panic!("ToolTestResponse should serialize: {error}"),
         };
         assert_eq!(encoded["status"], 502);
         assert!(encoded["body"]["error"]

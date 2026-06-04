@@ -2,7 +2,7 @@ import { Check, Edit3, FlaskConical, History, Loader2, Play, Plus, RotateCcw, Tr
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
 
-import { createSkill, deleteSkill, listSkillVersions, listSkills, rollbackSkillVersion, testSkill, updateSkill, type CreateSkillPayload, type Skill, type SkillTestResponse, type SkillVersion } from "../api/skills";
+import { createTool, deleteTool, listToolVersions, listTools, rollbackToolVersion, testTool, updateTool, type CreateToolPayload, type Tool, type ToolTestResponse, type ToolVersion } from "../api/tools";
 import type { JsonValue } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { InlineError } from "../components/InlineError";
@@ -15,7 +15,7 @@ import { previewText } from "../lib/format";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
 
-const skillNamePattern = /^[a-z][a-z0-9_]{0,63}$/;
+const toolNamePattern = /^[a-z][a-z0-9_]{0,63}$/;
 const emptyDraft = {
   name: "",
   description: "",
@@ -27,82 +27,82 @@ const emptyDraft = {
   output_schema: "{}",
 };
 
-type SkillDraft = typeof emptyDraft;
-type FormErrors = Partial<Record<keyof SkillDraft, string>>;
+type ToolDraft = typeof emptyDraft;
+type FormErrors = Partial<Record<keyof ToolDraft, string>>;
 
-export function SkillsView() {
+export function ToolsView() {
   const workspaceId = useAppStore((state) => state.workspaceId);
   const apiKey = useAppStore((state) => state.apiKey);
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
-  const [draft, setDraft] = useState<SkillDraft>(emptyDraft);
+  const [editingTool, setEditingTool] = useState<Tool | null>(null);
+  const [draft, setDraft] = useState<ToolDraft>(emptyDraft);
   const [errors, setErrors] = useState<FormErrors>({});
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
-  const [testingSkillName, setTestingSkillName] = useState<string | null>(null);
+  const [testingToolName, setTestingToolName] = useState<string | null>(null);
   const [testBody, setTestBody] = useState("");
-  const [testResult, setTestResult] = useState<SkillTestResponse | null>(null);
+  const [testResult, setTestResult] = useState<ToolTestResponse | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
-  const [historySkillName, setHistorySkillName] = useState<string | null>(null);
+  const [historyToolName, setHistoryToolName] = useState<string | null>(null);
   const [rollbackNote, setRollbackNote] = useState("");
   const [confirmingRollback, setConfirmingRollback] = useState<number | null>(null);
   const hasAuth = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
 
-  const skillsQuery = useQuery({
-    queryKey: skillsKey(workspaceId),
-    queryFn: () => listSkills(workspaceId),
+  const toolsQuery = useQuery({
+    queryKey: toolsKey(workspaceId),
+    queryFn: () => listTools(workspaceId),
     enabled: hasAuth,
   });
 
   const createMutation = useMutation({
-    mutationKey: ["workspace", workspaceId, "skills", "create"],
-    mutationFn: (payload: CreateSkillPayload) => createSkill(workspaceId, payload),
+    mutationKey: ["workspace", workspaceId, "tools", "create"],
+    mutationFn: (payload: CreateToolPayload) => createTool(workspaceId, payload),
     onSuccess: () => {
       resetDrawer();
-      void queryClient.invalidateQueries({ queryKey: skillsKey(workspaceId) });
+      void queryClient.invalidateQueries({ queryKey: toolsKey(workspaceId) });
     },
   });
 
   const updateMutation = useMutation({
-    mutationKey: ["workspace", workspaceId, "skills", "update"],
-    mutationFn: ({ name, patch }: { name: string; patch: Partial<CreateSkillPayload> }) => updateSkill(workspaceId, name, patch),
+    mutationKey: ["workspace", workspaceId, "tools", "update"],
+    mutationFn: ({ name, patch }: { name: string; patch: Partial<CreateToolPayload> }) => updateTool(workspaceId, name, patch),
     onMutate: async ({ name, patch }) => {
-      await queryClient.cancelQueries({ queryKey: skillsKey(workspaceId) });
-      const snapshot = queryClient.getQueryData<Skill[]>(skillsKey(workspaceId));
-      queryClient.setQueryData<Skill[]>(skillsKey(workspaceId), (current) =>
-        current?.map((skill) => (skill.name === name ? { ...skill, ...patch } as Skill : skill)),
+      await queryClient.cancelQueries({ queryKey: toolsKey(workspaceId) });
+      const snapshot = queryClient.getQueryData<Tool[]>(toolsKey(workspaceId));
+      queryClient.setQueryData<Tool[]>(toolsKey(workspaceId), (current) =>
+        current?.map((tool) => (tool.name === name ? { ...tool, ...patch } as Tool : tool)),
       );
       return { snapshot };
     },
     onError: (_error, _variables, context) => {
-      queryClient.setQueryData(skillsKey(workspaceId), context?.snapshot);
+      queryClient.setQueryData(toolsKey(workspaceId), context?.snapshot);
     },
-    onSuccess: (skill) => {
-      queryClient.setQueryData<Skill[]>(skillsKey(workspaceId), (current) => current?.map((item) => (item.id === skill.id ? skill : item)) ?? [skill]);
-      if (editingSkill) {
+    onSuccess: (tool) => {
+      queryClient.setQueryData<Tool[]>(toolsKey(workspaceId), (current) => current?.map((item) => (item.id === tool.id ? tool : item)) ?? [tool]);
+      if (editingTool) {
         resetDrawer();
       }
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: skillsKey(workspaceId) });
+      void queryClient.invalidateQueries({ queryKey: toolsKey(workspaceId) });
     },
   });
 
   const deleteMutation = useMutation({
-    mutationKey: ["workspace", workspaceId, "skills", "delete"],
-    mutationFn: (name: string) => deleteSkill(workspaceId, name),
+    mutationKey: ["workspace", workspaceId, "tools", "delete"],
+    mutationFn: (name: string) => deleteTool(workspaceId, name),
     onSuccess: (_result, name) => {
       setConfirmingDelete(null);
-      queryClient.setQueryData<Skill[]>(skillsKey(workspaceId), (current) => current?.filter((skill) => skill.name !== name) ?? []);
+      queryClient.setQueryData<Tool[]>(toolsKey(workspaceId), (current) => current?.filter((tool) => tool.name !== name) ?? []);
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: skillsKey(workspaceId) });
+      void queryClient.invalidateQueries({ queryKey: toolsKey(workspaceId) });
     },
   });
 
   const testMutation = useMutation({
-    mutationKey: ["workspace", workspaceId, "skills", "test"],
-    mutationFn: ({ name, body }: { name: string; body: JsonValue }) => testSkill(workspaceId, name, { body }),
+    mutationKey: ["workspace", workspaceId, "tools", "test"],
+    mutationFn: ({ name, body }: { name: string; body: JsonValue }) => testTool(workspaceId, name, { body }),
     onSuccess: (data) => {
       setTestResult(data);
       setTestError(null);
@@ -114,27 +114,27 @@ export function SkillsView() {
   });
 
   const versionsQuery = useQuery({
-    queryKey: skillVersionsKey(workspaceId, historySkillName ?? ""),
-    queryFn: () => listSkillVersions(workspaceId, historySkillName as string),
-    enabled: hasAuth && historySkillName !== null,
+    queryKey: toolVersionsKey(workspaceId, historyToolName ?? ""),
+    queryFn: () => listToolVersions(workspaceId, historyToolName as string),
+    enabled: hasAuth && historyToolName !== null,
   });
 
   const rollbackMutation = useMutation({
-    mutationKey: ["workspace", workspaceId, "skills", "rollback"],
+    mutationKey: ["workspace", workspaceId, "tools", "rollback"],
     mutationFn: ({ name, version, change_note }: { name: string; version: number; change_note?: string | undefined }) =>
-      rollbackSkillVersion(workspaceId, name, version, change_note),
-    onSuccess: (skill) => {
+      rollbackToolVersion(workspaceId, name, version, change_note),
+    onSuccess: (tool) => {
       setConfirmingRollback(null);
       setRollbackNote("");
-      queryClient.setQueryData<Skill[]>(skillsKey(workspaceId), (current) =>
-        current?.map((item) => (item.id === skill.id ? skill : item)) ?? [skill],
+      queryClient.setQueryData<Tool[]>(toolsKey(workspaceId), (current) =>
+        current?.map((item) => (item.id === tool.id ? tool : item)) ?? [tool],
       );
-      void queryClient.invalidateQueries({ queryKey: skillVersionsKey(workspaceId, skill.name) });
-      void queryClient.invalidateQueries({ queryKey: skillsKey(workspaceId) });
+      void queryClient.invalidateQueries({ queryKey: toolVersionsKey(workspaceId, tool.name) });
+      void queryClient.invalidateQueries({ queryKey: toolsKey(workspaceId) });
     },
   });
 
-  const rows = useMemo(() => skillsQuery.data ?? [], [skillsQuery.data]);
+  const rows = useMemo(() => toolsQuery.data ?? [], [toolsQuery.data]);
   const formPending = createMutation.isPending || updateMutation.isPending;
 
   useEffect(() => {
@@ -144,23 +144,23 @@ export function SkillsView() {
   }, [drawerOpen]);
 
   function openCreateDrawer() {
-    setEditingSkill(null);
+    setEditingTool(null);
     setDraft(emptyDraft);
     setErrors({});
     setDrawerOpen(true);
   }
 
-  function openEditDrawer(skill: Skill) {
-    setEditingSkill(skill);
+  function openEditDrawer(tool: Tool) {
+    setEditingTool(tool);
     setDraft({
-      name: skill.name,
-      description: skill.description,
-      endpoint_url: skill.endpoint_url,
-      http_method: skill.http_method,
-      auth_header: skill.auth_header ?? "",
+      name: tool.name,
+      description: tool.description,
+      endpoint_url: tool.endpoint_url,
+      http_method: tool.http_method,
+      auth_header: tool.auth_header ?? "",
       auth_secret: "",
-      input_schema: JSON.stringify(skill.input_schema ?? {}, null, 2),
-      output_schema: JSON.stringify(skill.output_schema ?? {}, null, 2),
+      input_schema: JSON.stringify(tool.input_schema ?? {}, null, 2),
+      output_schema: JSON.stringify(tool.output_schema ?? {}, null, 2),
     });
     setErrors({});
     setDrawerOpen(true);
@@ -168,55 +168,55 @@ export function SkillsView() {
 
   function resetDrawer() {
     setDrawerOpen(false);
-    setEditingSkill(null);
+    setEditingTool(null);
     setDraft(emptyDraft);
     setErrors({});
   }
 
-  function updateDraft(field: keyof SkillDraft, value: string) {
+  function updateDraft(field: keyof ToolDraft, value: string) {
     setDraft((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: undefined }));
   }
 
-  function submitSkill(event: FormEvent<HTMLFormElement>) {
+  function submitTool(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const parsed = validateDraft(draft, Boolean(editingSkill));
+    const parsed = validateDraft(draft, Boolean(editingTool));
     setErrors(parsed.errors);
     if (!parsed.payload) {
       return;
     }
 
-    if (editingSkill) {
-      updateMutation.mutate({ name: editingSkill.name, patch: parsed.payload });
+    if (editingTool) {
+      updateMutation.mutate({ name: editingTool.name, patch: parsed.payload });
     } else {
-      createMutation.mutate(parsed.payload as CreateSkillPayload);
+      createMutation.mutate(parsed.payload as CreateToolPayload);
     }
   }
 
-  function toggleEnabled(skill: Skill) {
-    updateMutation.mutate({ name: skill.name, patch: { enabled: !skill.enabled } });
+  function toggleEnabled(tool: Tool) {
+    updateMutation.mutate({ name: tool.name, patch: { enabled: !tool.enabled } });
   }
 
-  function openTestPanel(skill: Skill) {
-    if (testingSkillName === skill.name) {
-      setTestingSkillName(null);
+  function openTestPanel(tool: Tool) {
+    if (testingToolName === tool.name) {
+      setTestingToolName(null);
       return;
     }
-    setTestingSkillName(skill.name);
-    setHistorySkillName(null);
-    setTestBody(JSON.stringify(skill.input_schema ?? {}, null, 2));
+    setTestingToolName(tool.name);
+    setHistoryToolName(null);
+    setTestBody(JSON.stringify(tool.input_schema ?? {}, null, 2));
     setTestResult(null);
     setTestError(null);
   }
 
-  function openHistoryPanel(skill: Skill) {
-    if (historySkillName === skill.name) {
-      setHistorySkillName(null);
+  function openHistoryPanel(tool: Tool) {
+    if (historyToolName === tool.name) {
+      setHistoryToolName(null);
       setConfirmingRollback(null);
       return;
     }
-    setHistorySkillName(skill.name);
-    setTestingSkillName(null);
+    setHistoryToolName(tool.name);
+    setTestingToolName(null);
     setRollbackNote("");
     setConfirmingRollback(null);
   }
@@ -238,28 +238,28 @@ export function SkillsView() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-medium text-accent-strong">Agent tools</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Skills</h1>
+          <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Tools</h1>
         </div>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button type="button" data-testid="skill-add-button" onClick={openCreateDrawer} disabled={!hasAuth}>
+            <Button type="button" data-testid="tool-add-button" onClick={openCreateDrawer} disabled={!hasAuth}>
               <Plus className="h-4 w-4" aria-hidden="true" />
-              Add Skill
+              Add Tool
             </Button>
           </TooltipTrigger>
           <TooltipContent>HTTP tools agents can call to augment memory retrieval with live external data.</TooltipContent>
         </Tooltip>
       </header>
 
-      {skillsQuery.isError ? <InlineError message={errorMessage(skillsQuery.error)} /> : null}
-      {createMutation.isError ? <InlineError title="Skill could not be saved" message={errorMessage(createMutation.error)} /> : null}
-      {updateMutation.isError ? <InlineError title="Skill update failed" message={errorMessage(updateMutation.error)} /> : null}
-      {deleteMutation.isError ? <InlineError title="Skill delete failed" message={errorMessage(deleteMutation.error)} /> : null}
+      {toolsQuery.isError ? <InlineError message={errorMessage(toolsQuery.error)} /> : null}
+      {createMutation.isError ? <InlineError title="Tool could not be saved" message={errorMessage(createMutation.error)} /> : null}
+      {updateMutation.isError ? <InlineError title="Tool update failed" message={errorMessage(updateMutation.error)} /> : null}
+      {deleteMutation.isError ? <InlineError title="Tool delete failed" message={errorMessage(deleteMutation.error)} /> : null}
 
-      {skillsQuery.isLoading ? <SkillsSkeleton /> : null}
+      {toolsQuery.isLoading ? <ToolsSkeleton /> : null}
 
-      {!skillsQuery.isLoading && rows.length === 0 ? (
-        <EmptyState title="No skills registered" message="No skills registered. Add your first HTTP Skill to extend agent retrieval." />
+      {!toolsQuery.isLoading && rows.length === 0 ? (
+        <EmptyState title="No tools registered" message="No tools registered. Add your first HTTP Tool to extend agent retrieval." />
       ) : null}
 
       {rows.length > 0 ? (
@@ -269,50 +269,50 @@ export function SkillsView() {
               <thead className="border-b border-line bg-soft/80 text-xs font-semibold uppercase text-ink/55">
                 <tr>
                   <th className="px-4 py-3"><InfoLabel label="Name" tooltip="Machine-safe identifier. Use lowercase letters, numbers, and underscores." /></th>
-                  <th className="px-4 py-3"><InfoLabel label="Description" tooltip="What the skill does so operators and agents understand when to call it." /></th>
-                  <th className="px-4 py-3"><InfoLabel label="Method" tooltip="HTTP method MemoryOps will use when invoking the skill." /></th>
-                  <th className="px-4 py-3"><InfoLabel label="URL" tooltip="HTTPS endpoint MemoryOps will call when this skill is invoked. Local, private, and network metadata URLs should be rejected by the backend." /></th>
-                  <th className="px-4 py-3"><InfoLabel label="Enabled" tooltip="Whether agents may call this skill during retrieval and tool use." /></th>
+                  <th className="px-4 py-3"><InfoLabel label="Description" tooltip="What the tool does so operators and agents understand when to call it." /></th>
+                  <th className="px-4 py-3"><InfoLabel label="Method" tooltip="HTTP method MemoryOps will use when invoking the tool." /></th>
+                  <th className="px-4 py-3"><InfoLabel label="URL" tooltip="HTTPS endpoint MemoryOps will call when this tool is invoked. Local, private, and network metadata URLs should be rejected by the backend." /></th>
+                  <th className="px-4 py-3"><InfoLabel label="Enabled" tooltip="Whether agents may call this tool during retrieval and tool use." /></th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((skill) => (
-                  <Fragment key={skill.id}>
-                  <tr data-testid={`skill-row-${skill.name}`} className="border-b border-line/80 last:border-b-0">
+                {rows.map((tool) => (
+                  <Fragment key={tool.id}>
+                  <tr data-testid={`tool-row-${tool.name}`} className="border-b border-line/80 last:border-b-0">
                     <td className="px-4 py-4 align-middle font-mono text-sm text-ink">
-                      <span>{skill.name}</span>
+                      <span>{tool.name}</span>
                       <span
                         className="ml-2 inline-flex items-center rounded border border-line bg-soft px-1.5 py-0.5 text-[10px] font-semibold text-ink/60"
-                        title={`Current version: ${skill.version}`}
-                        data-testid={`skill-version-${skill.name}`}
+                        title={`Current version: ${tool.version}`}
+                        data-testid={`tool-version-${tool.name}`}
                       >
-                        v{skill.version}
+                        v{tool.version}
                       </span>
                     </td>
-                    <td className="max-w-[22rem] px-4 py-4 align-middle text-sm text-ink/70">{previewText(skill.description, 96)}</td>
+                    <td className="max-w-[22rem] px-4 py-4 align-middle text-sm text-ink/70">{previewText(tool.description, 96)}</td>
                     <td className="px-4 py-4 align-middle">
-                      <Badge variant="gray">{skill.http_method}</Badge>
+                      <Badge variant="gray">{tool.http_method}</Badge>
                     </td>
                     <td className="max-w-[24rem] truncate px-4 py-4 align-middle font-mono text-xs text-ink/60">
-                      <TooltipText value={skill.endpoint_url}>{skill.endpoint_url}</TooltipText>
+                      <TooltipText value={tool.endpoint_url}>{tool.endpoint_url}</TooltipText>
                     </td>
                     <td className="px-4 py-4 align-middle">
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <button
                             type="button"
-                            data-testid={`skill-enabled-${skill.name}`}
-                            className={toggleClass(skill.enabled)}
-                            onClick={() => toggleEnabled(skill)}
+                            data-testid={`tool-enabled-${tool.name}`}
+                            className={toggleClass(tool.enabled)}
+                            onClick={() => toggleEnabled(tool)}
                             disabled={updateMutation.isPending}
-                            aria-pressed={skill.enabled}
-                            aria-label={skill.enabled ? `Disable ${skill.name}` : `Enable ${skill.name}`}
+                            aria-pressed={tool.enabled}
+                            aria-label={tool.enabled ? `Disable ${tool.name}` : `Enable ${tool.name}`}
                           >
-                            <span className={cn("h-4 w-4 rounded-full bg-white shadow transition", skill.enabled ? "translate-x-5" : "translate-x-0")} />
+                            <span className={cn("h-4 w-4 rounded-full bg-white shadow transition", tool.enabled ? "translate-x-5" : "translate-x-0")} />
                           </button>
                         </TooltipTrigger>
-                        <TooltipContent>{skill.enabled ? "Agents can currently invoke this skill." : "Enable this skill so agents can invoke it."}</TooltipContent>
+                        <TooltipContent>{tool.enabled ? "Agents can currently invoke this tool." : "Enable this tool so agents can invoke it."}</TooltipContent>
                       </Tooltip>
                     </td>
                     <td className="relative px-4 py-4 align-middle">
@@ -323,15 +323,15 @@ export function SkillsView() {
                               type="button"
                               variant="ghost"
                               size="icon"
-                              data-testid={`skill-test-open-${skill.name}`}
-                              aria-label={`Test ${skill.name}`}
-                              aria-pressed={testingSkillName === skill.name}
-                              onClick={() => openTestPanel(skill)}
+                              data-testid={`tool-test-open-${tool.name}`}
+                              aria-label={`Test ${tool.name}`}
+                              aria-pressed={testingToolName === tool.name}
+                              onClick={() => openTestPanel(tool)}
                             >
                               <FlaskConical className="h-4 w-4" aria-hidden="true" />
                             </Button>
                           </TooltipTrigger>
-                          <TooltipContent>Sends a live request to the skill endpoint using the provided test body.</TooltipContent>
+                          <TooltipContent>Sends a live request to the tool endpoint using the provided test body.</TooltipContent>
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -339,10 +339,10 @@ export function SkillsView() {
                               type="button"
                               variant="ghost"
                               size="icon"
-                              data-testid={`skill-history-open-${skill.name}`}
-                              aria-label={`History for ${skill.name}`}
-                              aria-pressed={historySkillName === skill.name}
-                              onClick={() => openHistoryPanel(skill)}
+                              data-testid={`tool-history-open-${tool.name}`}
+                              aria-label={`History for ${tool.name}`}
+                              aria-pressed={historyToolName === tool.name}
+                              onClick={() => openHistoryPanel(tool)}
                             >
                               <History className="h-4 w-4" aria-hidden="true" />
                             </Button>
@@ -351,27 +351,27 @@ export function SkillsView() {
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button type="button" variant="ghost" size="icon" data-testid={`skill-edit-${skill.name}`} aria-label={`Edit ${skill.name}`} onClick={() => openEditDrawer(skill)}>
+                            <Button type="button" variant="ghost" size="icon" data-testid={`tool-edit-${tool.name}`} aria-label={`Edit ${tool.name}`} onClick={() => openEditDrawer(tool)}>
                               <Edit3 className="h-4 w-4" aria-hidden="true" />
                             </Button>
                           </TooltipTrigger>
-                          <TooltipContent>Edit the saved skill configuration.</TooltipContent>
+                          <TooltipContent>Edit the saved tool configuration.</TooltipContent>
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button type="button" variant="ghost" size="icon" data-testid={`skill-delete-${skill.name}`} aria-label={`Delete ${skill.name}`} onClick={() => setConfirmingDelete(skill.name)}>
+                            <Button type="button" variant="ghost" size="icon" data-testid={`tool-delete-${tool.name}`} aria-label={`Delete ${tool.name}`} onClick={() => setConfirmingDelete(tool.name)}>
                               <Trash2 className="h-4 w-4" aria-hidden="true" />
                             </Button>
                           </TooltipTrigger>
-                          <TooltipContent>Delete this registered skill.</TooltipContent>
+                          <TooltipContent>Delete this registered tool.</TooltipContent>
                         </Tooltip>
                       </div>
-                      {confirmingDelete === skill.name ? (
+                      {confirmingDelete === tool.name ? (
                         <div className="absolute right-4 z-10 mt-2 w-64 rounded-lg border border-line bg-white p-3 text-sm shadow-lg">
-                          <p className="font-medium text-ink">Delete {skill.name}?</p>
+                          <p className="font-medium text-ink">Delete {tool.name}?</p>
                           <div className="mt-3 flex justify-end gap-2">
                             <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmingDelete(null)}>Cancel</Button>
-                            <Button type="button" variant="destructive" size="sm" onClick={() => deleteMutation.mutate(skill.name)} disabled={deleteMutation.isPending}>
+                            <Button type="button" variant="destructive" size="sm" onClick={() => deleteMutation.mutate(tool.name)} disabled={deleteMutation.isPending}>
                               {deleteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
                               Delete
                             </Button>
@@ -380,24 +380,24 @@ export function SkillsView() {
                       ) : null}
                     </td>
                   </tr>
-                  {testingSkillName === skill.name ? (
+                  {testingToolName === tool.name ? (
                     <tr>
                       <td colSpan={6} className="border-b border-line/80 bg-soft/40 px-5 py-4">
                         <div className="grid max-w-3xl gap-4">
                           <div className="flex flex-wrap gap-6 text-sm">
                             <div>
                               <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="Method" tooltip="HTTP method MemoryOps will use for this test request." /></span>
-                              <p className="mt-0.5 font-mono text-ink">{skill.http_method}</p>
+                              <p className="mt-0.5 font-mono text-ink">{tool.http_method}</p>
                             </div>
                             <div className="min-w-0 flex-1">
-                              <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="URL" tooltip="HTTPS endpoint MemoryOps will call when this skill is invoked." /></span>
-                              <p className="mt-0.5 truncate font-mono text-xs text-ink/70">{skill.endpoint_url}</p>
+                              <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="URL" tooltip="HTTPS endpoint MemoryOps will call when this tool is invoked." /></span>
+                              <p className="mt-0.5 truncate font-mono text-xs text-ink/70">{tool.endpoint_url}</p>
                             </div>
                           </div>
                           <label className="grid gap-1">
-                            <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="Request body JSON" tooltip="Live request body sent to the skill endpoint during a test run." /></span>
+                            <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="Request body JSON" tooltip="Live request body sent to the tool endpoint during a test run." /></span>
                             <textarea
-                              data-testid={`skill-test-body-${skill.name}`}
+                              data-testid={`tool-test-body-${tool.name}`}
                               value={testBody}
                               onChange={(e) => setTestBody(e.target.value)}
                               rows={5}
@@ -411,8 +411,8 @@ export function SkillsView() {
                                 <Button
                                   type="button"
                                   size="sm"
-                                  data-testid={`skill-test-run-${skill.name}`}
-                                  onClick={() => runTest(skill.name)}
+                                  data-testid={`tool-test-run-${tool.name}`}
+                                  onClick={() => runTest(tool.name)}
                                   disabled={testMutation.isPending}
                                 >
                                   {testMutation.isPending
@@ -421,7 +421,7 @@ export function SkillsView() {
                                   Run test
                                 </Button>
                               </TooltipTrigger>
-                              <TooltipContent>Sends a live request to the skill endpoint using the provided test body.</TooltipContent>
+                              <TooltipContent>Sends a live request to the tool endpoint using the provided test body.</TooltipContent>
                             </Tooltip>
                             {testResult ? (
                               <span className="text-sm text-ink/60">
@@ -432,9 +432,9 @@ export function SkillsView() {
                           </div>
                           {testResult ? (
                             <div className="grid gap-1">
-                              <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="Response panel" tooltip="Raw response returned by the skill test request." /></span>
+                              <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="Response panel" tooltip="Raw response returned by the tool test request." /></span>
                               <pre
-                                data-testid={`skill-test-response-${skill.name}`}
+                                data-testid={`tool-test-response-${tool.name}`}
                                 className="max-h-64 overflow-auto rounded-md bg-ink px-4 py-3 font-mono text-xs text-white/90"
                               >
                                 {JSON.stringify(testResult.body, null, 2)}
@@ -445,13 +445,13 @@ export function SkillsView() {
                       </td>
                     </tr>
                   ) : null}
-                  {historySkillName === skill.name ? (
+                  {historyToolName === tool.name ? (
                     <tr>
                       <td colSpan={6} className="border-b border-line/80 bg-soft/40 px-5 py-4">
-                        <div className="grid max-w-3xl gap-3" data-testid={`skill-history-${skill.name}`}>
+                        <div className="grid max-w-3xl gap-3" data-testid={`tool-history-${tool.name}`}>
                           <div className="flex items-center justify-between">
                             <h3 className="text-sm font-semibold text-ink">Version history</h3>
-                            <span className="text-xs text-ink/55">Current: v{skill.version}</span>
+                            <span className="text-xs text-ink/55">Current: v{tool.version}</span>
                           </div>
                           {versionsQuery.isLoading ? <Skeleton className="h-24 w-full" /> : null}
                           {versionsQuery.isError ? <InlineError message={errorMessage(versionsQuery.error)} /> : null}
@@ -470,17 +470,17 @@ export function SkillsView() {
                                 </thead>
                                 <tbody>
                                   {versionsQuery.data.map((v) => (
-                                    <tr key={v.id} data-testid={`skill-version-row-${skill.name}-${v.version}`} className="border-b border-line/70 last:border-b-0 align-top">
-                                      <td className="px-3 py-2 font-mono text-xs text-ink">v{v.version}{v.version === skill.version ? <span className="ml-1 text-[10px] uppercase text-accent-strong">current</span> : null}</td>
+                                    <tr key={v.id} data-testid={`tool-version-row-${tool.name}-${v.version}`} className="border-b border-line/70 last:border-b-0 align-top">
+                                      <td className="px-3 py-2 font-mono text-xs text-ink">v{v.version}{v.version === tool.version ? <span className="ml-1 text-[10px] uppercase text-accent-strong">current</span> : null}</td>
                                       <td className="px-3 py-2 text-xs text-ink/70">{new Date(v.created_at).toLocaleString()}</td>
                                       <td className="px-3 py-2 font-mono text-xs text-ink/60">{v.created_by ?? "—"}</td>
                                       <td className="px-3 py-2 text-xs text-ink/70">{v.change_note ?? <span className="text-ink/40">—</span>}</td>
                                       <td className="px-3 py-2 text-right">
-                                        {v.version !== skill.version ? (
+                                        {v.version !== tool.version ? (
                                           confirmingRollback === v.version ? (
                                             <div className="inline-grid gap-2 rounded-md border border-line bg-white p-2 text-left shadow">
                                               <Input
-                                                data-testid={`skill-rollback-note-${skill.name}-${v.version}`}
+                                                data-testid={`tool-rollback-note-${tool.name}-${v.version}`}
                                                 placeholder="Change note (optional)"
                                                 value={rollbackNote}
                                                 onChange={(e) => setRollbackNote(e.target.value)}
@@ -490,9 +490,9 @@ export function SkillsView() {
                                                 <Button
                                                   type="button"
                                                   size="sm"
-                                                  data-testid={`skill-rollback-confirm-${skill.name}-${v.version}`}
+                                                  data-testid={`tool-rollback-confirm-${tool.name}-${v.version}`}
                                                   disabled={rollbackMutation.isPending}
-                                                  onClick={() => rollbackMutation.mutate({ name: skill.name, version: v.version, change_note: rollbackNote.trim() || undefined })}
+                                                  onClick={() => rollbackMutation.mutate({ name: tool.name, version: v.version, change_note: rollbackNote.trim() || undefined })}
                                                 >
                                                   {rollbackMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />}
                                                   Confirm rollback
@@ -504,7 +504,7 @@ export function SkillsView() {
                                               type="button"
                                               variant="ghost"
                                               size="sm"
-                                              data-testid={`skill-rollback-${skill.name}-${v.version}`}
+                                              data-testid={`tool-rollback-${tool.name}-${v.version}`}
                                               onClick={() => { setConfirmingRollback(v.version); setRollbackNote(""); }}
                                             >
                                               <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
@@ -539,27 +539,27 @@ export function SkillsView() {
           <aside className="ml-auto grid h-full w-full max-w-xl grid-rows-[auto_1fr] border-l border-line bg-white shadow-xl" role="dialog" aria-modal="true">
             <div className="flex items-center justify-between border-b border-line px-5 py-4">
               <h2 className="inline-flex items-center gap-1.5 text-lg font-semibold text-ink">
-                <span>{editingSkill ? "Edit Skill" : "Add Skill"}</span>
-                <HelpTooltip label={editingSkill ? "Edit Skill" : "Add Skill"}>Configure an HTTP tool MemoryOps can expose to agents during retrieval workflows.</HelpTooltip>
+                <span>{editingTool ? "Edit Tool" : "Add Tool"}</span>
+                <HelpTooltip label={editingTool ? "Edit Tool" : "Add Tool"}>Configure an HTTP tool MemoryOps can expose to agents during retrieval workflows.</HelpTooltip>
               </h2>
               <Button type="button" variant="ghost" size="icon" aria-label="Close" onClick={resetDrawer}>
                 <X className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
-            <form className="thin-scrollbar grid content-start gap-4 overflow-y-auto p-5" onSubmit={submitSkill}>
+            <form className="thin-scrollbar grid content-start gap-4 overflow-y-auto p-5" onSubmit={submitTool}>
               <Field label="Name" helpText="Machine-safe identifier. Use lowercase letters, numbers, and underscores." error={errors.name}>
-                <Input data-testid="skill-form-name" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} disabled={Boolean(editingSkill)} />
+                <Input data-testid="tool-form-name" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} disabled={Boolean(editingTool)} />
               </Field>
-              <Field label="Description" helpText="What this skill does so agents and operators know when to call it." error={errors.description}>
-                <Input data-testid="skill-form-description" value={draft.description} onChange={(event) => updateDraft("description", event.target.value)} />
+              <Field label="Description" helpText="What this tool does so agents and operators know when to call it." error={errors.description}>
+                <Input data-testid="tool-form-description" value={draft.description} onChange={(event) => updateDraft("description", event.target.value)} />
               </Field>
-              <Field label="URL" helpText="HTTPS endpoint MemoryOps will call when this skill is invoked. Local, private, and network metadata URLs should be rejected by the backend." error={errors.endpoint_url}>
-                <Input data-testid="skill-form-endpoint_url" value={draft.endpoint_url} onChange={(event) => updateDraft("endpoint_url", event.target.value)} />
+              <Field label="URL" helpText="HTTPS endpoint MemoryOps will call when this tool is invoked. Local, private, and network metadata URLs should be rejected by the backend." error={errors.endpoint_url}>
+                <Input data-testid="tool-form-endpoint_url" value={draft.endpoint_url} onChange={(event) => updateDraft("endpoint_url", event.target.value)} />
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Method" helpText="HTTP method MemoryOps will use when invoking the skill." error={errors.http_method}>
+                <Field label="Method" helpText="HTTP method MemoryOps will use when invoking the tool." error={errors.http_method}>
                   <select
-                    data-testid="skill-form-http_method"
+                    data-testid="tool-form-http_method"
                     value={draft.http_method}
                     onChange={(event) => updateDraft("http_method", event.target.value)}
                     className="h-10 rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
@@ -569,24 +569,24 @@ export function SkillsView() {
                     <option value="PUT">PUT</option>
                   </select>
                 </Field>
-                <Field label="Auth header" helpText="Header name MemoryOps should send when authenticating to the skill endpoint." error={errors.auth_header}>
-                  <Input data-testid="skill-form-auth_header" value={draft.auth_header} onChange={(event) => updateDraft("auth_header", event.target.value)} placeholder="Authorization" />
+                <Field label="Auth header" helpText="Header name MemoryOps should send when authenticating to the tool endpoint." error={errors.auth_header}>
+                  <Input data-testid="tool-form-auth_header" value={draft.auth_header} onChange={(event) => updateDraft("auth_header", event.target.value)} placeholder="Authorization" />
                 </Field>
               </div>
               <Field label="Auth secret" helpText="Secret value stored encrypted by the backend. It is not re-displayed after save." error={errors.auth_secret}>
-                <Input data-testid="skill-form-auth_secret" type="password" value={draft.auth_secret} onChange={(event) => updateDraft("auth_secret", event.target.value)} />
+                <Input data-testid="tool-form-auth_secret" type="password" value={draft.auth_secret} onChange={(event) => updateDraft("auth_secret", event.target.value)} />
               </Field>
-              <Field label="Input schema" helpText="JSON Schema describing what the agent should send to this skill." error={errors.input_schema}>
-                <textarea data-testid="skill-form-input_schema" value={draft.input_schema} onChange={(event) => updateDraft("input_schema", event.target.value)} className="min-h-32 rounded-md border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
+              <Field label="Input schema" helpText="JSON Schema describing what the agent should send to this tool." error={errors.input_schema}>
+                <textarea data-testid="tool-form-input_schema" value={draft.input_schema} onChange={(event) => updateDraft("input_schema", event.target.value)} className="min-h-32 rounded-md border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
               </Field>
-              <Field label="Output schema" helpText="JSON Schema describing what the skill returns." error={errors.output_schema}>
-                <textarea data-testid="skill-form-output_schema" value={draft.output_schema} onChange={(event) => updateDraft("output_schema", event.target.value)} className="min-h-32 rounded-md border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
+              <Field label="Output schema" helpText="JSON Schema describing what the tool returns." error={errors.output_schema}>
+                <textarea data-testid="tool-form-output_schema" value={draft.output_schema} onChange={(event) => updateDraft("output_schema", event.target.value)} className="min-h-32 rounded-md border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
               </Field>
               <div className="flex justify-end gap-2 border-t border-line pt-4">
                 <Button type="button" variant="secondary" onClick={resetDrawer}>Cancel</Button>
                 <Button type="submit" disabled={formPending}>
                   {formPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Check className="h-4 w-4" aria-hidden="true" />}
-                  Save Skill
+                  Save Tool
                 </Button>
               </div>
             </form>
@@ -607,7 +607,7 @@ function Field({ label, helpText, error, children }: { label: string; helpText: 
   );
 }
 
-function validateDraft(draft: SkillDraft, editing: boolean): { payload?: Partial<CreateSkillPayload>; errors: FormErrors } {
+function validateDraft(draft: ToolDraft, editing: boolean): { payload?: Partial<CreateToolPayload>; errors: FormErrors } {
   const errors: FormErrors = {};
   const name = draft.name.trim();
   const description = draft.description.trim();
@@ -617,7 +617,7 @@ function validateDraft(draft: SkillDraft, editing: boolean): { payload?: Partial
   const inputSchema = parseSchema(draft.input_schema, "input_schema", errors);
   const outputSchema = parseSchema(draft.output_schema, "output_schema", errors);
 
-  if (!editing && !skillNamePattern.test(name)) {
+  if (!editing && !toolNamePattern.test(name)) {
     errors.name = "Use lowercase letters, digits, and underscores.";
   }
   if (description.length === 0 || description.length > 500) {
@@ -634,7 +634,7 @@ function validateDraft(draft: SkillDraft, editing: boolean): { payload?: Partial
     return { errors };
   }
 
-  const payload: Partial<CreateSkillPayload> = {
+  const payload: Partial<CreateToolPayload> = {
     description,
     endpoint_url: endpointUrl,
     http_method: draft.http_method,
@@ -674,7 +674,7 @@ function toggleClass(enabled: boolean): string {
   );
 }
 
-function SkillsSkeleton() {
+function ToolsSkeleton() {
   return (
     <div className="rounded-lg border border-line bg-white p-4">
       {Array.from({ length: 5 }, (_, index) => (
@@ -690,16 +690,16 @@ function SkillsSkeleton() {
   );
 }
 
-function skillsKey(workspaceId: string) {
-  return ["workspace", workspaceId, "skills"] as const;
+function toolsKey(workspaceId: string) {
+  return ["workspace", workspaceId, "tools"] as const;
 }
 
-function skillVersionsKey(workspaceId: string, name: string) {
-  return ["workspace", workspaceId, "skills", name, "versions"] as const;
+function toolVersionsKey(workspaceId: string, name: string) {
+  return ["workspace", workspaceId, "tools", name, "versions"] as const;
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Skills could not be loaded.";
+  return error instanceof Error ? error.message : "Tools could not be loaded.";
 }
 
 function statusColor(status: number): string {

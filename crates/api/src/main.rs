@@ -115,7 +115,7 @@ async fn build_state(
     common::db::run_migrations(&db)
         .await
         .map_err(|error| anyhow::anyhow!("failed to run database migrations: {error}"))?;
-    ensure_skill_secret_configuration(&db).await?;
+    ensure_tool_secret_configuration(&db).await?;
     let redis = {
         let cfg = deadpool_redis::Config::from_url(&redis_url);
         cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))
@@ -141,28 +141,28 @@ async fn build_state(
     })
 }
 
-async fn ensure_skill_secret_configuration(db: &sqlx::PgPool) -> anyhow::Result<()> {
-    let skills_table = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT to_regclass('public.workspace_skills')::TEXT",
+async fn ensure_tool_secret_configuration(db: &sqlx::PgPool) -> anyhow::Result<()> {
+    let tools_table = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT to_regclass('public.workspace_tools')::TEXT",
     )
     .fetch_one(db)
     .await?;
-    if skills_table.is_none() {
+    if tools_table.is_none() {
         return Ok(());
     }
 
-    let has_encrypted_skill = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM workspace_skills WHERE auth_secret_enc IS NOT NULL)",
+    let has_encrypted_tool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM workspace_tools WHERE auth_secret_enc IS NOT NULL)",
     )
     .fetch_one(db)
     .await?;
-    if has_encrypted_skill
+    if has_encrypted_tool
         && std::env::var("APP_SECRET_KEY")
             .map(|value| value.trim().is_empty())
             .unwrap_or(true)
     {
         return Err(anyhow::anyhow!(
-            "APP_SECRET_KEY must be set because workspace_skills contains encrypted auth secrets"
+            "APP_SECRET_KEY must be set because workspace_tools contains encrypted auth secrets"
         ));
     }
 

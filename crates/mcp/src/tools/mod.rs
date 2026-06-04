@@ -36,7 +36,7 @@ pub struct MemoryToolResult {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct SkillToolResult {
+pub struct ToolToolResult {
     pub name: String,
     pub description: String,
     pub endpoint_url: String,
