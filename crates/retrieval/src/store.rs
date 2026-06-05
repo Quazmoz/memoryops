@@ -893,7 +893,6 @@ pub fn relevance_score_from_ratings(ratings: &[i16]) -> f64 {
 pub enum BulkStoreAction {
     Pin,
     Unpin,
-    Delete,
 }
 
 pub async fn bulk_update_memory_units(
@@ -909,15 +908,47 @@ pub async fn bulk_update_memory_units(
     let mut transaction = db.begin().await.map_err(AppError::Database)?;
     let sql = match action {
         BulkStoreAction::Pin => format!(
-            "UPDATE memory_units SET pinned = true, version = version + 1 WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+            "UPDATE memory_units SET pinned = true, version = version + 1, updated_at = now() WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
         ),
         BulkStoreAction::Unpin => format!(
-            "UPDATE memory_units SET pinned = false, version = version + 1 WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
-        ),
-        BulkStoreAction::Delete => format!(
-            "UPDATE memory_units SET deleted_at = now(), version = version + 1 WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+            "UPDATE memory_units SET pinned = false, version = version + 1, updated_at = now() WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
         ),
     };
+
+    let units = sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(workspace_id)
+        .bind(ids.to_vec())
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(AppError::Database)?;
+
+    // Deduplicate before comparing - ANY($2) collapses duplicates
+    let unique_ids: std::collections::HashSet<_> = ids.iter().collect();
+    if units.len() != unique_ids.len() {
+        transaction.rollback().await.map_err(AppError::Database)?;
+        return Err(AppError::NotFound {
+            resource: "one or more memory ids".to_owned(),
+        });
+    }
+
+    transaction.commit().await.map_err(AppError::Database)?;
+    Ok(units)
+}
+
+pub async fn soft_delete_memory_units(
+    db: &PgPool,
+    ids: &[Uuid],
+    workspace_id: Uuid,
+) -> AppResult<Vec<MemoryUnit>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut transaction = db.begin().await.map_err(AppError::Database)?;
+    let sql = format!(
+        "UPDATE memory_units SET deleted_at = now(), embedding_id = NULL, version = version + 1 \
+         WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+    );
 
     let units = sqlx::query_as::<_, MemoryUnit>(&sql)
         .bind(workspace_id)
@@ -1968,5 +1999,55 @@ mod tests {
             sort: None,
             direction: None,
         }
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_bulk_pin_unpin_and_soft_delete(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+
+        let id1 = insert_memory(&pool, workspace_id, "memory 1", 0.5).await;
+        let id2 = insert_memory(&pool, workspace_id, "memory 2", 0.6).await;
+
+        // Test bulk pin
+        let pinned = bulk_update_memory_units(&pool, &[id1, id2], workspace_id, BulkStoreAction::Pin).await.unwrap();
+        assert_eq!(pinned.len(), 2);
+        assert!(pinned[0].pinned);
+        assert!(pinned[1].pinned);
+        assert!(pinned[0].updated_at > chrono::Utc::now() - chrono::Duration::seconds(5));
+
+        // Test bulk unpin
+        let unpinned = bulk_update_memory_units(&pool, &[id1, id2], workspace_id, BulkStoreAction::Unpin).await.unwrap();
+        assert_eq!(unpinned.len(), 2);
+        assert!(!unpinned[0].pinned);
+        assert!(!unpinned[1].pinned);
+
+        // Test bulk delete
+        let deleted = soft_delete_memory_units(&pool, &[id1, id2], workspace_id).await.unwrap();
+        assert_eq!(deleted.len(), 2);
+        
+        // Check database
+        let m1 = get_memory_unit_by_id(&pool, id1, workspace_id).await.unwrap();
+        assert!(m1.is_none()); // deleted_at is not null, so it shouldn't be found
+        
+        let m1_inc = get_memory_unit_by_id_including_deleted(&pool, id1, workspace_id).await.unwrap().unwrap();
+        assert!(m1_inc.deleted_at.is_some());
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_bulk_update_nonexistent_fails(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+
+        let id1 = insert_memory(&pool, workspace_id, "memory 1", 0.5).await;
+        let fake_id = Uuid::now_v7();
+
+        // Should return NotFound and not update the database due to transaction rollback
+        let err = bulk_update_memory_units(&pool, &[id1, fake_id], workspace_id, BulkStoreAction::Pin).await.unwrap_err();
+        assert!(matches!(err, AppError::NotFound { .. }));
+
+        // Verify id1 is not pinned
+        let m1 = get_memory_unit_by_id(&pool, id1, workspace_id).await.unwrap().unwrap();
+        assert!(!m1.pinned);
     }
 }

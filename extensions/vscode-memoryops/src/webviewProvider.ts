@@ -177,6 +177,14 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
           vscode.commands.executeCommand("memoryops.openMemory", data.id);
           break;
         }
+        case "bulkAction": {
+          vscode.commands.executeCommand("memoryops.bulkMemory", data.ids, data.action);
+          break;
+        }
+        case "loadMore": {
+          vscode.commands.executeCommand("memoryops.loadMoreMemories");
+          break;
+        }
         case "error": {
           console.error(`[Webview Error] ${data.message} at ${data.source}:${data.lineno}:${data.colno}`);
           if (data.error) {
@@ -219,6 +227,52 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
     this.updateWebview();
   }
 
+  public removeMemories(ids: string[]): void {
+    const idsSet = new Set(ids);
+    const before = this._memories.length;
+    this._memories = this._memories.filter((m) => !m.id || !idsSet.has(m.id));
+    if (this._mode === "recent") {
+      const removedCount = before - this._memories.length;
+      this._recentTotal = Math.max(this._memories.length, this._recentTotal - removedCount);
+      this._statusMessage = this._memories.length > 0
+        ? `Showing ${this._memories.length} of ${this._recentTotal} memories.`
+        : "No memories returned.";
+    }
+    if (this._view) {
+      const hasMore = this._mode === "recent" && this._memories.length < this._recentTotal;
+      this._view.webview.postMessage({
+        type: "state",
+        memories: this._memories,
+        activeTab: this._activeTab,
+        searchQuery: this._searchQuery,
+        statusMessage: this._statusMessage,
+        mode: this._mode,
+        recentTotal: this._recentTotal,
+        hasMore,
+        clearSelected: true,
+      });
+    }
+  }
+
+  public updateMemories(ids: string[], patch: Partial<MemoryUnit>): void {
+    const idsSet = new Set(ids);
+    this._memories = this._memories.map((m) => m.id && idsSet.has(m.id) ? { ...m, ...patch } : m);
+    if (this._view) {
+      const hasMore = this._mode === "recent" && this._memories.length < this._recentTotal;
+      this._view.webview.postMessage({
+        type: "state",
+        memories: this._memories,
+        activeTab: this._activeTab,
+        searchQuery: this._searchQuery,
+        statusMessage: this._statusMessage,
+        mode: this._mode,
+        recentTotal: this._recentTotal,
+        hasMore,
+        clearSelected: true,
+      });
+    }
+  }
+
   public getMemories(): MemorySearchResult[] {
     return this._memories;
   }
@@ -231,12 +285,16 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
     if (!this._view) {
       return;
     }
+    const hasMore = this._mode === "recent" && this._memories.length < this._recentTotal;
     this._view.webview.postMessage({
       type: "state",
       memories: this._memories,
       activeTab: this._activeTab,
       searchQuery: this._searchQuery,
       statusMessage: this._statusMessage,
+      mode: this._mode,
+      recentTotal: this._recentTotal,
+      hasMore,
     });
   }
 
@@ -798,6 +856,72 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
       height: 14px;
       fill: currentColor;
     }
+
+    /* Bulk operations toolbar styles */
+    .bulk-toolbar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--vscode-button-secondaryBackground, rgba(255, 255, 255, 0.05));
+      border: 1px solid var(--accent-purple);
+      border-radius: 6px;
+      padding: 6px 8px;
+      margin-top: 4px;
+      box-sizing: border-box;
+    }
+
+    .bulk-selected-count {
+      font-weight: 600;
+      color: var(--vscode-editor-foreground);
+    }
+
+    .bulk-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .bulk-btn {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      padding: 3px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .bulk-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    .bulk-btn-secondary {
+      background: var(--vscode-button-secondaryBackground, rgba(255, 255, 255, 0.1));
+      color: var(--vscode-button-secondaryForeground, var(--vscode-editor-foreground));
+      border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.15));
+    }
+
+    .bulk-btn-secondary:hover {
+      background: var(--vscode-button-secondaryHoverBackground, rgba(255, 255, 255, 0.15));
+    }
+
+    .bulk-btn-danger {
+      background: #ef4444;
+      color: #ffffff;
+    }
+
+    .bulk-btn-danger:hover {
+      background: #dc2626;
+    }
+
+    .card-checkbox {
+      cursor: pointer;
+      width: 14px;
+      height: 14px;
+      margin: 0 6px 0 0;
+      accent-color: var(--accent-purple);
+      vertical-align: middle;
+    }
   </style>
 </head>
 <body>
@@ -821,6 +945,15 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
       <button class="tab" data-tab="pinned">Pinned</button>
     </div>
     <div class="status-bar" id="status">Loading...</div>
+    <div class="bulk-toolbar" id="bulk-toolbar">
+      <span class="bulk-selected-count" id="bulk-selected-count">0 selected</span>
+      <div class="bulk-actions">
+        <button class="bulk-btn" data-bulk-action="pin" title="Pin selected">Pin</button>
+        <button class="bulk-btn" data-bulk-action="unpin" title="Unpin selected">Unpin</button>
+        <button class="bulk-btn bulk-btn-danger" data-bulk-action="delete" title="Delete selected">Delete</button>
+        <button class="bulk-btn bulk-btn-secondary" data-bulk-action="clear" title="Clear selection">Clear</button>
+      </div>
+    </div>
   </div>
 
   <div class="cards-list" id="cards-container">
@@ -829,6 +962,10 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
       <span>No memories loaded yet. Make sure MemoryOps backend is running and settings are complete.</span>
       <button class="feedback-submit-btn" id="empty-settings-btn" style="margin-top: 8px; font-size: 11px; padding: 4px 12px;">Open Settings</button>
     </div>
+  </div>
+
+  <div id="load-more-container" style="display: none; justify-content: center; padding: 10px 0 20px 0;">
+    <button class="bulk-btn bulk-btn-secondary" id="load-more-btn" style="width: 100%; padding: 8px;">Load More</button>
   </div>
 
   <script nonce="${nonce}">
@@ -862,7 +999,10 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
       memories: [],
       activeTab: "all",
       searchQuery: "",
-      statusMessage: "Loading..."
+      statusMessage: "Loading...",
+      mode: "message",
+      hasMore: false,
+      selectedIds: []
     };
 
     // Toolbar buttons (wired here rather than via inline onclick, which a strict CSP blocks)
@@ -882,6 +1022,11 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         state.activeTab = message.activeTab || "all";
         state.searchQuery = message.searchQuery || "";
         state.statusMessage = message.statusMessage || "";
+        state.mode = message.mode || "message";
+        state.hasMore = !!message.hasMore;
+        if (message.clearSelected) {
+          state.selectedIds = [];
+        }
 
         // Sync Search Box
         if (document.activeElement !== searchInput) {
@@ -933,6 +1078,60 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         vscode.postMessage({ type: "tabChanged", tab: selectedTab });
       });
     });
+
+    // Bulk action toolbar button listeners
+    const bulkToolbar = document.getElementById("bulk-toolbar");
+    const bulkSelectedCount = document.getElementById("bulk-selected-count");
+
+    bulkToolbar.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-bulk-action]");
+      if (btn) {
+        const action = btn.dataset.bulkAction;
+        if (action === "clear") {
+          state.selectedIds = [];
+          document.querySelectorAll(".card-checkbox").forEach(cb => cb.checked = false);
+          updateBulkToolbar();
+        } else {
+          vscode.postMessage({
+            type: "bulkAction",
+            action: action,
+            ids: state.selectedIds
+          });
+        }
+      }
+    });
+
+    // Checkbox change listener
+    cardsContainer.addEventListener("change", (e) => {
+      const checkbox = e.target.closest(".card-checkbox");
+      if (checkbox) {
+        const id = checkbox.dataset.id;
+        if (checkbox.checked) {
+          if (!state.selectedIds.includes(id)) {
+            state.selectedIds.push(id);
+          }
+        } else {
+          state.selectedIds = state.selectedIds.filter(x => x !== id);
+        }
+        updateBulkToolbar();
+      }
+    });
+
+    // Load More button listener
+    const loadMoreContainer = document.getElementById("load-more-container");
+    const loadMoreBtn = document.getElementById("load-more-btn");
+    loadMoreBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "loadMore" });
+    });
+
+    function updateBulkToolbar() {
+      if (state.selectedIds && state.selectedIds.length > 0) {
+        bulkSelectedCount.textContent = \`\${state.selectedIds.length} selected\`;
+        bulkToolbar.style.display = "flex";
+      } else {
+        bulkToolbar.style.display = "none";
+      }
+    }
 
     // Delegated click handling for dynamically rendered cards. Inline onclick
     // attributes are blocked under the CSP, so all card actions route through here.
@@ -991,6 +1190,8 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
           <span>\${escapeHtml(state.statusMessage) || "No memories found for this view."}</span>
           \${hasSettingsHint ? '<button class="feedback-submit-btn" data-action="open-settings-hint" style="margin-top: 8px; font-size: 11px; padding: 4px 12px;">Open Settings</button>' : ""}
         </div>\`;
+        loadMoreContainer.style.display = "none";
+        updateBulkToolbar();
         return;
       }
 
@@ -1009,7 +1210,8 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
         const isWorkspace = memory.scope_visibility === "workspace";
 
         // Badges
-        let badgeHtml = \`<span class="badge \${typeClass}">\${memory.memory_type || "episodic"}</span>\`;
+        const isChecked = state.selectedIds.includes(memory.id || "");
+        let badgeHtml = \`<input type="checkbox" class="card-checkbox" data-id="\${safeId}" data-no-card-open \${isChecked ? "checked" : ""} /> <span class="badge \${typeClass}">\${memory.memory_type || "episodic"}</span>\`;
         if (isWorkspace) {
           badgeHtml += \` <span class="badge badge-workspace">workspace</span>\`;
         }
@@ -1148,6 +1350,15 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
 
         cardsContainer.appendChild(card);
       });
+
+      // Update load more button visibility
+      if (state.mode === "recent" && state.hasMore) {
+        loadMoreContainer.style.display = "flex";
+      } else {
+        loadMoreContainer.style.display = "none";
+      }
+
+      updateBulkToolbar();
     }
 
     // Helper functions — invoked from the delegated click handler above.

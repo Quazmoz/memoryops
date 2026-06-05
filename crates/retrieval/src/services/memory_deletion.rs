@@ -51,6 +51,25 @@ impl<'a> MemoryDeletionService<'a> {
             })
     }
 
+    pub async fn soft_delete_many_required(
+        &self,
+        memory_ids: &[Uuid],
+        workspace_id: Uuid,
+    ) -> AppResult<Vec<MemoryUnit>> {
+        if memory_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let deleted = store::soft_delete_memory_units(&self.state.db, memory_ids, workspace_id).await?;
+
+        // Clean up Qdrant vector points best-effort
+        self.vector_index()
+            .delete_points_best_effort(memory_ids, self.log_context)
+            .await;
+
+        Ok(deleted)
+    }
+
     fn vector_index(&self) -> VectorIndexService<'_> {
         VectorIndexService::new(&self.state.qdrant, self.collection_name)
     }

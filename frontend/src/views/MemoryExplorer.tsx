@@ -11,7 +11,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
-import { useMemoryList, useMemorySearch, useUpdateMemory } from "../hooks/use-memory";
+import { useMemoryList, useMemorySearch, useUpdateMemory, useBulkMemory } from "../hooks/use-memory";
 import { useTags } from "../hooks/useTags";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
@@ -59,6 +59,11 @@ export function MemoryExplorer() {
   const [offset, setOffset] = useState(0);
   const [sortField, setSortField] = useState<SortField>("importance_score");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [workspaceId]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -119,6 +124,7 @@ export function MemoryExplorer() {
   const searchQuery = useMemorySearch(workspaceId, searchCriteria);
   const tagsQuery = useTags(workspaceId);
   const updateMemory = useUpdateMemory(workspaceId);
+  const bulkMemoryMutation = useBulkMemory(workspaceId);
   const searchActive = searchText.trim().length > 0;
   const rows = useMemo(
     () => buildRows(searchActive, searchQuery.data?.results, listQuery.data?.items, sortField, sortDirection),
@@ -206,6 +212,56 @@ export function MemoryExplorer() {
 
   function handleTogglePinned(memory: MemoryUnit) {
     updateMemory.mutate({ id: memory.id, patch: { pinned: !memory.pinned } });
+  }
+
+  function handleToggleSelected(id: string) {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
+  function handleToggleSelectAllVisible(allVisibleIds: string[]) {
+    const allSelected = allVisibleIds.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !allVisibleIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => {
+        const next = [...prev];
+        allVisibleIds.forEach((id) => {
+          if (!next.includes(id)) {
+            next.push(id);
+          }
+        });
+        return next;
+      });
+    }
+  }
+
+  function handleClearSelection() {
+    setSelectedIds([]);
+  }
+
+  function handleBulkAction(action: "pin" | "unpin" | "delete") {
+    if (selectedIds.length === 0) return;
+
+    if (action === "delete") {
+      const confirmMsg = `Delete ${selectedIds.length} MemoryOps memories?`;
+      if (!window.confirm(confirmMsg)) {
+        return;
+      }
+    }
+
+    bulkMemoryMutation.mutate(
+      {
+        ids: selectedIds,
+        action,
+      },
+      {
+        onSuccess: () => {
+          setSelectedIds([]);
+        },
+      }
+    );
   }
 
   return (
@@ -451,12 +507,69 @@ export function MemoryExplorer() {
         />
       ) : null}
 
+      {selectedIds.length > 0 ? (
+        <div
+          data-testid="bulk-action-toolbar"
+          className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-line bg-soft/50 p-4"
+        >
+          <div className="flex items-center gap-2 text-sm font-medium text-accent-strong">
+            <span data-testid="bulk-selected-count">{selectedIds.length} selected</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              data-testid="bulk-pin-button"
+              disabled={bulkMemoryMutation.isPending}
+              onClick={() => handleBulkAction("pin")}
+            >
+              Pin
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              data-testid="bulk-unpin-button"
+              disabled={bulkMemoryMutation.isPending}
+              onClick={() => handleBulkAction("unpin")}
+            >
+              Unpin
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              data-testid="bulk-delete-button"
+              disabled={bulkMemoryMutation.isPending}
+              onClick={() => handleBulkAction("delete")}
+            >
+              Delete
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="bulk-clear-button"
+              disabled={bulkMemoryMutation.isPending}
+              onClick={handleClearSelection}
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {loading || rows.length > 0 ? (
         <MemoryResultsTable
           rows={rows}
           loading={loading}
           pendingMemoryIds={updateMemory.isPending && updateMemory.variables ? [updateMemory.variables.id] : []}
           onTogglePinned={handleTogglePinned}
+          enableSelection={true}
+          selectedIds={selectedIds}
+          onToggleSelected={handleToggleSelected}
+          onToggleSelectAllVisible={handleToggleSelectAllVisible}
         />
       ) : null}
     </div>

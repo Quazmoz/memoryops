@@ -498,6 +498,42 @@ test("listSkillVersions and rollbackSkillVersion normalize historical skill data
   }
 });
 
+test("bulkMemory issues a POST with ids and action and normalizes the response", async () => {
+  let receivedUrl = "";
+  let receivedMethod = "";
+  let receivedBody: any = null;
+
+  const restoreFetch = mockFetch(async (url, init) => {
+    receivedUrl = url;
+    receivedMethod = init?.method ?? "GET";
+    receivedBody = init?.body ? JSON.parse(init.body as string) : null;
+    return jsonResponse({
+      affected: 2,
+      affected_ids: ["mem-1", "mem-2"],
+      requested: 2,
+      action: "pin",
+    });
+  });
+
+  try {
+    const client = new MemoryOpsClient(CONFIG);
+    const result = await client.bulkMemory(["mem-1", "mem-2"], "pin");
+
+    assert.equal(receivedMethod, "POST");
+    assert.equal(receivedUrl, "https://memoryops.test/v1/memory/bulk?workspace_id=workspace-123");
+    assert.deepEqual(receivedBody, {
+      ids: ["mem-1", "mem-2"],
+      action: "pin",
+    });
+    assert.equal(result.affected, 2);
+    assert.deepEqual(result.affected_ids, ["mem-1", "mem-2"]);
+    assert.equal(result.requested, 2);
+    assert.equal(result.action, "pin");
+  } finally {
+    restoreFetch();
+  }
+});
+
 function mockFetch(handler: (url: string, init?: RequestInit) => Promise<Response> | Response): () => void {
   const originalFetch = globalThis.fetch;
 

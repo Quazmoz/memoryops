@@ -405,3 +405,12 @@ export type IntegrationResponse = {
   status: IntegrationStatus;
 };
 
+export type BulkMemoryAction = "pin" | "unpin" | "delete";
+export type BulkMemoryRequest = { ids: string[]; action: BulkMemoryAction };
+export type BulkMemoryResponse = {
+  affected: number;
+  affected_ids: string[];
+  requested: number;
+  action: BulkMemoryAction;
+};
+

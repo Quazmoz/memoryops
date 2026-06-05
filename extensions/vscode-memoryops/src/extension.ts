@@ -88,6 +88,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("memoryops.submitFeedbackInline", submitFeedbackInline),
     vscode.commands.registerCommand("memoryops.mergeMemory", mergeMemory),
     vscode.commands.registerCommand("memoryops.bulkOperations", bulkOperations),
+    vscode.commands.registerCommand("memoryops.bulkMemory", bulkMemoryCommand),
     vscode.commands.registerCommand("memoryops.reconnect", reconnect),
     vscode.commands.registerCommand("memoryops.showMemoriesForFile", showMemoriesForFile),
     vscode.commands.registerCommand("memoryops.openWalkthrough", openWalkthrough),
@@ -421,15 +422,9 @@ async function searchMemory(): Promise<void> {
   await showSearchResults(results, `MemoryOps search: ${query.trim()}`);
 }
 
-async function retrieveContextForCurrentFile(): Promise<void> {
-  const { client, config, missing } = getClient();
-  if (missing.length > 0) {
-    setIncompleteStatusBar(missing);
-    await promptForMissingConfig(missing);
-    return;
-  }
-
-  const editor = vscode.window.activeTextEditor;
+async function buildCurrentEditorRetrievalQuery(
+  editor: vscode.TextEditor | undefined
+): Promise<{ query: string; repo: string | undefined }> {
   const document = editor?.document;
   const selectedText = editor ? selectedTextOrEmpty(editor) : "";
   const repo = await getWorkspaceRepoHint(document);
@@ -443,6 +438,15 @@ async function retrieveContextForCurrentFile(): Promise<void> {
   ]
     .filter(Boolean)
     .join("\n\n");
+
+  return { query, repo };
+}
+
+async function retrieveCurrentEditorContext(
+  query: string,
+  repo: string | undefined
+): Promise<any> {
+  const { client, config } = getClient();
 
   const result = await vscode.window.withProgress(
     {
@@ -466,6 +470,22 @@ async function retrieveContextForCurrentFile(): Promise<void> {
     }
     memoryTreeProvider.setRetrievedMemories(result.memories, "No memories returned for current context.");
   }
+
+  return result;
+}
+
+async function retrieveContextForCurrentFile(): Promise<void> {
+  const { missing } = getClient();
+  if (missing.length > 0) {
+    setIncompleteStatusBar(missing);
+    await promptForMissingConfig(missing);
+    return;
+  }
+
+  const editor = vscode.window.activeTextEditor;
+  const { query, repo } = await buildCurrentEditorRetrievalQuery(editor);
+  const result = await retrieveCurrentEditorContext(query, repo);
+
   await openMarkdownDocument(formatRetrievalMarkdown(result, "MemoryOps Context"));
 }
 
@@ -911,28 +931,14 @@ function setIncompleteStatusBar(missing: string[]): void {
   statusBarItem.command = "memoryops.openSettings";
 }
 
-async function editMemory(item?: unknown): Promise<void> {
-  const memory = await resolveMemorySelection(item, "MemoryOps: Edit Memory");
-  if (!memory?.id) {
-    return;
-  }
-
-  const option = await vscode.window.showQuickPick(
-    ["📝 Edit Content", "🏷️ Edit Tags", "🔥 Edit Importance Score"],
-    { title: `Edit Memory: ${memoryLabel(memory)}` }
-  );
-
-  if (!option) {
-    return;
-  }
-
+async function executeMemoryEditWorkflow(memory: MemorySearchResult, option: string): Promise<void> {
   const { client, missing } = getClient();
   if (missing.length > 0) {
     await promptForMissingConfig(missing);
     return;
   }
 
-  if (option === "📝 Edit Content") {
+  if (option === "📝 Edit Content" || option === "content") {
     const memoryId = memory.id!;
     const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memoryId}.md`);
 
@@ -981,7 +987,7 @@ async function editMemory(item?: unknown): Promise<void> {
     });
 
     activeEditDisposables.set(memoryId, [saveDisposable, closeDisposable]);
-  } else if (option === "🏷️ Edit Tags") {
+  } else if (option === "🏷️ Edit Tags" || option === "tags") {
     const currentTags = memory.tags?.join(", ") ?? "";
     const updatedTagsInput = await vscode.window.showInputBox({
       title: "Edit Memory Tags",
@@ -1010,7 +1016,7 @@ async function editMemory(item?: unknown): Promise<void> {
 
     memoryTreeProvider.updateMemory(updated);
     void vscode.window.showInformationMessage("MemoryOps memory tags updated.");
-  } else if (option === "🔥 Edit Importance Score") {
+  } else if (option === "🔥 Edit Importance Score" || option === "importance") {
     const currentImportance = memory.importance_score?.toString() ?? "0.5";
     const updatedImportanceInput = await vscode.window.showInputBox({
       title: "Edit Memory Importance Score",
@@ -1043,6 +1049,24 @@ async function editMemory(item?: unknown): Promise<void> {
     memoryTreeProvider.updateMemory(updated);
     void vscode.window.showInformationMessage("MemoryOps memory importance score updated.");
   }
+}
+
+async function editMemory(item?: unknown): Promise<void> {
+  const memory = await resolveMemorySelection(item, "MemoryOps: Edit Memory");
+  if (!memory?.id) {
+    return;
+  }
+
+  const option = await vscode.window.showQuickPick(
+    ["📝 Edit Content", "🏷️ Edit Tags", "🔥 Edit Importance Score"],
+    { title: `Edit Memory: ${memoryLabel(memory)}` }
+  );
+
+  if (!option) {
+    return;
+  }
+
+  await executeMemoryEditWorkflow(memory, option);
 }
 
 async function mergeMemory(item?: unknown): Promise<void> {
@@ -1193,15 +1217,13 @@ async function bulkOperations(): Promise<void> {
       title: `MemoryOps: ${operation.label.replace(/^\S+\s/, "")}...`,
       cancellable: false,
     },
-    () => client.bulkOperation(ids, operation.value),
+    () => client.bulkMemory(ids, operation.value),
   );
 
   if (operation.value === "delete") {
-    for (const id of ids) {
-      memoryTreeProvider.removeMemory(id);
-    }
+    memoryTreeProvider.removeMemories(ids);
   } else {
-    void refreshMemories();
+    memoryTreeProvider.updateMemories(ids, { pinned: operation.value === "pin" });
   }
 
   void vscode.window.showInformationMessage(
@@ -1274,7 +1296,7 @@ async function submitFeedback(item?: unknown): Promise<void> {
 }
 
 async function getRetrievalContextHelper(): Promise<string | undefined> {
-  const { client, config, missing } = getClient();
+  const { missing } = getClient();
   if (missing.length > 0) {
     setIncompleteStatusBar(missing);
     await promptForMissingConfig(missing);
@@ -1282,42 +1304,8 @@ async function getRetrievalContextHelper(): Promise<string | undefined> {
   }
 
   const editor = vscode.window.activeTextEditor;
-  const document = editor?.document;
-  const selectedText = editor ? selectedTextOrEmpty(editor) : "";
-  const repo = await getWorkspaceRepoHint(document);
-  const fileName = document ? getRelativeFileName(document) : "current editor";
-
-  const query = [
-    `Relevant MemoryOps context for ${fileName}`,
-    document?.languageId ? `Language: ${document.languageId}` : undefined,
-    repo ? `Repository: ${repo}` : undefined,
-    selectedText ? `Selected code/text:\n${truncate(selectedText, 4000)}` : undefined,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-
-  const result = await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: "Retrieving MemoryOps context...",
-      cancellable: false,
-    },
-    () => client.retrieve(query, config.defaultTokenBudget, {
-      mode: config.defaultSearchMode,
-      repo,
-      includeTrace: true,
-      includeWorkspacePool: config.includeWorkspacePool,
-    }),
-  );
-
-  if (Array.isArray(result.memories)) {
-    if (result.query_id) {
-      for (const m of result.memories) {
-        m.query_id = result.query_id;
-      }
-    }
-    memoryTreeProvider.setRetrievedMemories(result.memories, "No memories returned for current context.");
-  }
+  const { query, repo } = await buildCurrentEditorRetrievalQuery(editor);
+  const result = await retrieveCurrentEditorContext(query, repo);
 
   return result.packed_context ?? result.context;
 }
@@ -1481,122 +1469,53 @@ async function editMemoryInlineHelper(id: string, field: string): Promise<void> 
     option = selection;
   }
 
+  await executeMemoryEditWorkflow(memory, option);
+}
+
+async function bulkMemoryCommand(ids: string[], action: "pin" | "unpin" | "delete"): Promise<void> {
+  if (!ids || ids.length === 0) {
+    void vscode.window.showWarningMessage("No memories selected for bulk action.");
+    return;
+  }
+
   const { client, missing } = getClient();
   if (missing.length > 0) {
     await promptForMissingConfig(missing);
     return;
   }
 
-  if (option === "📝 Edit Content" || option === "content") {
-    const memoryId = memory.id!;
-    const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memoryId}.md`);
-
-    // Dispose any previous edit listeners for this memory
-    disposeEditListeners(memoryId);
-
-    try {
-      fs.writeFileSync(tmpPath, memory.content ?? "");
-    } catch (err) {
-      void vscode.window.showErrorMessage(`Failed to create temp file: ${errorMessage(err)}`);
+  if (action === "delete") {
+    const confirmed = await vscode.window.showWarningMessage(
+      `Delete ${ids.length} MemoryOps memories?`,
+      { modal: true },
+      "Delete"
+    );
+    if (confirmed !== "Delete") {
       return;
     }
+  }
 
-    const document = await vscode.workspace.openTextDocument(tmpPath);
-    await vscode.window.showTextDocument(document);
-
-    const saveDisposable = vscode.workspace.onDidSaveTextDocument(async (doc) => {
-      if (doc.fileName === tmpPath) {
-        const updatedContent = doc.getText();
-        try {
-          await vscode.window.withProgress(
-            {
-              location: vscode.ProgressLocation.Notification,
-              title: "Updating MemoryOps memory content...",
-              cancellable: false,
-            },
-            async () => {
-              const updated = await client.updateMemory(memoryId, { content: updatedContent });
-              memoryTreeProvider.updateMemory(updated);
-            }
-          );
-          void vscode.window.showInformationMessage("MemoryOps memory content updated.");
-        } catch (err) {
-          void vscode.window.showErrorMessage(`Failed to update memory: ${errorMessage(err)}`);
-        }
-      }
-    });
-
-    const closeDisposable = vscode.workspace.onDidCloseTextDocument((doc) => {
-      if (doc.fileName === tmpPath) {
-        disposeEditListeners(memoryId);
-        try {
-          fs.unlinkSync(tmpPath);
-        } catch {}
-      }
-    });
-
-    activeEditDisposables.set(memoryId, [saveDisposable, closeDisposable]);
-  } else if (option === "🏷️ Edit Tags" || option === "tags") {
-    const currentTags = memory.tags?.join(", ") ?? "";
-    const updatedTagsInput = await vscode.window.showInputBox({
-      title: "Edit Memory Tags",
-      prompt: "Enter comma-separated tags.",
-      value: currentTags,
-      ignoreFocusOut: true,
-    });
-
-    if (updatedTagsInput === undefined) {
-      return;
-    }
-
-    const tags = updatedTagsInput
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter((tag) => tag.length > 0);
-
-    const updated = await vscode.window.withProgress(
+  try {
+    const result = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: "Updating MemoryOps memory tags...",
+        title: `MemoryOps: bulk ${action} in progress...`,
         cancellable: false,
       },
-      () => client.updateMemory(memory.id!, { tags })
+      () => client.bulkMemory(ids, action)
     );
 
-    memoryTreeProvider.updateMemory(updated);
-    void vscode.window.showInformationMessage("MemoryOps memory tags updated.");
-  } else if (option === "🔥 Edit Importance Score" || option === "importance") {
-    const currentImportance = memory.importance_score?.toString() ?? "0.5";
-    const updatedImportanceInput = await vscode.window.showInputBox({
-      title: "Edit Memory Importance Score",
-      prompt: "Enter a score between 0.0 and 1.0.",
-      value: currentImportance,
-      ignoreFocusOut: true,
-      validateInput: (value) => {
-        const num = parseFloat(value);
-        if (isNaN(num) || num < 0.0 || num > 1.0) {
-          return "Please enter a number between 0.0 and 1.0.";
-        }
-        return null;
-      },
-    });
-
-    if (updatedImportanceInput === undefined) {
-      return;
+    if (action === "delete") {
+      memoryTreeProvider.removeMemories(ids);
+    } else {
+      memoryTreeProvider.updateMemories(ids, { pinned: action === "pin" });
     }
 
-    const importanceScore = parseFloat(updatedImportanceInput);
-    const updated = await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: "Updating MemoryOps memory importance score...",
-        cancellable: false,
-      },
-      () => client.updateMemory(memory.id!, { importance_score: importanceScore })
+    void vscode.window.showInformationMessage(
+      `MemoryOps bulk ${action} completed: ${result.affected} memories affected.`
     );
-
-    memoryTreeProvider.updateMemory(updated);
-    void vscode.window.showInformationMessage("MemoryOps memory importance score updated.");
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Bulk operation failed: ${errorMessage(error)}`);
   }
 }
 

@@ -46,4 +46,11 @@ impl<'a> VectorIndexService<'a> {
             tracing::warn!(error = ?error, memory_id = %memory_id, context, "failed to delete vector point");
         }
     }
+
+    pub async fn delete_points_best_effort(&self, memory_ids: &[Uuid], context: &'static str) {
+        if let Err(error) = self.delete_points(memory_ids.to_vec()).await {
+            let ids_str = memory_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+            tracing::warn!(error = ?error, memory_ids = %ids_str, context, "failed to delete vector points");
+        }
+    }
 }

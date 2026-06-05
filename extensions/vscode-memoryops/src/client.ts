@@ -149,6 +149,14 @@ export interface BulkOperationResult {
   ids: string[];
 }
 
+export type BulkMemoryAction = "pin" | "unpin" | "delete";
+export interface BulkMemoryResponse {
+  affected: number;
+  affected_ids?: string[];
+  requested?: number;
+  action?: BulkMemoryAction;
+}
+
 export interface RetrievalMemory extends MemoryUnit {
   [key: string]: unknown;
 }
@@ -393,6 +401,28 @@ export class MemoryOpsClient {
     return {
       affected: numberOrDefault(response.affected, 0),
       ids: stringArrayOrUndefined(response.ids) ?? [],
+    };
+  }
+
+  async bulkMemory(ids: string[], action: BulkMemoryAction): Promise<BulkMemoryResponse> {
+    const response = await this.request(`/v1/memory/bulk${queryString({ workspace_id: this.config.workspaceId })}`, {
+      method: "POST",
+      authenticated: true,
+      body: {
+        ids,
+        action,
+      },
+    });
+
+    if (!isRecord(response)) {
+      return { affected: 0, affected_ids: [], requested: 0, action };
+    }
+
+    return {
+      affected: numberOrDefault(response.affected, 0),
+      affected_ids: stringArrayOrUndefined(response.affected_ids) ?? [],
+      requested: numberOrDefault(response.requested, ids.length),
+      action: (response.action as BulkMemoryAction) ?? action,
     };
   }
 
