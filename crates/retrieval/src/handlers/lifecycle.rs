@@ -282,8 +282,8 @@ pub async fn handle_bulk(
 
     let auth_context = auth.as_ref().map(|extension| &extension.0);
     let workspace_id = resolve_workspace_id(auth_context, workspace_id_param(&params)?)?;
+    let requested = request.ids.len();
     let ids = unique_ids(request.ids);
-    let requested = ids.len();
 
     let units = match request.action {
         BulkMemoryAction::Pin | BulkMemoryAction::Unpin => {

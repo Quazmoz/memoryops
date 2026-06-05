@@ -60,6 +60,7 @@ export function MemoryExplorer() {
   const [sortField, setSortField] = useState<SortField>("importance_score");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 
   useEffect(() => {
     setSelectedIds([]);
@@ -130,6 +131,20 @@ export function MemoryExplorer() {
     () => buildRows(searchActive, searchQuery.data?.results, listQuery.data?.items, sortField, sortDirection),
     [listQuery.data?.items, searchActive, searchQuery.data?.results, sortDirection, sortField],
   );
+  const visibleRowIds = useMemo(
+    () => rows.map((r) => r.id).filter((id): id is string => typeof id === "string"),
+    [rows]
+  );
+
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const next = prev.filter((id) => visibleRowIds.includes(id));
+      if (next.length !== prev.length) {
+        return next;
+      }
+      return prev;
+    });
+  }, [visibleRowIds]);
   const loading = searchActive ? searchQuery.isLoading : listQuery.isLoading;
   const error = searchActive ? searchQuery.error : listQuery.error;
 
@@ -245,10 +260,8 @@ export function MemoryExplorer() {
     if (selectedIds.length === 0) return;
 
     if (action === "delete") {
-      const confirmMsg = `Delete ${selectedIds.length} MemoryOps memories?`;
-      if (!window.confirm(confirmMsg)) {
-        return;
-      }
+      setIsDeleteConfirmOpen(true);
+      return;
     }
 
     bulkMemoryMutation.mutate(
@@ -259,6 +272,23 @@ export function MemoryExplorer() {
       {
         onSuccess: () => {
           setSelectedIds([]);
+        },
+      }
+    );
+  }
+
+  function confirmDelete() {
+    if (selectedIds.length === 0) return;
+
+    bulkMemoryMutation.mutate(
+      {
+        ids: selectedIds,
+        action: "delete",
+      },
+      {
+        onSuccess: () => {
+          setSelectedIds([]);
+          setIsDeleteConfirmOpen(false);
         },
       }
     );
@@ -572,6 +602,40 @@ export function MemoryExplorer() {
           onToggleSelectAllVisible={handleToggleSelectAllVisible}
         />
       ) : null}
+
+      {isDeleteConfirmOpen && (
+        <div
+          data-testid="delete-confirmation-dialog"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+        >
+          <div className="w-full max-w-md rounded-lg border border-line bg-white p-6 shadow-xl animate-in fade-in-50 zoom-in-95 duration-200">
+            <h2 className="text-lg font-semibold text-ink">Confirm Delete</h2>
+            <p className="mt-2 text-sm text-ink/75">
+              Are you sure you want to delete {selectedIds.length} {selectedIds.length === 1 ? "memory" : "memories"}? This action cannot be undone.
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                data-testid="cancel-delete-button"
+                disabled={bulkMemoryMutation.isPending}
+                onClick={() => setIsDeleteConfirmOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                data-testid="confirm-delete-button"
+                disabled={bulkMemoryMutation.isPending}
+                onClick={confirmDelete}
+              >
+                {bulkMemoryMutation.isPending ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

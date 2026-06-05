@@ -1028,6 +1028,10 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
           state.selectedIds = [];
         }
 
+        // Prune selectedIds to memories that actually exist
+        const validIds = new Set((state.memories || []).map(m => m.id).filter(Boolean));
+        state.selectedIds = (state.selectedIds || []).filter(id => validIds.has(id));
+
         // Sync Search Box
         if (document.activeElement !== searchInput) {
           searchInput.value = state.searchQuery;
@@ -1097,6 +1101,8 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
             action: action,
             ids: state.selectedIds
           });
+          state.selectedIds = [];
+          updateBulkToolbar();
         }
       }
     });
@@ -1106,14 +1112,16 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
       const checkbox = e.target.closest(".card-checkbox");
       if (checkbox) {
         const id = checkbox.dataset.id;
-        if (checkbox.checked) {
-          if (!state.selectedIds.includes(id)) {
-            state.selectedIds.push(id);
+        if (id) {
+          if (checkbox.checked) {
+            if (!state.selectedIds.includes(id)) {
+              state.selectedIds.push(id);
+            }
+          } else {
+            state.selectedIds = state.selectedIds.filter(x => x !== id);
           }
-        } else {
-          state.selectedIds = state.selectedIds.filter(x => x !== id);
+          updateBulkToolbar();
         }
-        updateBulkToolbar();
       }
     });
 

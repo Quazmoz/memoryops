@@ -11,3 +11,4 @@
 /extensions/vscode-memoryops/node_modules/
 /extensions/vscode-memoryops/out/
 /extensions/vscode-memoryops/*.tsbuildinfo
+/extensions/vscode-memoryops/*.vsix

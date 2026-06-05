@@ -1018,4 +1018,107 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn bulk_memory_operations(pool: PgPool) {
+        let app = router(test_state(pool.clone()).await);
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+
+        let id1 = insert_memory(&pool, workspace_id, "Memory 1").await;
+        let id2 = insert_memory(&pool, workspace_id, "Memory 2").await;
+
+        // 1. Test duplicate IDs requested count
+        let response = match app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/v1/memory/bulk".to_owned(),
+                Some(&api_key),
+                json!({
+                    "ids": [id1, id1, id2],
+                    "action": "pin"
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("bulk pin request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["requested"], json!(3));
+        assert_eq!(body["affected"], json!(2));
+        assert_eq!(body["affected_ids"], json!([id1, id2]));
+
+        // 2. Test validation: empty IDs
+        let response = match app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/v1/memory/bulk".to_owned(),
+                Some(&api_key),
+                json!({
+                    "ids": [],
+                    "action": "pin"
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("empty bulk pin request should respond: {error}"),
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // 3. Test validation: >100 IDs
+        let mut many_ids = Vec::new();
+        for _ in 0..101 {
+            many_ids.push(Uuid::now_v7());
+        }
+        let response = match app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/v1/memory/bulk".to_owned(),
+                Some(&api_key),
+                json!({
+                    "ids": many_ids,
+                    "action": "pin"
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("overlimit bulk pin request should respond: {error}"),
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // 4. Test already-deleted ID behavior
+        // Delete id1 first
+        let _deleted = sqlx::query("UPDATE memory_units SET deleted_at = now() WHERE id = $1")
+            .bind(id1)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Now try bulk deleting them
+        let response = match app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/v1/memory/bulk".to_owned(),
+                Some(&api_key),
+                json!({
+                    "ids": [id1, id2],
+                    "action": "delete"
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("bulk delete request should respond: {error}"),
+        };
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
 }
