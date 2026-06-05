@@ -130,11 +130,13 @@ pub fn protected_router() -> Router<AppState> {
         )
         .route(
             "/v1/agent-skills",
-            get(agent_skills::list_agent_skills),
+            get(agent_skills::list_agent_skills)
+                .post(agent_skills::create_agent_skill),
         )
         .route(
             "/v1/agent-skills/{assistant}/{name}",
-            get(agent_skills::get_agent_skill),
+            get(agent_skills::get_agent_skill)
+                .put(agent_skills::update_agent_skill),
         )
         .route(
             "/v1/workspaces/{id}/integrations",

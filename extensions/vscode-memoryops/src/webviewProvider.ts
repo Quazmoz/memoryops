@@ -1209,6 +1209,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
 
     // Utility text escaping
     function escapeHtml(text) {
+      text = String(text ?? "");
       const map = {
         '&': '&amp;',
         '<': '&lt;',
@@ -1221,7 +1222,7 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
 
     // Escape for safe interpolation into HTML attributes (onclick handlers, id, etc.)
     function escapeAttr(text) {
-      return escapeHtml(String(text)).replace(/\\/g, '\\\\');
+      return escapeHtml(text);
     }
 
     function unescapeHtml(text) {

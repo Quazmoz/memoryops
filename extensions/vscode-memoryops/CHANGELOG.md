@@ -5,6 +5,13 @@ All notable changes to the MemoryOps VS Code extension will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-06-05
+
+### Fixed
+
+- **Sidebar script boot failure** — fixed a broken inline webview script escape sequence that made the sidebar JavaScript fail to parse. This is why the inner Refresh / Settings buttons and `Open Settings` CTA stopped working and the sidebar stayed on `Loading...`.
+- **Regression coverage** — added a build-time test that parses the generated inline webview script so escaping bugs in the embedded HTML/JS are caught before packaging.
+
 ## [1.0.0] - 2026-06-04
 
 ### Fixed
