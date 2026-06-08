@@ -178,3 +178,52 @@ Configure the global `claude_desktop_config.json` (located at `~/Library/Applica
   }
 }
 ```
+
+### D. Docker Stdio Setup (For Stdio-Compatible CLI Clients)
+If your agent client runs locally and you want to use the stdio transport with the Docker container directly, configure it like this:
+
+```json
+{
+  "mcpServers": {
+    "memoryops": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "--network", "memoryops_default",
+        "-e", "DATABASE_URL=postgres://memoryops:memoryops@postgres:5432/memoryops",
+        "-e", "REDIS_URL=redis://redis:6379",
+        "-e", "QDRANT_URL=http://qdrant:6334",
+        "-e", "APP_SECRET_KEY=YOUR_APP_SECRET_KEY",
+        "memoryops-mcp",
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+---
+
+## 4. Custom Agent Instructions (Prompting the Agent)
+
+To ensure that your AI agent actively utilizes the MemoryOps MCP server to retrieve context and log new decisions, add the following prompt rules to your agent's configuration (e.g., inside `.claudeprompt`, `.cursorrules`, `.github/copilot-instructions.md`, or your agent's system prompt settings):
+
+```markdown
+# Agent Memory Guidelines (MemoryOps)
+
+You have access to the `memoryops` MCP tools (such as `memory_retrieve`, `memory_store`, and `memory_observe`) to interact with the workspace memory registry. Follow these guidelines strictly:
+
+1. **Task Startup (Retrieve)**:
+   - At the beginning of any task, plan, or research phase, search the memory database using `memory_retrieve` with queries relevant to the task (e.g., "auth configuration", "known database limits").
+   - Do NOT make assumptions about system design or past decisions; always retrieve memories first to ensure alignment.
+
+2. **Task Progress (Observe)**:
+   - If you encounter interesting bugs, workarounds, or configuration details during implementation, capture them using `memory_observe`.
+
+3. **Task Completion (Store)**:
+   - Upon completing a feature, refactor, or configuration change, document the final non-obvious engineering decisions using `memory_store`.
+   - Provide a concise `content` explaining *why* the change was made, assign relevant `tags`, and set an appropriate `importance_score` (between 0.0 and 1.0).
+```
