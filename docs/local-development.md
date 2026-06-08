@@ -130,6 +130,15 @@ The `api_key` is returned in plaintext **exactly once**. Store it now — it can
 retrieved again. To create additional keys later, use 
 `POST /v1/workspaces/{workspace_id}/keys` (requires authentication).
 
+### Populating Demo Data (Required for Local testing)
+When spinning up a local test environment or running within Docker, you must populate the workspace with demo/seed data so that retrieval and search queries have context to operate on. 
+
+Run the seeding script using the credentials returned from the bootstrap step:
+```bash
+API_KEY=<your-returned-api-key> WORKSPACE_ID=<your-returned-workspace-id> node scripts/seed.mjs
+```
+
+Once populated, follow these steps to hook up the frontend:
 1. Update `frontend/.env.local` — set `VITE_MEMORYOPS_WORKSPACE_ID` to your workspace UUID.
 2. Paste the `api_key` into the Settings modal when you first open the frontend.
 

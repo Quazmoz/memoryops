@@ -223,7 +223,10 @@ docker compose up -d
 WORKSPACE_CREATION_SECRET=<your-secret> node scripts/bootstrap.mjs
 # Save the returned workspace_id and api_key securely
 
-# 4. Access the UI
+# 4. Populate demo data for testing
+API_KEY=<your-returned-api-key> WORKSPACE_ID=<your-returned-workspace-id> node scripts/seed.mjs
+
+# 5. Access the UI
 open http://localhost:5173
 ```
 
@@ -231,6 +234,9 @@ You now have a running MemoryOps instance with:
 - API server on `http://localhost:8080`
 - Frontend UI on `http://localhost:5173`
 - Postgres, Redis, and Qdrant running in containers
+
+> [!IMPORTANT]
+> When spinning up a local test in Docker, it is highly recommended to populate the demo data using `scripts/seed.mjs`. This provides initial memories (episodic, semantic, pinned) and tools to verify that search, retrieval, and UI components are functioning properly.
 
 **Note:** First-time Docker builds may take several minutes on cold machines. Subsequent starts are instant.
 

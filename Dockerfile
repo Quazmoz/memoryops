@@ -16,6 +16,8 @@ WORKDIR /app
 COPY --from=builder /app/target/release/api /usr/local/bin/api
 COPY --from=builder /app/target/release/mcp /usr/local/bin/mcp
 COPY config.toml /app/config.toml
+COPY .gemini /app/.gemini
+COPY .claude /app/.claude
 RUN chown -R memoryops:memoryops /app
 
 USER memoryops
