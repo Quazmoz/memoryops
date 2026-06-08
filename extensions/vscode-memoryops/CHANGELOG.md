@@ -5,6 +5,13 @@ All notable changes to the MemoryOps VS Code extension will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-06-08
+
+### Added
+
+- **Sidebar Skills Tree View** — added a new Skills tree view to the sidebar panel listing all registered workspace skills, including inline toggle, test, history, and delete actions, plus a header bar button to create new skills directly from the UI.
+- **Contextual Command Arguments** — updated the skills commands to run directly on the selected sidebar tree node.
+
 ## [1.0.1] - 2026-06-05
 
 ### Fixed

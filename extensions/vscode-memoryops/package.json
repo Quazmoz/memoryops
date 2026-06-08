@@ -2,7 +2,7 @@
   "name": "memoryops-vscode",
   "displayName": "MemoryOps",
   "description": "Bring governed MemoryOps agent memory into VS Code.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "quazmoz",
   "author": {
     "name": "Quazmoz",
@@ -59,6 +59,11 @@
           "id": "memoryops.memories",
           "name": "Memories",
           "contextualTitle": "MemoryOps Memories"
+        },
+        {
+          "id": "memoryops.skills",
+          "name": "Skills",
+          "contextualTitle": "MemoryOps Skills"
         }
       ]
     },
@@ -337,6 +342,33 @@
           "command": "memoryops.bulkOperations",
           "when": "view == memoryops.memories",
           "group": "navigation@5"
+        },
+        {
+          "command": "memoryops.skills.create",
+          "when": "view == memoryops.skills",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "memoryops.skills.toggleEnabled",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
+          "group": "inline@1"
+        },
+        {
+          "command": "memoryops.skills.test",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill.enabled/",
+          "group": "inline@2"
+        },
+        {
+          "command": "memoryops.skills.viewHistory",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
+          "group": "inline@3"
+        },
+        {
+          "command": "memoryops.skills.delete",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
+          "group": "inline@4"
         }
       ],
       "editor/context": [

@@ -23,9 +23,11 @@ import {
 } from "./markdown";
 import { getRelativeFileName, getSourceRef, getWorkspaceRepoHint } from "./repo";
 import { registerSkillCommands } from "./skillCommands";
+import { SkillTreeProvider } from "./skillTree";
 
 let statusBarItem: vscode.StatusBarItem;
 let memoryTreeProvider: MemoryWebviewViewProvider;
+let skillTreeProvider: SkillTreeProvider;
 let outputChannel: vscode.OutputChannel;
 let codeLensProvider: MemoryCodeLensProvider | undefined;
 
@@ -121,8 +123,18 @@ export function activate(context: vscode.ExtensionContext): void {
       trackCleanupTargets(context);
       cachedClient = undefined;
       codeLensProvider?.refresh();
+      skillTreeProvider?.refresh();
       void initializeSidebar();
     }),
+  );
+
+  // Register skills tree view provider
+  skillTreeProvider = new SkillTreeProvider(() => {
+    const { client, missing } = getClient();
+    return { client: missing.length === 0 ? client : undefined, missing };
+  });
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider("memoryops.skills", skillTreeProvider)
   );
 
   // Feature 9: inline CodeLens hints (gated on memoryops.enableCodeLens).
@@ -143,6 +155,9 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     promptForMissingConfig,
     openMarkdownDocument,
+    onSkillsChanged: () => {
+      skillTreeProvider.refresh();
+    },
   });
 
   // Listen for secure storage changes (e.g., API key set/cleared)
@@ -157,6 +172,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
           cachedClient = undefined;
           trackCleanupTargets(context);
+          skillTreeProvider?.refresh();
           void initializeSidebar();
         });
       }
@@ -183,6 +199,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
+    skillTreeProvider?.refresh();
     void initializeSidebar();
     // Feature 5: on first install, open the Getting Started walkthrough so users
     // who install the extension and "see nothing" are guided through setup.
@@ -263,6 +280,7 @@ async function testConnection(): Promise<void> {
     statusBarItem.text = "$(check) MemoryOps";
     statusBarItem.tooltip = "MemoryOps connected";
     statusBarItem.command = "memoryops.testConnection";
+    skillTreeProvider?.refresh();
     void refreshMemories({ showProgress: false, promptOnMissingConfig: false });
     void vscode.window.showInformationMessage("MemoryOps connection is healthy.");
   } catch (error) {
