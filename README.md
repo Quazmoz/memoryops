@@ -348,6 +348,7 @@ MemoryOps exposes MCP tools via HTTP Streamable or stdio transport.
 | Claude Code | [docs/integrations/claude-code.md](docs/integrations/claude-code.md) |
 | GitHub Copilot / Continue.dev | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
 | VS Code Extension | [docs/integrations/vscode-extension.md](docs/integrations/vscode-extension.md) (Early local scaffold, not Marketplace-published) |
+| External Agents / CLI Scripts | [docs/agent-integration.md](docs/agent-integration.md) (Includes skill copying and API downloading guide) |
 
 See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport reference and HTTP Streamable session lifecycle.
 

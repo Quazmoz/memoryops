@@ -47,23 +47,68 @@ node scripts/memoryops-client.js skills
 
 ---
 
-## 2. Copying Agent Skill definitions
+## 2. Setting Up Agent Skill definitions
 
-For agents that support custom skill directories (like `.claude/skills` or `.gemini/skills`), you can copy the preconfigured skill files into your other repository. This tells the agent when and how to query MemoryOps for context, or when to save memories.
+For agents that support custom skill directories (like `.claude/skills` or `.gemini/skills`), you need to populate those skill files into your repository. This teaches the agent when and how to query MemoryOps for context, or when to save memories.
 
-From the root of your other repository, run:
+### Option A — Copying from Local Clone
+If you have the MemoryOps repository cloned locally on the same machine, run the following from the root of your target repository:
 
 ```bash
 # For Claude Code:
 mkdir -p .claude/skills
-cp /path/to/memoryops/.claude/skills/use_memoryops.md .claude/skills/
+cp /path/to/memoryops/.claude/skills/*.md .claude/skills/
 
 # For Gemini / Antigravity:
 mkdir -p .gemini/skills
-cp /path/to/memoryops/.gemini/skills/use_memoryops.md .gemini/skills/
+cp /path/to/memoryops/.gemini/skills/*.md .gemini/skills/
 ```
 
-Once copied, the agent in that repository will automatically detect these instructions and use the `memoryops-client.js` script to pull workspace context at the start of a task or to save key decisions.
+### Option B — Downloading Directly via MemoryOps API
+If you don't have the source repository locally, you can pull the skills directly from the running MemoryOps instance.
+
+First, list all available agent skills:
+```bash
+curl -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills
+```
+
+Then, download the skills using `jq` or `Node.js` directly into your folders:
+
+#### Using `jq`:
+```bash
+# Download Gemini skills
+mkdir -p .gemini/skills
+curl -s -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills/gemini/use_memoryops | jq -r .content > .gemini/skills/use_memoryops.md
+curl -s -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills/gemini/manage_contradictions | jq -r .content > .gemini/skills/manage_contradictions.md
+
+# Download Claude skills
+mkdir -p .claude/skills
+curl -s -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills/claude/use_memoryops | jq -r .content > .claude/skills/use_memoryops.md
+```
+
+#### Using `Node.js` (No external dependencies):
+```bash
+node -e "
+const fs = require('fs');
+const apiKey = 'YOUR_API_KEY';
+const baseUrl = 'http://localhost:8080/v1/agent-skills';
+
+async function download(assistant, skillName) {
+  const res = await fetch(\`\${baseUrl}/\${assistant}/\${skillName}\`, { headers: { 'X-API-Key': apiKey } });
+  const data = await res.json();
+  const dir = \`.\${assistant}/skills\`;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(\`\${dir}/\${data.filename}\`, data.content);
+  console.log(\`Downloaded \${assistant} skill: \${skillName}\`);
+}
+
+download('gemini', 'use_memoryops');
+download('gemini', 'manage_contradictions');
+download('claude', 'use_memoryops');
+"
+```
+
+Once populated, the agent in your repository will automatically detect these instructions and use the `memoryops-client.js` script to pull workspace context at the start of a task or to save key decisions.
 
 ---
 
