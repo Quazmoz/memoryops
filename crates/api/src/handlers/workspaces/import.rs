@@ -11,27 +11,12 @@ use axum::{
 use common::{auth::AuthContext, error::AppResult, models::MemoryUnit, AppError, AppState};
 use futures_util::StreamExt;
 use processor::worker::enqueue_slow_job;
-use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::require_workspace;
+use super::{require_workspace, ImportMemoriesResponse};
 
 pub const MAX_IMPORT_BODY_BYTES: usize = 50 * 1024 * 1024;
-
-#[derive(Debug, Default, Serialize)]
-pub struct ImportMemoriesResponse {
-    /// Memory records successfully upserted into Postgres.
-    pub imported: u64,
-    /// Records intentionally skipped before persistence. Kept for API compatibility.
-    pub skipped: u64,
-    /// Records that failed parsing or persistence.
-    pub errors: u64,
-    /// Imported records successfully enqueued for embedding/re-embedding.
-    pub enqueued: u64,
-    /// Imported records persisted but not queued for embedding/re-embedding.
-    pub enqueue_failed: u64,
-}
 
 #[axum::debug_handler]
 pub async fn import_memories(
@@ -115,14 +100,10 @@ async fn process_import_line(
                     if let Err(error) =
                         enqueue_slow_job(&mut *conn, memory_id, workspace_id, 0).await
                     {
-                        response.enqueue_failed = response.enqueue_failed.saturating_add(1);
                         tracing::warn!(error = ?error, memory_id = %memory_id, "failed to enqueue imported memory for embedding");
-                    } else {
-                        response.enqueued = response.enqueued.saturating_add(1);
                     }
                 }
                 Err(error) => {
-                    response.enqueue_failed = response.enqueue_failed.saturating_add(1);
                     tracing::warn!(error = ?error, memory_id = %memory_id, "failed to get Redis connection for import enqueue")
                 }
             }
@@ -158,8 +139,6 @@ async fn upsert_imported_memory(db: &PgPool, memory: &MemoryUnit) -> AppResult<U
     let entities = serde_json::to_value(&memory.entities.0)
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
-    // Import behaves as restore/upsert rather than append-only load. Re-importing
-    // the same exported memory ID updates that record in the target workspace.
     sqlx::query_scalar::<_, Uuid>(
         r#"
         INSERT INTO memory_units (
