@@ -42,6 +42,14 @@ curl -sS http://localhost:8080/v1/memory?workspace_id=0196f6c1-7e42-7f4f-8a6b-29
 
 The `api_key` value is only returned in plaintext once at creation time. Store it securely before closing the terminal.
 
+## Seed Demo Data (Highly Recommended for Testing)
+
+When running a local Docker stack or test environment, you should populate the workspace with test memories and tools to verify search and retrieval. Execute the seeding script with the generated workspace credentials:
+
+```bash
+API_KEY=<your-returned-api-key> WORKSPACE_ID=<your-returned-workspace-id> node scripts/seed.mjs
+```
+
 ## What's Next
 
 - Connect **Open WebUI** with [docs/integrations/openwebui.md](integrations/openwebui.md).
@@ -50,3 +58,4 @@ The `api_key` value is only returned in plaintext once at creation time. Store i
 - Create additional keys as needed with `POST /v1/workspaces/{id}/keys`.
 - Configure workspace promotion, lifecycle, and memory-sharing settings through the workspace endpoints.
 - See [docs/mcp-transport.md](mcp-transport.md) for the full MCP transport reference.
+

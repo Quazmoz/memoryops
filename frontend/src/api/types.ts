@@ -302,7 +302,9 @@ export type WorkspaceConfig = {
   decay_half_life_days?: number;
   pruning_threshold?: number;
   retention_max_age_days?: number | null;
+  skill_version_retention_days?: number | null;
   compliance_hard_purge?: boolean;
+  compliance_mode?: boolean;
   contradiction_mode?: "quarantine" | "auto_resolve" | string;
   contradiction_threshold?: number;
   contradiction_candidates?: number;
@@ -401,5 +403,23 @@ export type IntegrationResponse = {
   events_24h: number;
   errors_24h: number;
   status: IntegrationStatus;
+};
+
+export type BulkMemoryAction = "pin" | "unpin" | "delete";
+export type BulkMemoryRequest = { ids: string[]; action: BulkMemoryAction };
+export type BulkMemoryResponse = {
+  affected: number;
+  affected_ids: string[];
+  requested: number;
+  action: BulkMemoryAction;
+};
+
+export type ApiKeySummary = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked: boolean;
 };
 

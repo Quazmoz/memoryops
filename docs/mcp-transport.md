@@ -23,7 +23,7 @@ MemoryOps MCP supports multiple transports.
 
 ## Tools Reference
 
-All 11 tools are available over any transport. `workspace_id` is always injected from 
+All 12 tools are available over any transport. `workspace_id` is always injected from 
 the authenticated MCP session and is never a tool parameter.
 
 | Tool | Purpose |
@@ -32,6 +32,7 @@ the authenticated MCP session and is never a tool parameter.
 | `memory_search` | Filtered search by tags or `memory_type` without token-budget packing. |
 | `memory_store` | Directly persist an episodic memory. Immediate — bypasses the observation queue. |
 | `memory_observe` | Ingest a raw observation for async classification by the processor. |
+| `skill_invoke` | Invoke a registered workspace skill using the same rate-limit, circuit-breaker, audit, and invocation-log path as the HTTP API. |
 | `memory_update` | Update `content`, `tags`, or `importance_score` on an existing memory unit. |
 | `memory_delete` | Soft-delete a memory and remove its Qdrant vector point. |
 | `memory_feedback` | Submit a relevance rating (`-1`/`0`/`1`) on a retrieved memory to bias future scoring. |

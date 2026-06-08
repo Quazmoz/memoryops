@@ -423,6 +423,7 @@ pub async fn list_memory_units(
         builder.push(" AND scope->>'source' = ");
         builder.push_bind(source.as_str());
     }
+    push_source_ref_filter(&mut builder, params.source_ref.as_deref(), workspace_id, "");
     push_scope_filter(
         &mut builder,
         &scope_from_list_query(params),
@@ -486,6 +487,12 @@ async fn list_memory_units_at(
         builder.push(" AND m.scope->>'source' = ");
         builder.push_bind(source.as_str());
     }
+    push_source_ref_filter(
+        &mut builder,
+        params.source_ref.as_deref(),
+        workspace_id,
+        "m.",
+    );
     push_scope_filter(
         &mut builder,
         &scope_from_list_query(params),
@@ -891,7 +898,6 @@ pub fn relevance_score_from_ratings(ratings: &[i16]) -> f64 {
 pub enum BulkStoreAction {
     Pin,
     Unpin,
-    Delete,
 }
 
 pub async fn bulk_update_memory_units(
@@ -907,15 +913,47 @@ pub async fn bulk_update_memory_units(
     let mut transaction = db.begin().await.map_err(AppError::Database)?;
     let sql = match action {
         BulkStoreAction::Pin => format!(
-            "UPDATE memory_units SET pinned = true, version = version + 1 WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+            "UPDATE memory_units SET pinned = true, version = version + 1, updated_at = now() WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
         ),
         BulkStoreAction::Unpin => format!(
-            "UPDATE memory_units SET pinned = false, version = version + 1 WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
-        ),
-        BulkStoreAction::Delete => format!(
-            "UPDATE memory_units SET deleted_at = now(), version = version + 1 WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+            "UPDATE memory_units SET pinned = false, version = version + 1, updated_at = now() WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
         ),
     };
+
+    let units = sqlx::query_as::<_, MemoryUnit>(&sql)
+        .bind(workspace_id)
+        .bind(ids.to_vec())
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(AppError::Database)?;
+
+    // Deduplicate before comparing - ANY($2) collapses duplicates
+    let unique_ids: std::collections::HashSet<_> = ids.iter().collect();
+    if units.len() != unique_ids.len() {
+        transaction.rollback().await.map_err(AppError::Database)?;
+        return Err(AppError::NotFound {
+            resource: "one or more memory ids".to_owned(),
+        });
+    }
+
+    transaction.commit().await.map_err(AppError::Database)?;
+    Ok(units)
+}
+
+pub async fn soft_delete_memory_units(
+    db: &PgPool,
+    ids: &[Uuid],
+    workspace_id: Uuid,
+) -> AppResult<Vec<MemoryUnit>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut transaction = db.begin().await.map_err(AppError::Database)?;
+    let sql = format!(
+        "UPDATE memory_units SET deleted_at = now(), embedding_id = NULL, version = version + 1 \
+         WHERE workspace_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING {MEMORY_COLUMNS}"
+    );
 
     let units = sqlx::query_as::<_, MemoryUnit>(&sql)
         .bind(workspace_id)
@@ -1234,6 +1272,36 @@ fn normalized_scope_value(value: Option<&String>) -> Option<String> {
     }
 }
 
+/// Restricts results to memories whose linked raw events reference a given
+/// source file. We match against `raw_events.payload->>'source_ref'`, stripping
+/// any `#Lstart-Lend` anchor via `split_part`, then use the GIN index on
+/// `source_events` (see migration 0018) for an efficient array overlap.
+///
+/// `column_prefix` is `""` for the base table or `"m."` when the query aliases
+/// `memory_units` as `m` (the point-in-time path).
+fn push_source_ref_filter(
+    builder: &mut QueryBuilder<'_, Postgres>,
+    source_ref: Option<&str>,
+    workspace_id: Uuid,
+    column_prefix: &str,
+) {
+    let Some(source_ref) = source_ref else {
+        return;
+    };
+    let trimmed = source_ref.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    builder.push(format!(
+        " AND {column_prefix}source_events && ARRAY(SELECT e.id FROM raw_events e WHERE e.workspace_id = "
+    ));
+    builder.push_bind(workspace_id);
+    builder.push(" AND split_part(e.payload->>'source_ref', '#', 1) = ");
+    builder.push_bind(trimmed.to_owned());
+    builder.push(")");
+}
+
 pub(crate) fn push_scope_filter(
     builder: &mut QueryBuilder<'_, Postgres>,
     scope: &ScopeFilter,
@@ -1545,6 +1613,7 @@ mod tests {
             user_id: None,
             repo: None,
             source: None,
+            source_ref: None,
             as_of: None,
             sort: None,
             direction: None,
@@ -1834,6 +1903,86 @@ mod tests {
         assert_eq!(response.relevance_score, 0.5);
     }
 
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn list_memory_units_filters_by_source_ref(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+
+        // Two memories reference src/foo.rs (one with a line anchor, one without).
+        let anchored =
+            insert_memory_for_source_ref(&pool, workspace_id, "foo a", "src/foo.rs#L1-L10").await;
+        let bare = insert_memory_for_source_ref(&pool, workspace_id, "foo b", "src/foo.rs").await;
+        // A memory for a different file must be excluded.
+        let _other = insert_memory_for_source_ref(&pool, workspace_id, "bar", "src/bar.rs").await;
+
+        let mut params = list_query_with_scope(workspace_id, None, None, None);
+        params.source_ref = Some("src/foo.rs".to_owned());
+
+        let (items, total) = match list_memory_units(&pool, &params, workspace_id).await {
+            Ok(result) => result,
+            Err(error) => panic!("list should succeed: {error}"),
+        };
+
+        assert_eq!(total, 2);
+        let ids: Vec<Uuid> = items.iter().map(|item| item.id).collect();
+        assert!(ids.contains(&anchored));
+        assert!(ids.contains(&bare));
+    }
+
+    async fn insert_memory_for_source_ref(
+        pool: &PgPool,
+        workspace_id: Uuid,
+        content: &str,
+        source_ref: &str,
+    ) -> Uuid {
+        let event_id = Uuid::now_v7();
+        let event_result = sqlx::query(
+            r#"
+            INSERT INTO raw_events (
+                id, workspace_id, source, event_type, actor, payload, idempotency_key, occurred_at
+            )
+            VALUES ($1, $2, 'observation'::source, 'agent_observation'::event_type, $3, $4, $5, now())
+            "#,
+        )
+        .bind(event_id)
+        .bind(workspace_id)
+        .bind("vscode")
+        .bind(json!({ "source_ref": source_ref }))
+        .bind(format!("obs:{event_id}"))
+        .execute(pool)
+        .await;
+        if let Err(error) = event_result {
+            panic!("test raw event insert should succeed: {error}");
+        }
+
+        let memory_id = Uuid::now_v7();
+        let memory_result = sqlx::query(
+            r#"
+            INSERT INTO memory_units (
+                id, workspace_id, scope, memory_type, content, entities,
+                importance_score, source_events, tags
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            "#,
+        )
+        .bind(memory_id)
+        .bind(workspace_id)
+        .bind(json!({ "workspace_id": workspace_id, "source": "observation" }))
+        .bind(MemoryType::Episodic)
+        .bind(content)
+        .bind(json!([]))
+        .bind(0.5_f32)
+        .bind(vec![event_id])
+        .bind(Vec::<String>::new())
+        .execute(pool)
+        .await;
+        if let Err(error) = memory_result {
+            panic!("test memory insert should succeed: {error}");
+        }
+
+        memory_id
+    }
+
     fn list_query_with_scope(
         workspace_id: Uuid,
         agent_id: Option<&str>,
@@ -1851,9 +2000,79 @@ mod tests {
             user_id: user_id.map(str::to_owned),
             repo: repo.map(str::to_owned),
             source: None,
+            source_ref: None,
             as_of: None,
             sort: None,
             direction: None,
         }
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_bulk_pin_unpin_and_soft_delete(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+
+        let id1 = insert_memory(&pool, workspace_id, "memory 1", 0.5).await;
+        let id2 = insert_memory(&pool, workspace_id, "memory 2", 0.6).await;
+
+        // Test bulk pin
+        let pinned =
+            bulk_update_memory_units(&pool, &[id1, id2], workspace_id, BulkStoreAction::Pin)
+                .await
+                .unwrap();
+        assert_eq!(pinned.len(), 2);
+        assert!(pinned[0].pinned);
+        assert!(pinned[1].pinned);
+        assert!(pinned[0].updated_at > chrono::Utc::now() - chrono::Duration::seconds(5));
+
+        // Test bulk unpin
+        let unpinned =
+            bulk_update_memory_units(&pool, &[id1, id2], workspace_id, BulkStoreAction::Unpin)
+                .await
+                .unwrap();
+        assert_eq!(unpinned.len(), 2);
+        assert!(!unpinned[0].pinned);
+        assert!(!unpinned[1].pinned);
+
+        // Test bulk delete
+        let deleted = soft_delete_memory_units(&pool, &[id1, id2], workspace_id)
+            .await
+            .unwrap();
+        assert_eq!(deleted.len(), 2);
+
+        // Check database
+        let m1 = get_memory_unit_by_id(&pool, id1, workspace_id)
+            .await
+            .unwrap();
+        assert!(m1.is_none()); // deleted_at is not null, so it shouldn't be found
+
+        let m1_inc = get_memory_unit_by_id_including_deleted(&pool, id1, workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(m1_inc.deleted_at.is_some());
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn test_bulk_update_nonexistent_fails(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+
+        let id1 = insert_memory(&pool, workspace_id, "memory 1", 0.5).await;
+        let fake_id = Uuid::now_v7();
+
+        // Should return NotFound and not update the database due to transaction rollback
+        let err =
+            bulk_update_memory_units(&pool, &[id1, fake_id], workspace_id, BulkStoreAction::Pin)
+                .await
+                .unwrap_err();
+        assert!(matches!(err, AppError::NotFound { .. }));
+
+        // Verify id1 is not pinned
+        let m1 = get_memory_unit_by_id(&pool, id1, workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!m1.pinned);
     }
 }

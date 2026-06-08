@@ -4,7 +4,10 @@ import * as os from "os";
 import * as path from "path";
 
 import { MemoryOpsClient, MemorySearchResult } from "./client";
-import { getConfig, openMemoryOpsSettings, validateConfig } from "./config";
+import { collectCandidateUserSettingsFiles, updateCleanupManifest } from "./cleanup";
+import { getConfig, openMemoryOpsSettings, setCachedApiKeySecret, validateConfig } from "./config";
+import { registerChatParticipant } from "./chatParticipant";
+import { MemoryCodeLensProvider } from "./codeLensProvider";
 import { MemoryWebviewViewProvider } from "./webviewProvider";
 import { memoryFromCommandArgument, memoryLabel } from "./memoryTree";
 import {
@@ -19,9 +22,18 @@ import {
   truncate,
 } from "./markdown";
 import { getRelativeFileName, getSourceRef, getWorkspaceRepoHint } from "./repo";
+import { registerSkillCommands } from "./skillCommands";
+import { SkillTreeProvider } from "./skillTree";
+import { syncAgentSkills } from "./agentSkillsSync";
 
 let statusBarItem: vscode.StatusBarItem;
 let memoryTreeProvider: MemoryWebviewViewProvider;
+let skillTreeProvider: SkillTreeProvider;
+let outputChannel: vscode.OutputChannel;
+let codeLensProvider: MemoryCodeLensProvider | undefined;
+
+const WALKTHROUGH_ID = "quazmoz.memoryops-vscode#memoryops.gettingStarted";
+const FIRST_RUN_KEY = "memoryops.hasSeenWalkthrough";
 
 // Cached client instance — invalidated when config changes
 let cachedClient: { client: MemoryOpsClient; config: ReturnType<typeof getConfig>; configKey: string } | undefined;
@@ -36,6 +48,10 @@ interface LoadRecentMemoriesOptions {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  outputChannel = vscode.window.createOutputChannel("MemoryOps");
+  context.subscriptions.push(outputChannel);
+  trackCleanupTargets(context);
+
   memoryTreeProvider = new MemoryWebviewViewProvider(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("memoryops.memories", memoryTreeProvider)
@@ -73,19 +89,163 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("memoryops.searchMemoryInline", searchMemoryInline),
     vscode.commands.registerCommand("memoryops.editMemoryInline", editMemoryInline),
     vscode.commands.registerCommand("memoryops.submitFeedbackInline", submitFeedbackInline),
+    vscode.commands.registerCommand("memoryops.mergeMemory", mergeMemory),
+    vscode.commands.registerCommand("memoryops.bulkOperations", bulkOperations),
+    vscode.commands.registerCommand("memoryops.bulkMemory", bulkMemoryCommand),
+    vscode.commands.registerCommand("memoryops.reconnect", reconnect),
+    vscode.commands.registerCommand("memoryops.showMemoriesForFile", showMemoriesForFile),
+    vscode.commands.registerCommand("memoryops.openWalkthrough", openWalkthrough),
+    vscode.commands.registerCommand("memoryops.configureFromLocal", () => configureFromLocalCommand(context)),
+    vscode.commands.registerCommand("memoryops.skills.syncAgentSkills", async () => {
+      const { client, missing } = getClient();
+      if (missing.length > 0) {
+        await promptForMissingConfig(missing);
+        return;
+      }
+      await syncAgentSkills(client);
+    }),
+    vscode.commands.registerCommand("memoryops.setApiKey", async () => {
+      const value = await vscode.window.showInputBox({
+        title: "MemoryOps: Set API Key",
+        prompt: "Enter your MemoryOps workspace API key. It will be stored securely in your OS keychain.",
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (value === undefined) {
+        return;
+      }
+      if (value.trim()) {
+        await storeSecureApiKey(context, value.trim());
+        void vscode.window.showInformationMessage("MemoryOps API key stored securely.");
+      } else {
+        await storeSecureApiKey(context, undefined);
+        void vscode.window.showInformationMessage("MemoryOps API key removed from secure storage.");
+      }
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      trackCleanupTargets(context);
+    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (!event.affectsConfiguration("memoryops")) {
         return;
       }
+      trackCleanupTargets(context);
+      cachedClient = undefined;
+      codeLensProvider?.refresh();
+      skillTreeProvider?.refresh();
       void initializeSidebar();
     }),
   );
 
-  void initializeSidebar();
+  // Register skills tree view provider
+  skillTreeProvider = new SkillTreeProvider(() => {
+    const { client, missing } = getClient();
+    return { client: missing.length === 0 ? client : undefined, missing };
+  });
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider("memoryops.skills", skillTreeProvider)
+  );
+
+  // Feature 9: inline CodeLens hints (gated on memoryops.enableCodeLens).
+  codeLensProvider = new MemoryCodeLensProvider(() => getClient());
+  context.subscriptions.push(
+    codeLensProvider,
+    vscode.languages.registerCodeLensProvider({ scheme: "file" }, codeLensProvider),
+  );
+
+  // Feature 8: @memoryops Copilot Chat participant (no-op if chat is unavailable).
+  registerChatParticipant(context, () => getClient());
+
+  // Skill management + versioning commands.
+  registerSkillCommands(context, {
+    getClient: () => {
+      const { client, missing } = getClient();
+      return { client, missing };
+    },
+    promptForMissingConfig,
+    openMarkdownDocument,
+    onSkillsChanged: () => {
+      skillTreeProvider.refresh();
+    },
+  });
+
+  // Listen for secure storage changes (e.g., API key set/cleared)
+  context.subscriptions.push(
+    context.secrets.onDidChange((event) => {
+      if (event.key === "memoryops.apiKey") {
+        void context.secrets.get("memoryops.apiKey").then(async (secret) => {
+          const normalizedSecret = secret?.trim() || undefined;
+          setCachedApiKeySecret(normalizedSecret);
+          if (normalizedSecret) {
+            await clearLegacyApiKeySetting();
+          }
+          cachedClient = undefined;
+          trackCleanupTargets(context);
+          skillTreeProvider?.refresh();
+          void initializeSidebar();
+        });
+      }
+    })
+  );
+
+  // Read the secure API key before initializing the sidebar
+  void context.secrets.get("memoryops.apiKey").then(async (secret) => {
+    const normalizedSecret = secret?.trim() || undefined;
+    setCachedApiKeySecret(normalizedSecret);
+    if (normalizedSecret) {
+      await clearLegacyApiKeySetting();
+    }
+
+    // Auto-configure from local config file if not fully configured
+    const currentConfig = getConfig();
+    if (!currentConfig.workspaceId || !currentConfig.apiKey) {
+      await autoConfigureFromLocal(context);
+      // Re-read secret in case auto-configuration just updated it
+      const newSecret = await context.secrets.get("memoryops.apiKey");
+      if (newSecret) {
+        setCachedApiKeySecret(newSecret.trim());
+        await clearLegacyApiKeySetting();
+      }
+    }
+
+    skillTreeProvider?.refresh();
+    void initializeSidebar();
+    // Feature 5: on first install, open the Getting Started walkthrough so users
+    // who install the extension and "see nothing" are guided through setup.
+    // Runs after the secret loads so a stored key isn't mistaken for missing.
+    maybeShowWalkthroughOnFirstRun(context);
+  });
+}
+
+function maybeShowWalkthroughOnFirstRun(context: vscode.ExtensionContext): void {
+  if (context.globalState.get<boolean>(FIRST_RUN_KEY)) {
+    return;
+  }
+  void context.globalState.update(FIRST_RUN_KEY, true);
+
+  // Only nudge users who haven't configured anything yet.
+  if (validateConfig(getConfig()).length === 0) {
+    return;
+  }
+
+  void vscode.commands.executeCommand(
+    "workbench.action.openWalkthrough",
+    WALKTHROUGH_ID,
+    false,
+  );
+}
+
+async function openWalkthrough(): Promise<void> {
+  await vscode.commands.executeCommand(
+    "workbench.action.openWalkthrough",
+    WALKTHROUGH_ID,
+    false,
+  );
 }
 
 export function deactivate(): void {
   statusBarItem?.dispose();
+  outputChannel?.dispose();
   // Clean up any lingering edit listeners
   for (const disposables of activeEditDisposables.values()) {
     for (const d of disposables) {
@@ -128,13 +288,75 @@ async function testConnection(): Promise<void> {
 
     statusBarItem.text = "$(check) MemoryOps";
     statusBarItem.tooltip = "MemoryOps connected";
+    statusBarItem.command = "memoryops.testConnection";
+    skillTreeProvider?.refresh();
     void refreshMemories({ showProgress: false, promptOnMissingConfig: false });
+    void syncAgentSkills(client);
     void vscode.window.showInformationMessage("MemoryOps connection is healthy.");
   } catch (error) {
     statusBarItem.text = "$(error) MemoryOps";
-    statusBarItem.tooltip = `MemoryOps connection failed: ${errorMessage(error)}`;
+    statusBarItem.tooltip = `MemoryOps connection failed: ${errorMessage(error)} — click to reconnect`;
+    statusBarItem.command = "memoryops.reconnect";
+    void vscode.window
+      .showErrorMessage(`MemoryOps connection failed: ${errorMessage(error)}`, "Reconnect", "Open Settings")
+      .then((action) => {
+        if (action === "Reconnect") {
+          void reconnect();
+        } else if (action === "Open Settings") {
+          void openMemoryOpsSettings();
+        }
+      });
     throw error;
   }
+}
+
+async function reconnect(): Promise<void> {
+  // Drop the cached client so fresh config/secrets are picked up, then re-run
+  // the connection check. Transient failures are retried inside the client.
+  cachedClient = undefined;
+  setDefaultStatusBar();
+  await testConnection();
+}
+
+async function showMemoriesForFile(fileNameArg?: unknown): Promise<void> {
+  const { client, config, missing } = getClient();
+  if (missing.length > 0) {
+    setIncompleteStatusBar(missing);
+    await promptForMissingConfig(missing);
+    return;
+  }
+
+  const document = vscode.window.activeTextEditor?.document;
+  const fileName = typeof fileNameArg === "string" && fileNameArg
+    ? fileNameArg
+    : document
+      ? getRelativeFileName(document)
+      : undefined;
+
+  if (!fileName) {
+    void vscode.window.showWarningMessage("Open a file to find memories that reference it.");
+    return;
+  }
+
+  const response = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Finding MemoryOps memories for ${fileName}...`,
+      cancellable: false,
+    },
+    // Precise: filter memories by the source file recorded on their originating
+    // observation, rather than a fuzzy full-text search on the file name.
+    () => client.listMemory({
+      sourceRef: fileName,
+      limit: config.sidebarPageSize,
+      sort: memoryTreeProvider.getSortField(),
+      direction: memoryTreeProvider.getSortDirection(),
+    }),
+  );
+
+  const results = response.items as MemorySearchResult[];
+  memoryTreeProvider.setSearchResults(results, fileName);
+  await showSearchResults(results, `MemoryOps memories referencing ${fileName}`);
 }
 
 async function refreshMemories(options: LoadRecentMemoriesOptions = {}): Promise<void> {
@@ -228,15 +450,9 @@ async function searchMemory(): Promise<void> {
   await showSearchResults(results, `MemoryOps search: ${query.trim()}`);
 }
 
-async function retrieveContextForCurrentFile(): Promise<void> {
-  const { client, config, missing } = getClient();
-  if (missing.length > 0) {
-    setIncompleteStatusBar(missing);
-    await promptForMissingConfig(missing);
-    return;
-  }
-
-  const editor = vscode.window.activeTextEditor;
+async function buildCurrentEditorRetrievalQuery(
+  editor: vscode.TextEditor | undefined
+): Promise<{ query: string; repo: string | undefined }> {
   const document = editor?.document;
   const selectedText = editor ? selectedTextOrEmpty(editor) : "";
   const repo = await getWorkspaceRepoHint(document);
@@ -250,6 +466,15 @@ async function retrieveContextForCurrentFile(): Promise<void> {
   ]
     .filter(Boolean)
     .join("\n\n");
+
+  return { query, repo };
+}
+
+async function retrieveCurrentEditorContext(
+  query: string,
+  repo: string | undefined
+): Promise<any> {
+  const { client, config } = getClient();
 
   const result = await vscode.window.withProgress(
     {
@@ -273,6 +498,22 @@ async function retrieveContextForCurrentFile(): Promise<void> {
     }
     memoryTreeProvider.setRetrievedMemories(result.memories, "No memories returned for current context.");
   }
+
+  return result;
+}
+
+async function retrieveContextForCurrentFile(): Promise<void> {
+  const { missing } = getClient();
+  if (missing.length > 0) {
+    setIncompleteStatusBar(missing);
+    await promptForMissingConfig(missing);
+    return;
+  }
+
+  const editor = vscode.window.activeTextEditor;
+  const { query, repo } = await buildCurrentEditorRetrievalQuery(editor);
+  const result = await retrieveCurrentEditorContext(query, repo);
+
   await openMarkdownDocument(formatRetrievalMarkdown(result, "MemoryOps Context"));
 }
 
@@ -583,7 +824,7 @@ function getClient(): { client: MemoryOpsClient; config: ReturnType<typeof getCo
 
   if (!cachedClient || cachedClient.configKey !== configKey) {
     cachedClient = {
-      client: new MemoryOpsClient(config),
+      client: new MemoryOpsClient(config, (msg) => outputChannel.appendLine(`[${new Date().toISOString()}] ${msg}`)),
       config,
       configKey,
     };
@@ -664,6 +905,8 @@ async function initializeSidebar(): Promise<void> {
   setDefaultStatusBar();
   try {
     await refreshMemories({ showProgress: false, promptOnMissingConfig: false });
+    const { client } = getClient();
+    void syncAgentSkills(client);
   } catch {
     // refreshMemories already updates the tree provider state.
   }
@@ -709,35 +952,23 @@ async function resolveMemorySelection(item: unknown, title: string): Promise<Mem
 function setDefaultStatusBar(): void {
   statusBarItem.text = "$(database) MemoryOps";
   statusBarItem.tooltip = "MemoryOps: Test connection";
+  statusBarItem.command = "memoryops.testConnection";
 }
 
 function setIncompleteStatusBar(missing: string[]): void {
   statusBarItem.text = "$(warning) MemoryOps";
   statusBarItem.tooltip = `MemoryOps settings are incomplete: ${missing.join(", ")}`;
+  statusBarItem.command = "memoryops.openSettings";
 }
 
-async function editMemory(item?: unknown): Promise<void> {
-  const memory = await resolveMemorySelection(item, "MemoryOps: Edit Memory");
-  if (!memory?.id) {
-    return;
-  }
-
-  const option = await vscode.window.showQuickPick(
-    ["📝 Edit Content", "🏷️ Edit Tags", "🔥 Edit Importance Score"],
-    { title: `Edit Memory: ${memoryLabel(memory)}` }
-  );
-
-  if (!option) {
-    return;
-  }
-
+async function executeMemoryEditWorkflow(memory: MemorySearchResult, option: string): Promise<void> {
   const { client, missing } = getClient();
   if (missing.length > 0) {
     await promptForMissingConfig(missing);
     return;
   }
 
-  if (option === "📝 Edit Content") {
+  if (option === "📝 Edit Content" || option === "content") {
     const memoryId = memory.id!;
     const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memoryId}.md`);
 
@@ -786,7 +1017,7 @@ async function editMemory(item?: unknown): Promise<void> {
     });
 
     activeEditDisposables.set(memoryId, [saveDisposable, closeDisposable]);
-  } else if (option === "🏷️ Edit Tags") {
+  } else if (option === "🏷️ Edit Tags" || option === "tags") {
     const currentTags = memory.tags?.join(", ") ?? "";
     const updatedTagsInput = await vscode.window.showInputBox({
       title: "Edit Memory Tags",
@@ -815,7 +1046,7 @@ async function editMemory(item?: unknown): Promise<void> {
 
     memoryTreeProvider.updateMemory(updated);
     void vscode.window.showInformationMessage("MemoryOps memory tags updated.");
-  } else if (option === "🔥 Edit Importance Score") {
+  } else if (option === "🔥 Edit Importance Score" || option === "importance") {
     const currentImportance = memory.importance_score?.toString() ?? "0.5";
     const updatedImportanceInput = await vscode.window.showInputBox({
       title: "Edit Memory Importance Score",
@@ -848,6 +1079,186 @@ async function editMemory(item?: unknown): Promise<void> {
     memoryTreeProvider.updateMemory(updated);
     void vscode.window.showInformationMessage("MemoryOps memory importance score updated.");
   }
+}
+
+async function editMemory(item?: unknown): Promise<void> {
+  const memory = await resolveMemorySelection(item, "MemoryOps: Edit Memory");
+  if (!memory?.id) {
+    return;
+  }
+
+  const option = await vscode.window.showQuickPick(
+    ["📝 Edit Content", "🏷️ Edit Tags", "🔥 Edit Importance Score"],
+    { title: `Edit Memory: ${memoryLabel(memory)}` }
+  );
+
+  if (!option) {
+    return;
+  }
+
+  await executeMemoryEditWorkflow(memory, option);
+}
+
+async function mergeMemory(item?: unknown): Promise<void> {
+  const source = await resolveMemorySelection(item, "MemoryOps: Merge Memory — Select Source");
+  if (!source?.id) {
+    void vscode.window.showWarningMessage("Select a MemoryOps memory to merge from.");
+    return;
+  }
+
+  if (source.memory_type && source.memory_type !== "semantic") {
+    void vscode.window.showWarningMessage("Only semantic memories can be merged. Promote this memory first.");
+    return;
+  }
+
+  const memories = memoryTreeProvider.getMemories();
+  const candidates = memories.filter((m) => m.id && m.id !== source.id && (!m.memory_type || m.memory_type === "semantic"));
+
+  if (candidates.length === 0) {
+    void vscode.window.showWarningMessage("No other semantic memories available to merge with.");
+    return;
+  }
+
+  const targetPick = await vscode.window.showQuickPick(
+    candidates.map((memory) => ({
+      label: memoryLabel(memory),
+      description: [memory.memory_type, memory.scope_visibility].filter(Boolean).join(" — "),
+      detail: memory.content ? truncate(firstLine(memory.content), 160) : undefined,
+      memory,
+    })),
+    {
+      title: "MemoryOps: Merge Memory — Select Target",
+      placeHolder: "Select the target memory to merge into",
+      matchOnDescription: true,
+      matchOnDetail: true,
+    },
+  );
+
+  if (!targetPick) {
+    return;
+  }
+
+  const target = targetPick.memory;
+
+  const confirmed = await vscode.window.showWarningMessage(
+    `Merge "${truncate(firstLine(source.content ?? source.id ?? "source"), 50)}" into "${truncate(firstLine(target.content ?? target.id ?? "target"), 50)}"? The source memory will be removed.`,
+    { modal: true },
+    "Merge",
+  );
+
+  if (confirmed !== "Merge") {
+    return;
+  }
+
+  const { client, missing } = getClient();
+  if (missing.length > 0) {
+    await promptForMissingConfig(missing);
+    return;
+  }
+
+  const merged = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Merging MemoryOps memories...",
+      cancellable: false,
+    },
+    () => client.mergeMemory(source.id!, target.id!),
+  );
+
+  memoryTreeProvider.removeMemory(source.id);
+  memoryTreeProvider.updateMemory(merged);
+
+  const action = await vscode.window.showInformationMessage("MemoryOps memories merged successfully.", "Open Merged Memory");
+  if (action === "Open Merged Memory") {
+    await openMarkdownDocument(formatMemoryMarkdown(merged));
+  }
+}
+
+async function bulkOperations(): Promise<void> {
+  const { client, missing } = getClient();
+  if (missing.length > 0) {
+    await promptForMissingConfig(missing);
+    return;
+  }
+
+  const memories = memoryTreeProvider.getMemories();
+  if (memories.length === 0) {
+    void vscode.window.showWarningMessage("Load or search MemoryOps memories first.");
+    return;
+  }
+
+  const selections = await vscode.window.showQuickPick(
+    memories.filter((m) => m.id).map((memory) => ({
+      label: memoryLabel(memory),
+      description: [
+        memory.pinned ? "📌 pinned" : undefined,
+        memory.memory_type,
+        memory.scope_visibility,
+      ].filter(Boolean).join(" — "),
+      detail: memory.content ? truncate(firstLine(memory.content), 160) : undefined,
+      memory,
+      picked: false,
+    })),
+    {
+      title: "MemoryOps: Bulk Operations — Select Memories",
+      placeHolder: "Select memories to operate on",
+      canPickMany: true,
+      matchOnDescription: true,
+      matchOnDetail: true,
+    },
+  );
+
+  if (!selections || selections.length === 0) {
+    return;
+  }
+
+  const ids = selections.map((s) => s.memory.id!).filter((id) => id);
+
+  const operation = await vscode.window.showQuickPick(
+    [
+      { label: "📌 Pin Selected", value: "pin" as const },
+      { label: "📍 Unpin Selected", value: "unpin" as const },
+      { label: "🗑️ Delete Selected", value: "delete" as const },
+    ],
+    {
+      title: `MemoryOps: Bulk Operation — ${ids.length} memories selected`,
+      placeHolder: "Choose an operation",
+    },
+  );
+
+  if (!operation) {
+    return;
+  }
+
+  if (operation.value === "delete") {
+    const confirmed = await vscode.window.showWarningMessage(
+      `Delete ${ids.length} MemoryOps memories? This cannot be undone easily.`,
+      { modal: true },
+      "Delete All",
+    );
+    if (confirmed !== "Delete All") {
+      return;
+    }
+  }
+
+  const result = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `MemoryOps: ${operation.label.replace(/^\S+\s/, "")}...`,
+      cancellable: false,
+    },
+    () => client.bulkMemory(ids, operation.value),
+  );
+
+  if (operation.value === "delete") {
+    memoryTreeProvider.removeMemories(ids);
+  } else {
+    memoryTreeProvider.updateMemories(ids, { pinned: operation.value === "pin" });
+  }
+
+  void vscode.window.showInformationMessage(
+    `MemoryOps bulk ${operation.value}: ${result.affected} memories affected.`,
+  );
 }
 
 async function submitFeedback(item?: unknown): Promise<void> {
@@ -915,7 +1326,7 @@ async function submitFeedback(item?: unknown): Promise<void> {
 }
 
 async function getRetrievalContextHelper(): Promise<string | undefined> {
-  const { client, config, missing } = getClient();
+  const { missing } = getClient();
   if (missing.length > 0) {
     setIncompleteStatusBar(missing);
     await promptForMissingConfig(missing);
@@ -923,42 +1334,8 @@ async function getRetrievalContextHelper(): Promise<string | undefined> {
   }
 
   const editor = vscode.window.activeTextEditor;
-  const document = editor?.document;
-  const selectedText = editor ? selectedTextOrEmpty(editor) : "";
-  const repo = await getWorkspaceRepoHint(document);
-  const fileName = document ? getRelativeFileName(document) : "current editor";
-
-  const query = [
-    `Relevant MemoryOps context for ${fileName}`,
-    document?.languageId ? `Language: ${document.languageId}` : undefined,
-    repo ? `Repository: ${repo}` : undefined,
-    selectedText ? `Selected code/text:\n${truncate(selectedText, 4000)}` : undefined,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-
-  const result = await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: "Retrieving MemoryOps context...",
-      cancellable: false,
-    },
-    () => client.retrieve(query, config.defaultTokenBudget, {
-      mode: config.defaultSearchMode,
-      repo,
-      includeTrace: true,
-      includeWorkspacePool: config.includeWorkspacePool,
-    }),
-  );
-
-  if (Array.isArray(result.memories)) {
-    if (result.query_id) {
-      for (const m of result.memories) {
-        m.query_id = result.query_id;
-      }
-    }
-    memoryTreeProvider.setRetrievedMemories(result.memories, "No memories returned for current context.");
-  }
+  const { query, repo } = await buildCurrentEditorRetrievalQuery(editor);
+  const result = await retrieveCurrentEditorContext(query, repo);
 
   return result.packed_context ?? result.context;
 }
@@ -1122,122 +1499,53 @@ async function editMemoryInlineHelper(id: string, field: string): Promise<void> 
     option = selection;
   }
 
+  await executeMemoryEditWorkflow(memory, option);
+}
+
+async function bulkMemoryCommand(ids: string[], action: "pin" | "unpin" | "delete"): Promise<void> {
+  if (!ids || ids.length === 0) {
+    void vscode.window.showWarningMessage("No memories selected for bulk action.");
+    return;
+  }
+
   const { client, missing } = getClient();
   if (missing.length > 0) {
     await promptForMissingConfig(missing);
     return;
   }
 
-  if (option === "📝 Edit Content" || option === "content") {
-    const memoryId = memory.id!;
-    const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memoryId}.md`);
-
-    // Dispose any previous edit listeners for this memory
-    disposeEditListeners(memoryId);
-
-    try {
-      fs.writeFileSync(tmpPath, memory.content ?? "");
-    } catch (err) {
-      void vscode.window.showErrorMessage(`Failed to create temp file: ${errorMessage(err)}`);
+  if (action === "delete") {
+    const confirmed = await vscode.window.showWarningMessage(
+      `Delete ${ids.length} MemoryOps memories?`,
+      { modal: true },
+      "Delete"
+    );
+    if (confirmed !== "Delete") {
       return;
     }
+  }
 
-    const document = await vscode.workspace.openTextDocument(tmpPath);
-    await vscode.window.showTextDocument(document);
-
-    const saveDisposable = vscode.workspace.onDidSaveTextDocument(async (doc) => {
-      if (doc.fileName === tmpPath) {
-        const updatedContent = doc.getText();
-        try {
-          await vscode.window.withProgress(
-            {
-              location: vscode.ProgressLocation.Notification,
-              title: "Updating MemoryOps memory content...",
-              cancellable: false,
-            },
-            async () => {
-              const updated = await client.updateMemory(memoryId, { content: updatedContent });
-              memoryTreeProvider.updateMemory(updated);
-            }
-          );
-          void vscode.window.showInformationMessage("MemoryOps memory content updated.");
-        } catch (err) {
-          void vscode.window.showErrorMessage(`Failed to update memory: ${errorMessage(err)}`);
-        }
-      }
-    });
-
-    const closeDisposable = vscode.workspace.onDidCloseTextDocument((doc) => {
-      if (doc.fileName === tmpPath) {
-        disposeEditListeners(memoryId);
-        try {
-          fs.unlinkSync(tmpPath);
-        } catch {}
-      }
-    });
-
-    activeEditDisposables.set(memoryId, [saveDisposable, closeDisposable]);
-  } else if (option === "🏷️ Edit Tags" || option === "tags") {
-    const currentTags = memory.tags?.join(", ") ?? "";
-    const updatedTagsInput = await vscode.window.showInputBox({
-      title: "Edit Memory Tags",
-      prompt: "Enter comma-separated tags.",
-      value: currentTags,
-      ignoreFocusOut: true,
-    });
-
-    if (updatedTagsInput === undefined) {
-      return;
-    }
-
-    const tags = updatedTagsInput
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter((tag) => tag.length > 0);
-
-    const updated = await vscode.window.withProgress(
+  try {
+    const result = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: "Updating MemoryOps memory tags...",
+        title: `MemoryOps: bulk ${action} in progress...`,
         cancellable: false,
       },
-      () => client.updateMemory(memory.id!, { tags })
+      () => client.bulkMemory(ids, action)
     );
 
-    memoryTreeProvider.updateMemory(updated);
-    void vscode.window.showInformationMessage("MemoryOps memory tags updated.");
-  } else if (option === "🔥 Edit Importance Score" || option === "importance") {
-    const currentImportance = memory.importance_score?.toString() ?? "0.5";
-    const updatedImportanceInput = await vscode.window.showInputBox({
-      title: "Edit Memory Importance Score",
-      prompt: "Enter a score between 0.0 and 1.0.",
-      value: currentImportance,
-      ignoreFocusOut: true,
-      validateInput: (value) => {
-        const num = parseFloat(value);
-        if (isNaN(num) || num < 0.0 || num > 1.0) {
-          return "Please enter a number between 0.0 and 1.0.";
-        }
-        return null;
-      },
-    });
-
-    if (updatedImportanceInput === undefined) {
-      return;
+    if (action === "delete") {
+      memoryTreeProvider.removeMemories(ids);
+    } else {
+      memoryTreeProvider.updateMemories(ids, { pinned: action === "pin" });
     }
 
-    const importanceScore = parseFloat(updatedImportanceInput);
-    const updated = await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: "Updating MemoryOps memory importance score...",
-        cancellable: false,
-      },
-      () => client.updateMemory(memory.id!, { importance_score: importanceScore })
+    void vscode.window.showInformationMessage(
+      `MemoryOps bulk ${action} completed: ${result.affected} memories affected.`
     );
-
-    memoryTreeProvider.updateMemory(updated);
-    void vscode.window.showInformationMessage("MemoryOps memory importance score updated.");
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Bulk operation failed: ${errorMessage(error)}`);
   }
 }
 
@@ -1270,4 +1578,186 @@ async function submitFeedbackInline(
   } catch (err) {
     void vscode.window.showErrorMessage(`Failed to submit feedback: ${errorMessage(err)}`);
   }
+}
+
+async function configureFromLocalCommand(context: vscode.ExtensionContext): Promise<void> {
+  let localConfigPath: string | undefined;
+  if (vscode.workspace.workspaceFolders) {
+    for (const folder of vscode.workspace.workspaceFolders) {
+      const p = path.join(folder.uri.fsPath, ".memoryops.local.json");
+      if (fs.existsSync(p)) {
+        localConfigPath = p;
+        break;
+      }
+    }
+  }
+
+  if (!localConfigPath) {
+    void vscode.window.showErrorMessage(
+      "Could not find .memoryops.local.json in the workspace root directory."
+    );
+    return;
+  }
+
+  try {
+    const data = JSON.parse(fs.readFileSync(localConfigPath, "utf8"));
+    const workspaceId = data.workspace_id || data.workspaceId;
+    const apiKey = data.api_key || data.apiKey;
+    const apiUrl = data.api_url || data.apiUrl || "http://localhost:8080";
+
+    if (!workspaceId || !apiKey) {
+      throw new Error("Missing 'workspace_id' or 'api_key' in the configuration file.");
+    }
+
+    const config = vscode.workspace.getConfiguration("memoryops");
+    const target = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+      ? vscode.ConfigurationTarget.Workspace
+      : vscode.ConfigurationTarget.Global;
+
+    await config.update("apiUrl", apiUrl, target);
+    await config.update("workspaceId", workspaceId, target);
+    await storeSecureApiKey(context, apiKey);
+
+    // Force client cache invalidation
+    cachedClient = undefined;
+
+    void vscode.window.showInformationMessage(
+      `MemoryOps extension configured successfully using ${path.basename(localConfigPath)}.`
+    );
+  } catch (err: any) {
+    void vscode.window.showErrorMessage(`Failed to configure MemoryOps from local file: ${err.message}`);
+  }
+}
+
+async function autoConfigureFromLocal(context: vscode.ExtensionContext): Promise<void> {
+  const currentConfig = getConfig();
+  // Check if API key or workspace ID is missing
+  if (currentConfig.workspaceId && currentConfig.apiKey) {
+    return;
+  }
+
+  let localConfigPath: string | undefined;
+  if (vscode.workspace.workspaceFolders) {
+    for (const folder of vscode.workspace.workspaceFolders) {
+      const p = path.join(folder.uri.fsPath, ".memoryops.local.json");
+      if (fs.existsSync(p)) {
+        localConfigPath = p;
+        break;
+      }
+    }
+  }
+
+  if (!localConfigPath) {
+    return;
+  }
+
+  try {
+    const data = JSON.parse(fs.readFileSync(localConfigPath, "utf8"));
+    const workspaceId = data.workspace_id || data.workspaceId;
+    const apiKey = data.api_key || data.apiKey;
+    const apiUrl = data.api_url || data.apiUrl || "http://localhost:8080";
+
+    if (workspaceId && apiKey) {
+      const config = vscode.workspace.getConfiguration("memoryops");
+      const target = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+
+      await config.update("apiUrl", apiUrl, target);
+      await config.update("workspaceId", workspaceId, target);
+      await storeSecureApiKey(context, apiKey);
+
+      cachedClient = undefined;
+
+      void vscode.window.showInformationMessage(
+        `MemoryOps extension auto-configured using ${path.basename(localConfigPath)}.`
+      );
+    }
+  } catch (err: any) {
+    outputChannel.appendLine(`Auto-configuration failed: ${err.message}`);
+  }
+}
+
+async function storeSecureApiKey(
+  context: vscode.ExtensionContext,
+  value: string | undefined,
+): Promise<void> {
+  const normalizedValue = value?.trim() || undefined;
+
+  if (normalizedValue) {
+    await context.secrets.store("memoryops.apiKey", normalizedValue);
+  } else {
+    await context.secrets.delete("memoryops.apiKey");
+  }
+
+  setCachedApiKeySecret(normalizedValue);
+  await clearLegacyApiKeySetting();
+  cachedClient = undefined;
+  trackCleanupTargets(context);
+}
+
+async function clearLegacyApiKeySetting(): Promise<void> {
+  const config = vscode.workspace.getConfiguration("memoryops");
+  const updates: Thenable<void>[] = [];
+  const inspect = config.inspect<string>("apiKey");
+
+  if (inspect?.globalValue !== undefined) {
+    updates.push(config.update("apiKey", undefined, vscode.ConfigurationTarget.Global));
+  }
+  if (inspect?.workspaceValue !== undefined) {
+    updates.push(config.update("apiKey", undefined, vscode.ConfigurationTarget.Workspace));
+  }
+
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    if (folder.uri.scheme !== "file") {
+      continue;
+    }
+
+    const folderConfig = vscode.workspace.getConfiguration("memoryops", folder.uri);
+    const folderInspect = folderConfig.inspect<string>("apiKey");
+    if (folderInspect?.workspaceFolderValue !== undefined) {
+      updates.push(folderConfig.update("apiKey", undefined, vscode.ConfigurationTarget.WorkspaceFolder));
+    }
+  }
+
+  await Promise.all(updates);
+}
+
+function trackCleanupTargets(context: vscode.ExtensionContext): void {
+  const settingsFiles = [
+    ...collectCandidateUserSettingsFiles(),
+    ...getWorkspaceSettingsFiles(),
+  ];
+  const storageDirectories = [
+    context.globalStorageUri.fsPath,
+    ...(context.storageUri?.fsPath ? [context.storageUri.fsPath] : []),
+  ];
+
+  try {
+    updateCleanupManifest({
+      settingsFiles,
+      storageDirectories,
+    });
+  } catch (error) {
+    outputChannel.appendLine(`Failed to update uninstall cleanup manifest: ${errorMessage(error)}`);
+  }
+}
+
+function getWorkspaceSettingsFiles(): string[] {
+  const paths: string[] = [];
+
+  const workspaceFile = vscode.workspace.workspaceFile;
+  if (workspaceFile?.scheme === "file" && workspaceFile.fsPath.endsWith(".code-workspace")) {
+    paths.push(workspaceFile.fsPath);
+  }
+
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    if (folder.uri.scheme !== "file") {
+      continue;
+    }
+
+    paths.push(path.join(folder.uri.fsPath, ".vscode", "settings.json"));
+  }
+
+  return paths;
 }

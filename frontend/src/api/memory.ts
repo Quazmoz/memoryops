@@ -18,6 +18,8 @@ import type {
   SortField,
   SubmitFeedbackRequest,
   UpdateMemoryRequest,
+  BulkMemoryRequest,
+  BulkMemoryResponse,
 } from "./types";
 
 export type MemoryListParams = {
@@ -338,3 +340,10 @@ function isReadinessPayload(value: unknown): value is Omit<ReadinessResponse, "h
 }
 
 export const memoryTypeValues: MemoryType[] = ["episodic", "semantic"];
+
+export function bulkMemory(workspaceId: string, request: BulkMemoryRequest): Promise<BulkMemoryResponse> {
+  return apiRequest<BulkMemoryResponse>(`/v1/memory/bulk${queryString({ workspace_id: workspaceId })}`, {
+    method: "POST",
+    body: request,
+  });
+}

@@ -4,6 +4,12 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const SLOW_REQUEST_TIMEOUT_MS = 30_000;
 const SLOW_PATHS = ["/v1/retrieve", "/v1/memory/search"];
 
+// Only GET/idempotent reads and explicitly safe POSTs are retried. Mutating
+// writes (PATCH/DELETE, and POSTs that create/merge) are never auto-retried to
+// avoid duplicate side effects.
+const RETRYABLE_METHODS = new Set(["GET"]);
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+
 export type SearchMode = "hybrid" | "keyword" | "vector";
 
 export interface MemoryUnit {
@@ -109,6 +115,8 @@ export interface MemoryListOptions {
   memoryType?: "episodic" | "semantic";
   sort?: "importance_score" | "decay_score" | "relevance_score" | "updated_at" | "created_at";
   direction?: "asc" | "desc";
+  // Filter to memories derived from a specific source file (line anchors ignored).
+  sourceRef?: string;
 }
 
 export interface SearchOptions {
@@ -136,6 +144,14 @@ export interface MemoryUpdatePatch {
   importance_score?: number;
 }
 
+export type BulkMemoryAction = "pin" | "unpin" | "delete";
+export interface BulkMemoryResponse {
+  affected: number;
+  affected_ids?: string[];
+  requested?: number;
+  action?: BulkMemoryAction;
+}
+
 export interface RetrievalMemory extends MemoryUnit {
   [key: string]: unknown;
 }
@@ -154,11 +170,120 @@ export interface ObservationAccepted {
   status: "queued" | string;
 }
 
+interface HttpError extends Error {
+  status?: number;
+  transient?: boolean;
+}
+
+export interface Skill {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description: string;
+  endpoint_url: string;
+  http_method: string;
+  input_schema: unknown;
+  output_schema: unknown;
+  auth_header: string | null;
+  enabled: boolean;
+  version: number;
+  scope_visibility: "private" | "workspace" | "published";
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SkillVersion {
+  id: string;
+  skill_id: string;
+  workspace_id: string;
+  name: string;
+  version: number;
+  description: string;
+  endpoint_url: string;
+  http_method: string;
+  input_schema: unknown;
+  output_schema: unknown;
+  auth_header: string | null;
+  enabled: boolean;
+  scope_visibility: "private" | "workspace" | "published";
+  change_note: string | null;
+  created_by: string | null;
+  created_at?: string;
+}
+
+export interface SkillCreateInput {
+  name: string;
+  description: string;
+  endpoint_url: string;
+  http_method?: string;
+  input_schema?: unknown;
+  output_schema?: unknown;
+  auth_header?: string;
+  auth_secret?: string;
+  enabled?: boolean;
+  change_note?: string;
+  scope_visibility?: "private" | "workspace" | "published";
+}
+
+export interface SkillUpdateInput {
+  description?: string;
+  endpoint_url?: string;
+  http_method?: string;
+  input_schema?: unknown;
+  output_schema?: unknown;
+  auth_header?: string;
+  auth_secret?: string;
+  enabled?: boolean;
+  change_note?: string;
+  scope_visibility?: "private" | "workspace" | "published";
+}
+
+export interface SkillTestResult {
+  status: number;
+  latency_ms: number;
+  body: unknown;
+}
+
+export interface AgentSkill {
+  name: string;
+  filename: string;
+  assistant: string;
+  title: string;
+  description: string;
+}
+
+export interface AgentSkillContent {
+  name: string;
+  filename: string;
+  assistant: string;
+  title: string;
+  description: string;
+  instructions: string;
+  content: string;
+}
+
+export interface AgentSkillCreateInput {
+  assistant: string;
+  name: string;
+  title: string;
+  description: string;
+  instructions: string;
+}
+
+export interface AgentSkillUpdateInput {
+  title: string;
+  description: string;
+  instructions: string;
+}
+
 export class MemoryOpsClient {
-  constructor(private readonly config: MemoryOpsConfig) {}
+  constructor(
+    private readonly config: MemoryOpsConfig,
+    private readonly log?: (message: string) => void,
+  ) {}
 
   async health(): Promise<unknown> {
-    return this.request("/health/ready", { method: "GET", authenticated: false });
+    return this.request("/health/ready", { method: "GET", authenticated: false, idempotent: true });
   }
 
   async getWorkspace(): Promise<unknown> {
@@ -178,9 +303,11 @@ export class MemoryOpsClient {
       memory_type: options.memoryType,
       sort: options.sort,
       direction: options.direction,
+      source_ref: options.sourceRef,
     })}`, {
       method: "GET",
       authenticated: true,
+      idempotent: true,
     });
 
     if (!isRecord(response)) {
@@ -200,6 +327,7 @@ export class MemoryOpsClient {
     const response = await this.request("/v1/memory/search", {
       method: "POST",
       authenticated: true,
+      idempotent: true,
       body: {
         query,
         workspace_id: this.config.workspaceId,
@@ -218,6 +346,7 @@ export class MemoryOpsClient {
     const response = await this.request("/v1/retrieve", {
       method: "POST",
       authenticated: true,
+      idempotent: true,
       body: {
         query,
         workspace_id: this.config.workspaceId,
@@ -267,6 +396,41 @@ export class MemoryOpsClient {
     });
 
     return expectMemoryUnit(response, "MemoryOps returned an unexpected published memory response.");
+  }
+
+  async mergeMemory(sourceId: string, targetId: string): Promise<MemoryUnit> {
+    const response = await this.request(`/v1/memory/merge${queryString({ workspace_id: this.config.workspaceId })}`, {
+      method: "POST",
+      authenticated: true,
+      body: {
+        source_id: sourceId,
+        target_id: targetId,
+      },
+    });
+
+    return expectMemoryUnit(response, "MemoryOps returned an unexpected merge response.");
+  }
+
+  async bulkMemory(ids: string[], action: BulkMemoryAction): Promise<BulkMemoryResponse> {
+    const response = await this.request(`/v1/memory/bulk${queryString({ workspace_id: this.config.workspaceId })}`, {
+      method: "POST",
+      authenticated: true,
+      body: {
+        ids,
+        action,
+      },
+    });
+
+    if (!isRecord(response)) {
+      return { affected: 0, affected_ids: [], requested: 0, action };
+    }
+
+    return {
+      affected: numberOrDefault(response.affected, 0),
+      affected_ids: stringArrayOrUndefined(response.affected_ids) ?? [],
+      requested: numberOrDefault(response.requested, ids.length),
+      action: (response.action as BulkMemoryAction) ?? action,
+    };
   }
 
   async getMemoryHistory(id: string): Promise<MemoryVersion[]> {
@@ -355,11 +519,203 @@ export class MemoryOpsClient {
     return response as unknown as ObservationAccepted;
   }
 
+  async listSkills(): Promise<Skill[]> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools`,
+      { method: "GET", authenticated: true, idempotent: true },
+    );
+    return Array.isArray(response) ? response.filter(isRecord).map(normalizeSkill) : [];
+  }
+
+  async createSkill(input: SkillCreateInput): Promise<Skill> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools`,
+      {
+        method: "POST",
+        authenticated: true,
+        body: {
+          name: input.name,
+          description: input.description,
+          endpoint_url: input.endpoint_url,
+          http_method: input.http_method ?? "POST",
+          input_schema: input.input_schema ?? {},
+          output_schema: input.output_schema ?? {},
+          auth_header: input.auth_header,
+          auth_secret: input.auth_secret,
+          enabled: input.enabled ?? true,
+          change_note: input.change_note,
+          scope_visibility: input.scope_visibility,
+        },
+      },
+    );
+    return expectSkill(response, "MemoryOps returned an unexpected skill response.");
+  }
+
+  async updateSkill(name: string, patch: SkillUpdateInput): Promise<Skill> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}`,
+      { method: "PATCH", authenticated: true, body: patch },
+    );
+    return expectSkill(response, "MemoryOps returned an unexpected skill response.");
+  }
+
+  async deleteSkill(name: string): Promise<void> {
+    await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}`,
+      { method: "DELETE", authenticated: true },
+    );
+  }
+
+  async testSkill(name: string, body: unknown, version?: number): Promise<SkillTestResult> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}/test`,
+      { method: "POST", authenticated: true, idempotent: true, body: { body, version } },
+    );
+    if (!isRecord(response)) {
+      return { status: 0, latency_ms: 0, body: response };
+    }
+    return {
+      status: numberOrDefault(response.status, 0),
+      latency_ms: numberOrDefault(response.latency_ms, 0),
+      body: response.body,
+    };
+  }
+
+  async listSkillVersions(name: string): Promise<SkillVersion[]> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}/versions`,
+      { method: "GET", authenticated: true, idempotent: true },
+    );
+    return Array.isArray(response) ? response.filter(isRecord).map(normalizeSkillVersion) : [];
+  }
+
+  async rollbackSkillVersion(name: string, version: number, changeNote?: string): Promise<Skill> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}/versions/${version}/rollback`,
+      {
+        method: "POST",
+        authenticated: true,
+        body: changeNote ? { change_note: changeNote } : {},
+      },
+    );
+    return expectSkill(response, "MemoryOps returned an unexpected rollback response.");
+  }
+
+  async invokeSkill(name: string, body: unknown, version?: number): Promise<SkillTestResult> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}/invoke`,
+      { method: "POST", authenticated: true, body: { body, version } },
+    );
+    if (!isRecord(response)) {
+      return { status: 0, latency_ms: 0, body: response };
+    }
+    return {
+      status: numberOrDefault(response.status, 0),
+      latency_ms: numberOrDefault(response.latency_ms, 0),
+      body: response.body,
+    };
+  }
+
+  async listSkillInvocations(name: string, limit = 50): Promise<unknown[]> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}/invocations?limit=${limit}`,
+      { method: "GET", authenticated: true, idempotent: true },
+    );
+    return Array.isArray(response) ? response : [];
+  }
+
+  async listAgentSkills(): Promise<AgentSkill[]> {
+    const response = await this.request("/v1/agent-skills", {
+      method: "GET",
+      authenticated: true,
+      idempotent: true,
+    });
+    return Array.isArray(response) ? response.filter(isRecord).map(normalizeAgentSkill) : [];
+  }
+
+  async getAgentSkill(assistant: string, name: string): Promise<AgentSkillContent> {
+    const response = await this.request(
+      `/v1/agent-skills/${encodeURIComponent(assistant)}/${encodeURIComponent(name)}`,
+      { method: "GET", authenticated: true, idempotent: true },
+    );
+    if (!isRecord(response)) {
+      throw new Error("MemoryOps returned an unexpected agent skill response.");
+    }
+    return normalizeAgentSkillContent(response);
+  }
+
+  async createAgentSkill(input: AgentSkillCreateInput): Promise<AgentSkillContent> {
+    const response = await this.request("/v1/agent-skills", {
+      method: "POST",
+      authenticated: true,
+      body: input,
+    });
+    if (!isRecord(response)) {
+      throw new Error("MemoryOps returned an unexpected agent skill response.");
+    }
+    return normalizeAgentSkillContent(response);
+  }
+
+  async updateAgentSkill(
+    assistant: string,
+    name: string,
+    input: AgentSkillUpdateInput,
+  ): Promise<AgentSkillContent> {
+    const response = await this.request(
+      `/v1/agent-skills/${encodeURIComponent(assistant)}/${encodeURIComponent(name)}`,
+      { method: "PUT", authenticated: true, body: input },
+    );
+    if (!isRecord(response)) {
+      throw new Error("MemoryOps returned an unexpected agent skill response.");
+    }
+    return normalizeAgentSkillContent(response);
+  }
+
   private async request(path: string, options: {
-    method: "GET" | "POST" | "PATCH" | "DELETE";
+    method: "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
+    authenticated: boolean;
+    body?: unknown;
+    // Mark a POST as safe to auto-retry (read-only endpoints like search/retrieve).
+    idempotent?: boolean;
+  }): Promise<unknown> {
+    const maxRetries = Math.max(0, this.config.maxRetries ?? 0);
+    const canRetry = RETRYABLE_METHODS.has(options.method) || options.idempotent === true;
+    const attempts = canRetry ? maxRetries + 1 : 1;
+
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await this.performRequest(path, options);
+      } catch (error) {
+        lastError = error;
+        const transient = isTransientError(error);
+        const hasMoreAttempts = attempt < attempts;
+        if (!transient || !hasMoreAttempts) {
+          throw error;
+        }
+        const delayMs = this.backoffDelayMs(attempt);
+        this.log?.(`↻ ${options.method} ${path} → retry ${attempt}/${attempts - 1} in ${delayMs}ms (${error instanceof Error ? error.message : String(error)})`);
+        await sleep(delayMs);
+      }
+    }
+
+    throw lastError;
+  }
+
+  private backoffDelayMs(attempt: number): number {
+    const base = Math.max(0, this.config.retryBackoffMs ?? 0);
+    // Exponential backoff with light jitter, capped to keep the UI responsive.
+    const exponential = base * Math.pow(2, attempt - 1);
+    const jitter = exponential * 0.25 * Math.random();
+    return Math.min(Math.round(exponential + jitter), 8000);
+  }
+
+  private async performRequest(path: string, options: {
+    method: "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
     authenticated: boolean;
     body?: unknown;
   }): Promise<unknown> {
+    this.log?.(`→ ${options.method} ${path}`);
     const timeoutMs = requestTimeoutMs(path);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -375,6 +731,7 @@ export class MemoryOpsClient {
       headers["X-API-Key"] = this.config.apiKey;
     }
 
+    const startTime = Date.now();
     try {
       const response = await fetch(`${this.config.apiUrl}${path}`, {
         method: options.method,
@@ -384,17 +741,33 @@ export class MemoryOpsClient {
       });
 
       const text = await response.text();
+      const elapsed = Date.now() - startTime;
       const payload = text.length > 0 ? parseJson(text) : undefined;
 
       if (!response.ok) {
         const message = extractErrorMessage(payload) ?? response.statusText;
-        throw new Error(`MemoryOps ${response.status}: ${message}`);
+        this.log?.(`✗ ${options.method} ${path} → ${response.status} ${message} (${elapsed}ms)`);
+        const error = new Error(`MemoryOps ${response.status}: ${message}`) as HttpError;
+        error.status = response.status;
+        throw error;
       }
 
+      this.log?.(`← ${options.method} ${path} → ${response.status} (${elapsed}ms)`);
       return payload;
     } catch (error) {
       if (isAbortError(error)) {
-        throw new Error(`MemoryOps request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+        this.log?.(`✗ ${options.method} ${path} → timeout after ${Math.round(timeoutMs / 1000)}s`);
+        const timeoutError = new Error(`MemoryOps request timed out after ${Math.round(timeoutMs / 1000)}s.`) as HttpError;
+        timeoutError.transient = true;
+        throw timeoutError;
+      }
+      // Avoid double-logging errors already logged above
+      if (!(error instanceof Error && error.message.startsWith("MemoryOps "))) {
+        this.log?.(`✗ ${options.method} ${path} → ${error instanceof Error ? error.message : String(error)}`);
+        // Network-level failures (connection refused, DNS, reset) surface here.
+        if (error instanceof Error) {
+          (error as HttpError).transient = true;
+        }
       }
       throw error;
     } finally {
@@ -572,6 +945,60 @@ function expectMemoryUnit(response: unknown, message: string): MemoryUnit {
   return normalizeMemoryUnit(response);
 }
 
+function expectSkill(response: unknown, message: string): Skill {
+  if (!isRecord(response)) {
+    throw new Error(message);
+  }
+  return normalizeSkill(response);
+}
+
+function normalizeSkill(value: Record<string, unknown>): Skill {
+  return {
+    id: stringOrUndefined(value.id) ?? "",
+    workspace_id: stringOrUndefined(value.workspace_id) ?? "",
+    name: stringOrUndefined(value.name) ?? "",
+    description: stringOrUndefined(value.description) ?? "",
+    endpoint_url: stringOrUndefined(value.endpoint_url) ?? "",
+    http_method: stringOrUndefined(value.http_method) ?? "POST",
+    input_schema: value.input_schema ?? {},
+    output_schema: value.output_schema ?? {},
+    auth_header: stringOrNullOrUndefined(value.auth_header) ?? null,
+    enabled: booleanOrUndefined(value.enabled) ?? false,
+    version: numberOrDefault(value.version, 1),
+    scope_visibility: skillScopeVisibilityOrDefault(value.scope_visibility),
+    created_at: stringOrUndefined(value.created_at),
+    updated_at: stringOrUndefined(value.updated_at),
+  };
+}
+
+function normalizeSkillVersion(value: Record<string, unknown>): SkillVersion {
+  return {
+    id: stringOrUndefined(value.id) ?? "",
+    skill_id: stringOrUndefined(value.skill_id) ?? "",
+    workspace_id: stringOrUndefined(value.workspace_id) ?? "",
+    name: stringOrUndefined(value.name) ?? "",
+    version: numberOrDefault(value.version, 1),
+    description: stringOrUndefined(value.description) ?? "",
+    endpoint_url: stringOrUndefined(value.endpoint_url) ?? "",
+    http_method: stringOrUndefined(value.http_method) ?? "POST",
+    input_schema: value.input_schema ?? {},
+    output_schema: value.output_schema ?? {},
+    auth_header: stringOrNullOrUndefined(value.auth_header) ?? null,
+    enabled: booleanOrUndefined(value.enabled) ?? false,
+    scope_visibility: skillScopeVisibilityOrDefault(value.scope_visibility),
+    change_note: stringOrNullOrUndefined(value.change_note) ?? null,
+    created_by: stringOrNullOrUndefined(value.created_by) ?? null,
+    created_at: stringOrUndefined(value.created_at),
+  };
+}
+
+function skillScopeVisibilityOrDefault(value: unknown): "private" | "workspace" | "published" {
+  if (value === "private" || value === "workspace" || value === "published") {
+    return value;
+  }
+  return "workspace";
+}
+
 function extractErrorMessage(payload: unknown): string | undefined {
   if (!isRecord(payload)) {
     return undefined;
@@ -634,4 +1061,48 @@ function stringArrayOrUndefined(value: unknown): string[] | undefined {
 
 function isAbortError(error: unknown): boolean {
   return isRecord(error) && error.name === "AbortError";
+}
+
+function isTransientError(error: unknown): boolean {
+  if (!isRecord(error)) {
+    return false;
+  }
+
+  // Timeouts and network-level failures are flagged transient at the call site.
+  if (error.transient === true) {
+    return true;
+  }
+
+  // Retry only on transient HTTP status codes (5xx, 429, 408, 425).
+  if (typeof error.status === "number") {
+    return RETRYABLE_STATUS.has(error.status);
+  }
+
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeAgentSkill(value: Record<string, unknown>): AgentSkill {
+  return {
+    name: stringOrUndefined(value.name) ?? "",
+    filename: stringOrUndefined(value.filename) ?? "",
+    assistant: stringOrUndefined(value.assistant) ?? "",
+    title: stringOrUndefined(value.title) ?? "",
+    description: stringOrUndefined(value.description) ?? "",
+  };
+}
+
+function normalizeAgentSkillContent(value: Record<string, unknown>): AgentSkillContent {
+  return {
+    name: stringOrUndefined(value.name) ?? "",
+    filename: stringOrUndefined(value.filename) ?? "",
+    assistant: stringOrUndefined(value.assistant) ?? "",
+    title: stringOrUndefined(value.title) ?? "",
+    description: stringOrUndefined(value.description) ?? "",
+    instructions: stringOrUndefined(value.instructions) ?? "",
+    content: stringOrUndefined(value.content) ?? "",
+  };
 }

@@ -23,7 +23,7 @@ if [[ -z "$API_KEY" ]]; then
 fi
 
 MEMORIES_CREATED=0
-SKILLS_CREATED=0
+TOOLS_CREATED=0
 
 RESP_CODE=""
 RESP_BODY=""
@@ -135,26 +135,26 @@ create_memory() {
   return 1
 }
 
-upsert_skill() {
-  local skill_name="$1"
-  local skill_description="$2"
+upsert_tool() {
+  local tool_name="$1"
+  local tool_description="$2"
 
   local list_code list_body existing_id payload
 
-  api_request GET "/v1/workspaces/${WORKSPACE_ID}/skills"
+  api_request GET "/v1/workspaces/${WORKSPACE_ID}/tools"
   list_code="$RESP_CODE"
   list_body="$RESP_BODY"
 
   if [[ "$list_code" == "404" || "$list_code" == "405" ]]; then
-    log "Skills endpoint unavailable; skipping skills seeding."
+    log "Tools endpoint unavailable; skipping tools seeding."
     return 2
   fi
 
   if ! is_success "$list_code"; then
-    die "Failed to query skills endpoint: HTTP ${list_code} - ${list_body}"
+    die "Failed to query tools endpoint: HTTP ${list_code} - ${list_body}"
   fi
 
-  existing_id=$(printf '%s' "$list_body" | jq -r --arg name "$skill_name" '
+  existing_id=$(printf '%s' "$list_body" | jq -r --arg name "$tool_name" '
     [
       (if type == "array" then .[] else empty end),
       (.items? | arrays | .[]),
@@ -162,26 +162,26 @@ upsert_skill() {
     ]
     | map(select(.name? == $name))
     | .[0]
-    | (.id // .skill_id // empty)
+    | (.id // .tool_id // empty)
   ')
 
   if [[ -n "$existing_id" ]]; then
-    log "Skill ${skill_name} already exists; skipping."
+    log "Tool ${tool_name} already exists; skipping."
     return 0
   fi
 
   payload=$(jq -n \
-    --arg name "$skill_name" \
-    --arg description "$skill_description" \
-    '{name: $name, description: $description, endpoint_url: "https://example.com/skills/\($name)"}')
+    --arg name "$tool_name" \
+    --arg description "$tool_description" \
+    '{name: $name, description: $description, endpoint_url: "https://example.com/tools/\($name)"}')
 
-  api_request POST "/v1/workspaces/${WORKSPACE_ID}/skills" "$payload"
+  api_request POST "/v1/workspaces/${WORKSPACE_ID}/tools" "$payload"
   if ! is_success "$RESP_CODE"; then
-    die "Failed to create skill ${skill_name}: HTTP ${RESP_CODE} - ${RESP_BODY}"
+    die "Failed to create tool ${tool_name}: HTTP ${RESP_CODE} - ${RESP_BODY}"
   fi
 
-  SKILLS_CREATED=$((SKILLS_CREATED + 1))
-  log "Created skill: ${skill_name}"
+  TOOLS_CREATED=$((TOOLS_CREATED + 1))
+  log "Created tool: ${tool_name}"
 }
 
 log "Step 1/6: Ensuring workspace exists"
@@ -447,31 +447,31 @@ while [[ $p -lt ${#pinned_contents[@]} ]]; do
   p=$((p + 1))
 done
 
-log "Step 5/6: Seeding 3 agent skills when endpoint exists"
-skills_supported=true
+log "Step 5/6: Seeding 3 workspace tools when endpoint exists"
+tools_supported=true
 
-if ! upsert_skill "incident_responder" "Handles on-call triage workflows"; then
+if ! upsert_tool "incident_responder" "Handles on-call triage workflows"; then
   rc=$?
   if [[ $rc -eq 2 ]]; then
-    skills_supported=false
+    tools_supported=false
   else
     exit $rc
   fi
 fi
 
-if [[ "$skills_supported" == true ]]; then
-  upsert_skill "code_reviewer" "Reviews PRs and suggests improvements"
-  upsert_skill "deploy_monitor" "Monitors deployment pipelines and alerts"
+if [[ "$tools_supported" == true ]]; then
+  upsert_tool "code_reviewer" "Reviews PRs and suggests improvements"
+  upsert_tool "deploy_monitor" "Monitors deployment pipelines and alerts"
 fi
 
 log "Step 6/6: Summary"
 echo "workspace_id=${WORKSPACE_ID}"
 echo "api_key=${API_KEY}"
 echo "memories_created=${MEMORIES_CREATED}"
-if [[ "$skills_supported" == true ]]; then
-  echo "skills_created=${SKILLS_CREATED}"
+if [[ "$tools_supported" == true ]]; then
+  echo "tools_created=${TOOLS_CREATED}"
 else
-  echo "skills_created=skipped(endpoint unavailable)"
+  echo "tools_created=skipped(endpoint unavailable)"
 fi
 echo "verify_command=curl -H \"X-API-Key: ${API_KEY}\" \"${BASE_URL}/v1/memory?workspace_id=${WORKSPACE_ID}\""
 

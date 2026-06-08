@@ -6,6 +6,9 @@
 host = "0.0.0.0"
 port = 8080
 request_timeout_secs = 30
+# Allow tools/skills endpoint URLs to resolve to loopback/private IP addresses.
+# Useful for development or private VPC deployments. Off by default.
+allow_private_ips = false
 
 [database]
 # Connection string read from DATABASE_URL env var.
@@ -40,7 +43,7 @@ model = "llama3"
 #
 #     Local dev (bare metal / WSL):  base_url = "http://localhost:11434"
 #     Docker Desktop (Mac / Windows): base_url = "http://host.docker.internal:11434"
-base_url = "http://localhost:11434"
+base_url = "http://host.docker.internal:11434"
 timeout_secs = 3
 
 # Ollama Cloud / hosted Ollama (e.g. https://api.ollama.ai):

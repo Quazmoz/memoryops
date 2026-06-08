@@ -39,7 +39,7 @@ pub struct BulkMemoryRequest {
     pub action: BulkMemoryAction,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BulkMemoryAction {
     Pin,
@@ -50,6 +50,9 @@ pub enum BulkMemoryAction {
 #[derive(Debug, Serialize)]
 pub struct BulkMemoryResponse {
     pub affected: usize,
+    pub affected_ids: Vec<Uuid>,
+    pub requested: usize,
+    pub action: BulkMemoryAction,
 }
 
 #[derive(Debug, Deserialize)]
@@ -279,14 +282,27 @@ pub async fn handle_bulk(
 
     let auth_context = auth.as_ref().map(|extension| &extension.0);
     let workspace_id = resolve_workspace_id(auth_context, workspace_id_param(&params)?)?;
+    let requested = request.ids.len();
     let ids = unique_ids(request.ids);
-    let store_action = match request.action {
-        BulkMemoryAction::Pin => BulkStoreAction::Pin,
-        BulkMemoryAction::Unpin => BulkStoreAction::Unpin,
-        BulkMemoryAction::Delete => BulkStoreAction::Delete,
+
+    let units = match request.action {
+        BulkMemoryAction::Pin | BulkMemoryAction::Unpin => {
+            let store_action = match request.action {
+                BulkMemoryAction::Pin => BulkStoreAction::Pin,
+                BulkMemoryAction::Unpin => BulkStoreAction::Unpin,
+                _ => unreachable!(),
+            };
+            store::bulk_update_memory_units(&state.db, &ids, workspace_id, store_action).await?
+        }
+        BulkMemoryAction::Delete => {
+            let deletion_service =
+                MemoryDeletionService::new(&state, COLLECTION_NAME, "retrieval memory bulk delete");
+            deletion_service
+                .soft_delete_many_required(&ids, workspace_id)
+                .await?
+        }
     };
-    let units =
-        store::bulk_update_memory_units(&state.db, &ids, workspace_id, store_action).await?;
+
     let audit_action = match request.action {
         BulkMemoryAction::Pin => AuditAction::MemoryPinned,
         BulkMemoryAction::Unpin => AuditAction::MemoryUnpinned,
@@ -305,8 +321,13 @@ pub async fn handle_bulk(
         );
     }
 
+    let affected_ids: Vec<Uuid> = units.iter().map(|unit| unit.id).collect();
+
     Ok(Json(BulkMemoryResponse {
         affected: units.len(),
+        affected_ids,
+        requested,
+        action: request.action,
     }))
 }
 

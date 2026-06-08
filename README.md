@@ -223,7 +223,10 @@ docker compose up -d
 WORKSPACE_CREATION_SECRET=<your-secret> node scripts/bootstrap.mjs
 # Save the returned workspace_id and api_key securely
 
-# 4. Access the UI
+# 4. Populate demo data for testing
+API_KEY=<your-returned-api-key> WORKSPACE_ID=<your-returned-workspace-id> node scripts/seed.mjs
+
+# 5. Access the UI
 open http://localhost:5173
 ```
 
@@ -231,6 +234,9 @@ You now have a running MemoryOps instance with:
 - API server on `http://localhost:8080`
 - Frontend UI on `http://localhost:5173`
 - Postgres, Redis, and Qdrant running in containers
+
+> [!IMPORTANT]
+> When spinning up a local test in Docker, it is highly recommended to populate the demo data using `scripts/seed.mjs`. This provides initial memories (episodic, semantic, pinned) and tools to verify that search, retrieval, and UI components are functioning properly.
 
 **Note:** First-time Docker builds may take several minutes on cold machines. Subsequent starts are instant.
 
@@ -287,6 +293,8 @@ curl http://localhost:8080/health/ready
 
 See [docs/local-development.md](docs/local-development.md) for the complete local development guide including Ollama setup, port reference, and the test stack.
 
+For hosting in production environments (such as Docker, Kubernetes, or K3s), see the [Production Deployment Guide](docs/deployment.md).
+
 Note: You may see a Qdrant client/server version mismatch warning in the API logs (e.g., client 1.17 vs server 1.13). This is harmless for local development and API compatibility is maintained.
 
 ---
@@ -342,6 +350,7 @@ MemoryOps exposes MCP tools via HTTP Streamable or stdio transport.
 | Claude Code | [docs/integrations/claude-code.md](docs/integrations/claude-code.md) |
 | GitHub Copilot / Continue.dev | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
 | VS Code Extension | [docs/integrations/vscode-extension.md](docs/integrations/vscode-extension.md) (Early local scaffold, not Marketplace-published) |
+| External Agents / CLI Scripts | [docs/agent-integration.md](docs/agent-integration.md) (Includes skill copying and API downloading guide) |
 
 See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport reference and HTTP Streamable session lifecycle.
 

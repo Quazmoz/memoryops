@@ -16,7 +16,7 @@ The extension currently includes these commands and sidebar actions:
 |--------|---------|
 | `MemoryOps: Test Connection` | Checks API readiness and workspace access. |
 | `MemoryOps: Refresh Memories` | Loads recent workspace memories into the MemoryOps sidebar. |
-| Sidebar auto-load and paging | Automatically hydrates recent memories when settings are ready and can load more pages from the tree. |
+| Sidebar auto-load and paging | Automatically hydrates recent memories when settings are ready; supports paging with a **Load More** button. |
 | `MemoryOps: Search Memory` | Searches the configured MemoryOps workspace from the Command Palette. |
 | `MemoryOps: Retrieve Context for Current File` | Sends the active file/selection as retrieval context and opens returned memory context in a Markdown preview document. |
 | `MemoryOps: Save Selection as Observation` | Sends selected code or notes to `/v1/ingest/observation`. |
@@ -26,6 +26,7 @@ The extension currently includes these commands and sidebar actions:
 | `MemoryOps: View Memory Provenance` | Opens the provenance graph for a selected memory. |
 | `MemoryOps: View Memory Feedback` | Shows retrieval feedback recorded for a selected memory. |
 | Sidebar memory actions | Open, pin, unpin, delete, and copy memory content. |
+| Bulk operations | Bulk select memories using checkboxes in the sidebar; trigger bulk pin, unpin, or delete from the floating toolbar. Delete triggers a VS Code confirmation modal and performs a soft-delete alongside Qdrant vector index cleanup best-effort server-side. |
 | `MemoryOps: Open Settings` | Opens MemoryOps extension settings. |
 
 ## Settings
