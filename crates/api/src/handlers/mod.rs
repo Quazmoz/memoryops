@@ -2,6 +2,7 @@ use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use uuid::Uuid;
 
+pub mod agent_skills;
 pub mod audit;
 pub mod compliance;
 pub mod contradictions;
@@ -9,8 +10,8 @@ pub mod export;
 pub mod integrations;
 pub mod keys;
 pub mod metrics;
-pub mod skills;
 pub mod tags;
+pub mod tools;
 pub mod workspaces;
 
 pub fn bootstrap_router() -> Router<AppState> {
@@ -82,22 +83,55 @@ pub fn protected_router() -> Router<AppState> {
             axum::routing::post(workspaces::reindex_workspace),
         )
         .route(
-            "/v1/workspaces/{id}/skills",
-            axum::routing::post(skills::create_skill).get(skills::list_skills),
+            "/v1/workspaces/{id}/tools",
+            axum::routing::post(tools::create_tool).get(tools::list_tools),
         )
         .route(
-            "/v1/workspaces/{id}/skills/{name}",
-            get(skills::get_skill)
-                .patch(skills::update_skill)
-                .delete(skills::delete_skill),
+            "/v1/workspaces/{id}/tools/{name}",
+            get(tools::get_tool)
+                .patch(tools::update_tool)
+                .delete(tools::delete_tool),
         )
         .route(
-            "/v1/workspaces/{id}/skills/{name}/secret",
-            get(skills::get_skill_secret),
+            "/v1/workspaces/{id}/tools/{name}/secret",
+            get(tools::get_tool_secret),
         )
         .route(
-            "/v1/workspaces/{id}/skills/{name}/test",
-            axum::routing::post(skills::test_skill),
+            "/v1/workspaces/{id}/tools/{name}/test",
+            axum::routing::post(tools::test_tool),
+        )
+        .route(
+            "/v1/workspaces/{id}/tools/{name}/versions",
+            get(tools::list_tool_versions),
+        )
+        .route(
+            "/v1/workspaces/{id}/tools/{name}/versions/{version}",
+            get(tools::get_tool_version),
+        )
+        .route(
+            "/v1/workspaces/{id}/tools/{name}/versions/{version}/rollback",
+            axum::routing::post(tools::rollback_tool_version),
+        )
+        .route(
+            "/v1/workspaces/{id}/tools/{name}/invoke",
+            axum::routing::post(tools::invoke_tool),
+        )
+        .route(
+            "/v1/workspaces/{id}/tools/{name}/invocations",
+            get(tools::list_tool_invocations),
+        )
+        .route("/v1/workspaces/{id}/tools/export", get(tools::export_tools))
+        .route(
+            "/v1/workspaces/{id}/tools/import",
+            axum::routing::post(tools::import_tools),
+        )
+        .route(
+            "/v1/agent-skills",
+            get(agent_skills::list_agent_skills).post(agent_skills::create_agent_skill),
+        )
+        .route(
+            "/v1/agent-skills/{assistant}/{name}",
+            get(agent_skills::get_agent_skill).put(agent_skills::update_agent_skill),
         )
         .route(
             "/v1/workspaces/{id}/integrations",

@@ -10,6 +10,17 @@ export interface MemoryOpsConfig {
   sidebarPageSize: number;
   includeWorkspacePool: boolean;
   defaultAgentId: string;
+  maxRetries: number;
+  retryBackoffMs: number;
+  enableCodeLens: boolean;
+}
+
+// Secret storage cache — set by extension.ts on activation via VS Code SecretStorage API.
+// Takes priority over the plain-text memoryops.apiKey setting when present.
+let cachedApiKeySecret: string | undefined;
+
+export function setCachedApiKeySecret(value: string | undefined): void {
+  cachedApiKeySecret = value;
 }
 
 export function getConfig(): MemoryOpsConfig {
@@ -17,13 +28,16 @@ export function getConfig(): MemoryOpsConfig {
   return {
     apiUrl: trimTrailingSlash(config.get<string>("apiUrl", "http://localhost:8080")),
     workspaceId: config.get<string>("workspaceId", "").trim(),
-    apiKey: config.get<string>("apiKey", "").trim(),
+    apiKey: (cachedApiKeySecret || config.get<string>("apiKey", "")).trim(),
     defaultTopK: clampNumber(config.get<number>("defaultTopK", 5), 1, 20),
     defaultSearchMode: normalizeSearchMode(config.get<string>("defaultSearchMode", "hybrid")),
     defaultTokenBudget: clampNumber(config.get<number>("defaultTokenBudget", 2048), 256, 16000),
     sidebarPageSize: clampNumber(config.get<number>("sidebarPageSize", 20), 1, 100),
     includeWorkspacePool: config.get<boolean>("includeWorkspacePool", false),
     defaultAgentId: config.get<string>("defaultAgentId", "vscode").trim() || "vscode",
+    maxRetries: clampNumber(config.get<number>("maxRetries", 3), 0, 10),
+    retryBackoffMs: clampNumber(config.get<number>("retryBackoffMs", 500), 0, 10000),
+    enableCodeLens: config.get<boolean>("enableCodeLens", false),
   };
 }
 
@@ -43,7 +57,7 @@ export function validateConfig(config: MemoryOpsConfig): string[] {
 
 export async function openMemoryOpsSettings(): Promise<void> {
   try {
-    await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:quazmoz.memoryops-vscode");
+    await vscode.commands.executeCommand("workbench.action.openSettings", "memoryops");
   } catch {
     try {
       await vscode.commands.executeCommand("workbench.action.openSettings");

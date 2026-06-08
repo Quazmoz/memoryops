@@ -47,23 +47,68 @@ node scripts/memoryops-client.js skills
 
 ---
 
-## 2. Copying Agent Skill definitions
+## 2. Setting Up Agent Skill definitions
 
-For agents that support custom skill directories (like `.claude/skills` or `.gemini/skills`), you can copy the preconfigured skill files into your other repository. This tells the agent when and how to query MemoryOps for context, or when to save memories.
+For agents that support custom skill directories (like `.claude/skills` or `.gemini/skills`), you need to populate those skill files into your repository. This teaches the agent when and how to query MemoryOps for context, or when to save memories.
 
-From the root of your other repository, run:
+### Option A — Copying from Local Clone
+If you have the MemoryOps repository cloned locally on the same machine, run the following from the root of your target repository:
 
 ```bash
 # For Claude Code:
 mkdir -p .claude/skills
-cp /path/to/memoryops/.claude/skills/use_memoryops.md .claude/skills/
+cp /path/to/memoryops/.claude/skills/*.md .claude/skills/
 
 # For Gemini / Antigravity:
 mkdir -p .gemini/skills
-cp /path/to/memoryops/.gemini/skills/use_memoryops.md .gemini/skills/
+cp /path/to/memoryops/.gemini/skills/*.md .gemini/skills/
 ```
 
-Once copied, the agent in that repository will automatically detect these instructions and use the `memoryops-client.js` script to pull workspace context at the start of a task or to save key decisions.
+### Option B — Downloading Directly via MemoryOps API
+If you don't have the source repository locally, you can pull the skills directly from the running MemoryOps instance.
+
+First, list all available agent skills:
+```bash
+curl -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills
+```
+
+Then, download the skills using `jq` or `Node.js` directly into your folders:
+
+#### Using `jq`:
+```bash
+# Download Gemini skills
+mkdir -p .gemini/skills
+curl -s -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills/gemini/use_memoryops | jq -r .content > .gemini/skills/use_memoryops.md
+curl -s -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills/gemini/manage_contradictions | jq -r .content > .gemini/skills/manage_contradictions.md
+
+# Download Claude skills
+mkdir -p .claude/skills
+curl -s -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills/claude/use_memoryops | jq -r .content > .claude/skills/use_memoryops.md
+```
+
+#### Using `Node.js` (No external dependencies):
+```bash
+node -e "
+const fs = require('fs');
+const apiKey = 'YOUR_API_KEY';
+const baseUrl = 'http://localhost:8080/v1/agent-skills';
+
+async function download(assistant, skillName) {
+  const res = await fetch(\`\${baseUrl}/\${assistant}/\${skillName}\`, { headers: { 'X-API-Key': apiKey } });
+  const data = await res.json();
+  const dir = \`.\${assistant}/skills\`;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(\`\${dir}/\${data.filename}\`, data.content);
+  console.log(\`Downloaded \${assistant} skill: \${skillName}\`);
+}
+
+download('gemini', 'use_memoryops');
+download('gemini', 'manage_contradictions');
+download('claude', 'use_memoryops');
+"
+```
+
+Once populated, the agent in your repository will automatically detect these instructions and use the `memoryops-client.js` script to pull workspace context at the start of a task or to save key decisions.
 
 ---
 
@@ -132,4 +177,53 @@ Configure the global `claude_desktop_config.json` (located at `~/Library/Applica
     }
   }
 }
+```
+
+### D. Docker Stdio Setup (For Stdio-Compatible CLI Clients)
+If your agent client runs locally and you want to use the stdio transport with the Docker container directly, configure it like this:
+
+```json
+{
+  "mcpServers": {
+    "memoryops": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "--network", "memoryops_default",
+        "-e", "DATABASE_URL=postgres://memoryops:memoryops@postgres:5432/memoryops",
+        "-e", "REDIS_URL=redis://redis:6379",
+        "-e", "QDRANT_URL=http://qdrant:6334",
+        "-e", "APP_SECRET_KEY=YOUR_APP_SECRET_KEY",
+        "memoryops-mcp",
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+---
+
+## 4. Custom Agent Instructions (Prompting the Agent)
+
+To ensure that your AI agent actively utilizes the MemoryOps MCP server to retrieve context and log new decisions, add the following prompt rules to your agent's configuration (e.g., inside `.claudeprompt`, `.cursorrules`, `.github/copilot-instructions.md`, or your agent's system prompt settings):
+
+```markdown
+# Agent Memory Guidelines (MemoryOps)
+
+You have access to the `memoryops` MCP tools (such as `memory_retrieve`, `memory_store`, and `memory_observe`) to interact with the workspace memory registry. Follow these guidelines strictly:
+
+1. **Task Startup (Retrieve)**:
+   - At the beginning of any task, plan, or research phase, search the memory database using `memory_retrieve` with queries relevant to the task (e.g., "auth configuration", "known database limits").
+   - Do NOT make assumptions about system design or past decisions; always retrieve memories first to ensure alignment.
+
+2. **Task Progress (Observe)**:
+   - If you encounter interesting bugs, workarounds, or configuration details during implementation, capture them using `memory_observe`.
+
+3. **Task Completion (Store)**:
+   - Upon completing a feature, refactor, or configuration change, document the final non-obvious engineering decisions using `memory_store`.
+   - Provide a concise `content` explaining *why* the change was made, assign relevant `tags`, and set an appropriate `importance_score` (between 0.0 and 1.0).
 ```

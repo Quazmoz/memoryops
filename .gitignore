@@ -10,5 +10,4 @@
 /.memoryops.local.json
 /extensions/vscode-memoryops/node_modules/
 /extensions/vscode-memoryops/out/
-/extensions/vscode-memoryops/*.vsix
 /extensions/vscode-memoryops/*.tsbuildinfo

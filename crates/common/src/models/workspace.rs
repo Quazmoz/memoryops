@@ -55,10 +55,18 @@ pub struct WorkspaceConfig {
     /// None = no retention limit (default, no automatic purge).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retention_max_age_days: Option<u32>,
+    /// Maximum age in days before historical skill versions become eligible for
+    /// pruning. The latest snapshot per skill is always retained.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_version_retention_days: Option<u32>,
     /// When true, right-to-erasure and retention purges also hard-delete the
     /// originating raw_events. When false, only memory_units are affected.
     #[serde(default)]
     pub compliance_hard_purge: bool,
+    /// When true, mutating tool operations (update, rollback) require an
+    /// explicit non-empty `change_note` for auditability.
+    #[serde(default)]
+    pub compliance_mode: bool,
 }
 
 impl Default for WorkspaceConfig {
@@ -81,7 +89,9 @@ impl Default for WorkspaceConfig {
             contradiction_candidates: default_contradiction_candidates(),
             sub_agent_pools: Vec::new(),
             retention_max_age_days: None,
+            skill_version_retention_days: None,
             compliance_hard_purge: false,
+            compliance_mode: false,
         }
     }
 }
@@ -223,7 +233,9 @@ mod tests {
     fn compliance_fields_round_trip_json() {
         let config = WorkspaceConfig {
             retention_max_age_days: Some(365),
+            skill_version_retention_days: Some(90),
             compliance_hard_purge: true,
+            compliance_mode: true,
             ..WorkspaceConfig::default()
         };
         let value = serde_json::to_value(&config).unwrap();
@@ -235,19 +247,35 @@ mod tests {
         );
         assert_eq!(
             value
+                .get("skill_version_retention_days")
+                .and_then(|value| value.as_u64()),
+            Some(90)
+        );
+        assert_eq!(
+            value
                 .get("compliance_hard_purge")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value
+                .get("compliance_mode")
                 .and_then(|value| value.as_bool()),
             Some(true)
         );
         let decoded: WorkspaceConfig = serde_json::from_value(value).unwrap();
         assert_eq!(decoded.retention_max_age_days, Some(365));
+        assert_eq!(decoded.skill_version_retention_days, Some(90));
         assert!(decoded.compliance_hard_purge);
+        assert!(decoded.compliance_mode);
     }
 
     #[test]
     fn compliance_fields_absent_deserialize_to_defaults() {
         let decoded: WorkspaceConfig = serde_json::from_value(serde_json::json!({})).unwrap();
         assert_eq!(decoded.retention_max_age_days, None);
+        assert_eq!(decoded.skill_version_retention_days, None);
         assert!(!decoded.compliance_hard_purge);
+        assert!(!decoded.compliance_mode);
     }
 }

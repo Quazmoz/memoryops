@@ -111,17 +111,23 @@ async fn build_state(
     let trusted_proxy_cidrs = Arc::new(parse_trusted_proxy_cidrs());
 
     let db = connect_pool(&database_url, &config.database).await?;
-    tracing::info!("running database migrations...");
-    common::db::run_migrations(&db)
-        .await
-        .map_err(|error| anyhow::anyhow!("failed to run database migrations: {error}"))?;
-    ensure_skill_secret_configuration(&db).await?;
+    if std::env::var("SKIP_MIGRATIONS").unwrap_or_default() != "true" {
+        tracing::info!("running database migrations...");
+        common::db::run_migrations(&db)
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to run database migrations: {error}"))?;
+    } else {
+        tracing::info!("bypassing database migrations on startup due to SKIP_MIGRATIONS=true");
+    }
+    ensure_tool_secret_configuration(&db).await?;
     let redis = {
         let cfg = deadpool_redis::Config::from_url(&redis_url);
         cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))
             .map_err(|error| anyhow::anyhow!("failed to create Redis pool: {error}"))?
     };
-    let qdrant = Qdrant::from_url(&qdrant_url).build()?;
+    let mut qdrant_config = qdrant_client::config::QdrantConfig::from_url(&qdrant_url);
+    qdrant_config.check_compatibility = false;
+    let qdrant = Qdrant::new(qdrant_config)?;
 
     let embedding_provider = build_embedding_provider(&config);
     let llm_provider = build_llm_provider(&config);
@@ -141,28 +147,28 @@ async fn build_state(
     })
 }
 
-async fn ensure_skill_secret_configuration(db: &sqlx::PgPool) -> anyhow::Result<()> {
-    let skills_table = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT to_regclass('public.workspace_skills')::TEXT",
+async fn ensure_tool_secret_configuration(db: &sqlx::PgPool) -> anyhow::Result<()> {
+    let tools_table = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT to_regclass('public.workspace_tools')::TEXT",
     )
     .fetch_one(db)
     .await?;
-    if skills_table.is_none() {
+    if tools_table.is_none() {
         return Ok(());
     }
 
-    let has_encrypted_skill = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM workspace_skills WHERE auth_secret_enc IS NOT NULL)",
+    let has_encrypted_tool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM workspace_tools WHERE auth_secret_enc IS NOT NULL)",
     )
     .fetch_one(db)
     .await?;
-    if has_encrypted_skill
+    if has_encrypted_tool
         && std::env::var("APP_SECRET_KEY")
             .map(|value| value.trim().is_empty())
             .unwrap_or(true)
     {
         return Err(anyhow::anyhow!(
-            "APP_SECRET_KEY must be set because workspace_skills contains encrypted auth secrets"
+            "APP_SECRET_KEY must be set because workspace_tools contains encrypted auth secrets"
         ));
     }
 
@@ -591,7 +597,9 @@ async fn check_qdrant() -> DependencyStatus {
         return DependencyStatus::MissingConfig;
     };
 
-    let Ok(client) = Qdrant::from_url(&qdrant_url).build() else {
+    let mut qdrant_config = qdrant_client::config::QdrantConfig::from_url(&qdrant_url);
+    qdrant_config.check_compatibility = false;
+    let Ok(client) = Qdrant::new(qdrant_config) else {
         return DependencyStatus::Unavailable;
     };
 
@@ -637,7 +645,9 @@ mod tests {
         };
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:16333".to_owned());
-        let qdrant = match Qdrant::from_url(&qdrant_url).build() {
+        let mut qdrant_config = qdrant_client::config::QdrantConfig::from_url(&qdrant_url);
+        qdrant_config.check_compatibility = false;
+        let qdrant = match Qdrant::new(qdrant_config) {
             Ok(client) => client,
             Err(error) => panic!("test Qdrant URL should be valid: {error}"),
         };
@@ -1017,5 +1027,108 @@ mod tests {
         };
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn bulk_memory_operations(pool: PgPool) {
+        let app = router(test_state(pool.clone()).await);
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+
+        let id1 = insert_memory(&pool, workspace_id, "Memory 1").await;
+        let id2 = insert_memory(&pool, workspace_id, "Memory 2").await;
+
+        // 1. Test duplicate IDs requested count
+        let response = match app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/v1/memory/bulk".to_owned(),
+                Some(&api_key),
+                json!({
+                    "ids": [id1, id1, id2],
+                    "action": "pin"
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("bulk pin request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["requested"], json!(3));
+        assert_eq!(body["affected"], json!(2));
+        assert_eq!(body["affected_ids"], json!([id1, id2]));
+
+        // 2. Test validation: empty IDs
+        let response = match app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/v1/memory/bulk".to_owned(),
+                Some(&api_key),
+                json!({
+                    "ids": [],
+                    "action": "pin"
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("empty bulk pin request should respond: {error}"),
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // 3. Test validation: >100 IDs
+        let mut many_ids = Vec::new();
+        for _ in 0..101 {
+            many_ids.push(Uuid::now_v7());
+        }
+        let response = match app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/v1/memory/bulk".to_owned(),
+                Some(&api_key),
+                json!({
+                    "ids": many_ids,
+                    "action": "pin"
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("overlimit bulk pin request should respond: {error}"),
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // 4. Test already-deleted ID behavior
+        // Delete id1 first
+        let _deleted = sqlx::query("UPDATE memory_units SET deleted_at = now() WHERE id = $1")
+            .bind(id1)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Now try bulk deleting them
+        let response = match app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/v1/memory/bulk".to_owned(),
+                Some(&api_key),
+                json!({
+                    "ids": [id1, id2],
+                    "action": "delete"
+                }),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("bulk delete request should respond: {error}"),
+        };
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

@@ -17,10 +17,11 @@ import {
   publishMemory,
   searchMemory,
   submitFeedback,
+  bulkMemory,
   type MemoryListParams,
   type SearchCriteria,
 } from "../api/memory";
-import type { FeedbackResponse, ListMemoryResponse, MemoryUnit, SearchResponse, SubmitFeedbackRequest, UpdateMemoryRequest } from "../api/types";
+import type { FeedbackResponse, ListMemoryResponse, MemoryUnit, SearchResponse, SubmitFeedbackRequest, UpdateMemoryRequest, BulkMemoryRequest, BulkMemoryResponse } from "../api/types";
 import { hasWorkspaceAuth } from "../lib/auth";
 import { validateImportanceScore } from "../lib/validation";
 import { useAppStore } from "../store/app-store";
@@ -258,5 +259,82 @@ function validatePatch(patch: UpdateMemoryRequest): void {
   if (message) {
     throw new Error(message);
   }
+}
+
+export function useBulkMemory(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<BulkMemoryResponse, Error, BulkMemoryRequest, OptimisticContext>({
+    mutationKey: ["workspace", workspaceId, "memory", "bulk"],
+    mutationFn: (request) => bulkMemory(workspaceId, request),
+    onMutate: async (request) => {
+      await queryClient.cancelQueries({ queryKey: memoryKeys.all(workspaceId) });
+      const snapshots = queryClient.getQueriesData({ queryKey: memoryKeys.all(workspaceId) });
+      
+      const idsSet = new Set(request.ids);
+
+      if (request.action === "pin" || request.action === "unpin") {
+        const pinnedValue = request.action === "pin";
+        request.ids.forEach(id => {
+          optimisticallyPatchMemoryCaches(queryClient, workspaceId, id, { pinned: pinnedValue });
+        });
+      } else if (request.action === "delete") {
+        request.ids.forEach(id => {
+          queryClient.setQueryData(memoryKeys.detail(workspaceId, id), undefined);
+        });
+
+        queryClient.setQueriesData<ListMemoryResponse | undefined>({ queryKey: memoryKeys.lists(workspaceId) }, (current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            items: current.items.filter(item => !idsSet.has(item.id)),
+            total: Math.max(0, current.total - current.items.filter(item => idsSet.has(item.id)).length),
+          };
+        });
+
+        queryClient.setQueriesData<SearchResponse | undefined>({ queryKey: memoryKeys.searches(workspaceId) }, (current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            results: current.results.filter(result => !idsSet.has(result.memory.id)),
+            total: Math.max(0, current.total - current.results.filter(result => idsSet.has(result.memory.id)).length),
+          };
+        });
+      }
+
+      return { snapshots };
+    },
+    onError: (_error, _variables, context) => {
+      context?.snapshots.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+    },
+    onSuccess: (response) => {
+      if (response.action === "pin" || response.action === "unpin") {
+        const pinnedValue = response.action === "pin";
+        response.affected_ids.forEach(id => {
+          const detailKey = memoryKeys.detail(workspaceId, id);
+          const current = queryClient.getQueryData<MemoryUnit>(detailKey);
+          if (current) {
+            queryClient.setQueryData(detailKey, { ...current, pinned: pinnedValue });
+          }
+        });
+      } else if (response.action === "delete") {
+        response.affected_ids.forEach(id => {
+          queryClient.setQueryData(memoryKeys.detail(workspaceId, id), undefined);
+        });
+      }
+    },
+    onSettled: (_data, _error, variables) => {
+      variables.ids.forEach(id => {
+        void queryClient.invalidateQueries({ queryKey: memoryKeys.detail(workspaceId, id) });
+      });
+      void queryClient.invalidateQueries({ queryKey: memoryKeys.lists(workspaceId) });
+      void queryClient.invalidateQueries({ queryKey: memoryKeys.searches(workspaceId) });
+      void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "tags"] });
+      void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "stats"] });
+      void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "dashboard"] });
+    },
+  });
 }
 

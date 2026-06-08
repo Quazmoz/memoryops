@@ -58,6 +58,8 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub request_timeout_secs: u64,
+    #[serde(default)]
+    pub allow_private_ips: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

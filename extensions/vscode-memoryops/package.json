@@ -2,18 +2,34 @@
   "name": "memoryops-vscode",
   "displayName": "MemoryOps",
   "description": "Bring governed MemoryOps agent memory into VS Code.",
-  "version": "0.1.1",
+  "version": "1.0.3",
   "publisher": "quazmoz",
+  "author": {
+    "name": "Quazmoz",
+    "url": "https://github.com/Quazmoz"
+  },
   "icon": "media/memoryops.png",
-  "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Quazmoz/memoryops.git"
+  },
+  "homepage": "https://github.com/Quazmoz/memoryops",
+  "bugs": {
+    "url": "https://github.com/Quazmoz/memoryops/issues"
+  },
+  "galleryBanner": {
+    "color": "#1e1b4b",
+    "theme": "dark"
+  },
+  "qna": "marketplace",
   "engines": {
     "vscode": "^1.93.0"
   },
   "categories": [
-    "Other",
     "Machine Learning",
-    "Programming Languages"
+    "Programming Languages",
+    "Other"
   ],
   "keywords": [
     "memoryops",
@@ -43,6 +59,11 @@
           "id": "memoryops.memories",
           "name": "Memories",
           "contextualTitle": "MemoryOps Memories"
+        },
+        {
+          "id": "memoryops.skills",
+          "name": "Skills",
+          "contextualTitle": "MemoryOps Skills"
         }
       ]
     },
@@ -172,9 +193,136 @@
         "title": "MemoryOps: Filter and Sort Sidebar",
         "category": "MemoryOps",
         "icon": "$(filter)"
+      },
+      {
+        "command": "memoryops.mergeMemory",
+        "title": "MemoryOps: Merge Memory",
+        "category": "MemoryOps",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "memoryops.bulkOperations",
+        "title": "MemoryOps: Bulk Operations",
+        "category": "MemoryOps",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "memoryops.setApiKey",
+        "title": "MemoryOps: Set API Key (Secure)",
+        "category": "MemoryOps",
+        "icon": "$(key)"
+      },
+      {
+        "command": "memoryops.reconnect",
+        "title": "MemoryOps: Reconnect",
+        "category": "MemoryOps",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "memoryops.showMemoriesForFile",
+        "title": "MemoryOps: Show Memories Referencing Current File",
+        "category": "MemoryOps",
+        "icon": "$(references)"
+      },
+      {
+        "command": "memoryops.openWalkthrough",
+        "title": "MemoryOps: Open Getting Started Walkthrough",
+        "category": "MemoryOps",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "memoryops.skills.list",
+        "title": "MemoryOps: List Skills",
+        "category": "MemoryOps",
+        "icon": "$(symbol-method)"
+      },
+      {
+        "command": "memoryops.skills.create",
+        "title": "MemoryOps: Create Skill",
+        "category": "MemoryOps",
+        "icon": "$(add)"
+      },
+      {
+        "command": "memoryops.skills.toggleEnabled",
+        "title": "MemoryOps: Toggle Skill Enabled",
+        "category": "MemoryOps",
+        "icon": "$(circle-large-outline)"
+      },
+      {
+        "command": "memoryops.skills.delete",
+        "title": "MemoryOps: Delete Skill",
+        "category": "MemoryOps",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "memoryops.skills.test",
+        "title": "MemoryOps: Test Skill",
+        "category": "MemoryOps",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "memoryops.skills.viewHistory",
+        "title": "MemoryOps: View Skill Version History",
+        "category": "MemoryOps",
+        "icon": "$(history)"
+      },
+      {
+        "command": "memoryops.skills.rollback",
+        "title": "MemoryOps: Roll Back Skill Version",
+        "category": "MemoryOps",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "memoryops.skills.syncAgentSkills",
+        "title": "MemoryOps: Sync Agent Skills",
+        "category": "MemoryOps",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "memoryops.configureFromLocal",
+        "title": "MemoryOps: Configure from Local Config File",
+        "category": "MemoryOps",
+        "icon": "$(gear)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "memoryops.searchMemory",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m"
+      },
+      {
+        "command": "memoryops.saveSelectionAsObservation",
+        "key": "ctrl+alt+shift+s",
+        "mac": "cmd+alt+shift+s",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "memoryops.retrieveContextForCurrentFile",
+        "key": "ctrl+alt+shift+r",
+        "mac": "cmd+alt+shift+r",
+        "when": "editorFocus"
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "memoryops.saveSelectionAsObservation",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "memoryops.retrieveContextForCurrentFile",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "memoryops.insertContext",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "memoryops.showMemoriesForFile",
+          "when": "editorIsOpen"
+        }
+      ],
       "view/title": [
         {
           "command": "memoryops.refreshMemories",
@@ -195,68 +343,55 @@
           "command": "memoryops.setFilterSort",
           "when": "view == memoryops.memories",
           "group": "navigation@4"
+        },
+        {
+          "command": "memoryops.bulkOperations",
+          "when": "view == memoryops.memories",
+          "group": "navigation@5"
+        },
+        {
+          "command": "memoryops.skills.create",
+          "when": "view == memoryops.skills",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
         {
-          "command": "memoryops.openMemory",
-          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
+          "command": "memoryops.skills.toggleEnabled",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
           "group": "inline@1"
         },
         {
-          "command": "memoryops.pinMemory",
-          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\.unpinned\\./",
+          "command": "memoryops.skills.test",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill.enabled/",
           "group": "inline@2"
         },
         {
-          "command": "memoryops.unpinMemory",
-          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\.pinned\\./",
-          "group": "inline@2"
+          "command": "memoryops.skills.viewHistory",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
+          "group": "inline@3"
         },
         {
-          "command": "memoryops.promoteMemory",
-          "when": "view == memoryops.memories && viewItem =~ /\\.episodic\\./",
-          "group": "2_manage@1"
+          "command": "memoryops.skills.delete",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
+          "group": "inline@4"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "memoryops.saveSelectionAsObservation",
+          "when": "editorHasSelection",
+          "group": "memoryops@1"
         },
         {
-          "command": "memoryops.publishMemory",
-          "when": "view == memoryops.memories && viewItem =~ /\\.semantic\\./",
-          "group": "2_manage@2"
+          "command": "memoryops.retrieveContextForCurrentFile",
+          "when": "editorFocus",
+          "group": "memoryops@2"
         },
         {
-          "command": "memoryops.viewMemoryHistory",
-          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
-          "group": "3_inspect@1"
-        },
-        {
-          "command": "memoryops.viewMemoryProvenance",
-          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
-          "group": "3_inspect@2"
-        },
-        {
-          "command": "memoryops.viewMemoryFeedback",
-          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
-          "group": "3_inspect@3"
-        },
-        {
-          "command": "memoryops.submitFeedback",
-          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
-          "group": "3_inspect@4"
-        },
-        {
-          "command": "memoryops.copyMemory",
-          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
-          "group": "4_edit@1"
-        },
-        {
-          "command": "memoryops.editMemory",
-          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
-          "group": "4_edit@2"
-        },
-        {
-          "command": "memoryops.deleteMemory",
-          "when": "view == memoryops.memories && viewItem =~ /^memoryops\\.memory\\./",
-          "group": "9_destructive@1"
+          "command": "memoryops.showMemoriesForFile",
+          "when": "editorFocus",
+          "group": "memoryops@3"
         }
       ]
     },
@@ -276,7 +411,7 @@
         "memoryops.apiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "MemoryOps workspace API key. Store this in user settings, not checked-in workspace settings."
+          "markdownDescription": "Fallback MemoryOps workspace API key. **Prefer using the `MemoryOps: Set API Key (Secure)` command**, which stores the key in your OS keychain via VS Code SecretStorage. This setting is only used when no secure key is stored."
         },
         "memoryops.defaultTopK": {
           "type": "number",
@@ -318,16 +453,112 @@
           "type": "string",
           "default": "vscode",
           "description": "Agent identifier used when saving observations from VS Code."
+        },
+        "memoryops.maxRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Number of times to automatically retry read-only requests (search, retrieve, list, health) on transient failures (timeouts, network errors, 5xx/429). Set to 0 to disable retries."
+        },
+        "memoryops.retryBackoffMs": {
+          "type": "number",
+          "default": 500,
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "Base delay in milliseconds for exponential backoff between retries. Each retry waits roughly base × 2^(attempt-1) with light jitter, capped at 8s."
+        },
+        "memoryops.enableCodeLens": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show an inline CodeLens at the top of files indicating how many MemoryOps memories reference the current file. Issues a (cached) search request per file."
         }
       }
-    }
+    },
+    "chatParticipants": [
+      {
+        "id": "memoryops.chat",
+        "name": "memoryops",
+        "fullName": "MemoryOps",
+        "description": "Query your MemoryOps workspace memories",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "search",
+            "description": "Search your MemoryOps workspace for matching memories"
+          },
+          {
+            "name": "retrieve",
+            "description": "Retrieve token-budgeted packed context for a prompt"
+          }
+        ]
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "memoryops.gettingStarted",
+        "title": "Get Started with MemoryOps",
+        "description": "Connect VS Code to your MemoryOps backend and start working with governed agent memory.",
+        "steps": [
+          {
+            "id": "memoryops.configure",
+            "title": "Connect your backend",
+            "description": "Set your API URL and workspace ID.\n[Open MemoryOps Settings](command:memoryops.openSettings)",
+            "media": {
+              "markdown": "media/walkthroughs/configure.md"
+            },
+            "completionEvents": [
+              "onSettingChanged:memoryops.workspaceId"
+            ]
+          },
+          {
+            "id": "memoryops.apiKey",
+            "title": "Authenticate securely",
+            "description": "Store your workspace API key in the OS keychain.\n[Set API Key (Secure)](command:memoryops.setApiKey)",
+            "media": {
+              "markdown": "media/walkthroughs/api-key.md"
+            },
+            "completionEvents": [
+              "onCommand:memoryops.setApiKey"
+            ]
+          },
+          {
+            "id": "memoryops.testConnection",
+            "title": "Verify the connection",
+            "description": "Confirm the extension can reach and authenticate with your backend.\n[Test Connection](command:memoryops.testConnection)",
+            "media": {
+              "markdown": "media/walkthroughs/test-connection.md"
+            },
+            "completionEvents": [
+              "onCommand:memoryops.testConnection"
+            ]
+          },
+          {
+            "id": "memoryops.explore",
+            "title": "Start using your memories",
+            "description": "Browse, search, capture, and retrieve memories.\n[Open MemoryOps View](command:workbench.view.extension.memoryops)",
+            "media": {
+              "markdown": "media/walkthroughs/explore.md"
+            },
+            "completionEvents": [
+              "onCommand:memoryops.searchMemory",
+              "onCommand:memoryops.refreshMemories"
+            ]
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
+    "vscode:uninstall": "node ./out/lifecycle.js",
     "compile": "tsc -p ./",
-    "test": "npm run compile && node --test out/test/client.test.js out/test/markdown.test.js",
+    "test": "npm run compile && node --test out/test/client.test.js out/test/markdown.test.js out/test/cleanup.test.js out/test/webviewProvider.test.js",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.15",

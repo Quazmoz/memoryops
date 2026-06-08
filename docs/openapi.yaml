@@ -22,7 +22,8 @@ tags:
   - name: DLQ
   - name: Export
   - name: Tags
-  - name: Skills
+  - name: Tools
+  - name: Agent Skills
   - name: Contradictions
   - name: Health
 paths:
@@ -50,8 +51,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: '#/components/schemas/WorkspaceConfig'
       responses:
         '202':
           description: Event accepted for processing
@@ -226,6 +226,15 @@ paths:
           in: query
           schema:
             $ref: '#/components/schemas/Source'
+        - name: source_ref
+          in: query
+          schema:
+            type: string
+          description: >-
+            Filter to memories derived from a specific source file. Matches the
+            `source_ref` recorded on linked raw events, ignoring any
+            `#Lstart-Lend` line anchor (e.g. `src/foo.rs` matches
+            `src/foo.rs#L10-L20`).
         - name: tag
           in: query
           schema:
@@ -815,18 +824,18 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/workspaces/{id}/skills:
+  /v1/workspaces/{id}/tools:
     get:
-      tags: [Skills]
-      operationId: listSkills
-      summary: List workspace skills
+      tags: [Tools]
+      operationId: listTools
+      summary: List workspace tools
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
         - $ref: '#/components/parameters/After'
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
-          description: Workspace skills
+          description: Workspace tools
           content:
             application/json:
               schema:
@@ -836,15 +845,15 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Skill'
+                      $ref: '#/components/schemas/Tool'
                   next_cursor:
                     type: [string, 'null']
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
-      tags: [Skills]
-      operationId: createSkill
-      summary: Create a workspace skill
+      tags: [Tools]
+      operationId: createTool
+      summary: Create a workspace tool
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
       requestBody:
@@ -852,59 +861,59 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SkillWriteRequest'
+              $ref: '#/components/schemas/ToolWriteRequest'
       responses:
         '200':
-          description: Skill created
+          description: Tool created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Skill'
+                $ref: '#/components/schemas/Tool'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
-  /v1/workspaces/{id}/skills/{name}:
+  /v1/workspaces/{id}/tools/{name}:
     get:
-      tags: [Skills]
-      operationId: getSkill
-      summary: Get a workspace skill
+      tags: [Tools]
+      operationId: getTool
+      summary: Get a workspace tool
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
-        - $ref: '#/components/parameters/SkillName'
+        - $ref: '#/components/parameters/ToolName'
       responses:
         '200':
-          description: Skill
+          description: Tool
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Skill'
+                $ref: '#/components/schemas/Tool'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
-      tags: [Skills]
-      operationId: updateSkill
-      summary: Update a workspace skill
+      tags: [Tools]
+      operationId: updateTool
+      summary: Update a workspace tool
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
-        - $ref: '#/components/parameters/SkillName'
+        - $ref: '#/components/parameters/ToolName'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SkillUpdateRequest'
+              $ref: '#/components/schemas/ToolUpdateRequest'
       responses:
         '200':
-          description: Skill updated
+          description: Tool updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Skill'
+                $ref: '#/components/schemas/Tool'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -912,46 +921,46 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
-      tags: [Skills]
-      operationId: deleteSkill
-      summary: Delete a workspace skill
+      tags: [Tools]
+      operationId: deleteTool
+      summary: Delete a workspace tool
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
-        - $ref: '#/components/parameters/SkillName'
+        - $ref: '#/components/parameters/ToolName'
       responses:
         '204':
-          description: Skill deleted
+          description: Tool deleted
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/workspaces/{id}/skills/{name}/secret:
+  /v1/workspaces/{id}/tools/{name}/secret:
     get:
-      tags: [Skills]
-      operationId: getSkillSecret
-      summary: Get a skill secret
+      tags: [Tools]
+      operationId: getToolSecret
+      summary: Get a tool secret
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
-        - $ref: '#/components/parameters/SkillName'
+        - $ref: '#/components/parameters/ToolName'
       responses:
         '200':
-          description: Skill secret
+          description: Tool secret
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SkillSecret'
+                $ref: '#/components/schemas/ToolSecret'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/workspaces/{id}/skills/{name}/test:
+  /v1/workspaces/{id}/tools/{name}/test:
     post:
-      tags: [Skills]
-      operationId: testSkill
-      summary: Test a workspace skill
+      tags: [Tools]
+      operationId: testTool
+      summary: Test a workspace tool
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
-        - $ref: '#/components/parameters/SkillName'
+        - $ref: '#/components/parameters/ToolName'
       requestBody:
         required: true
         content:
@@ -961,11 +970,229 @@ paths:
               additionalProperties: true
       responses:
         '200':
-          description: Skill test response
+          description: Tool test response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SkillTestResponse'
+                $ref: '#/components/schemas/ToolTestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/tools/{name}/versions:
+    get:
+      tags: [Tools]
+      operationId: listToolVersions
+      summary: List versions of a workspace tool
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ToolName'
+      responses:
+        '200':
+          description: Tool version history (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ToolVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/tools/{name}/versions/{version}:
+    get:
+      tags: [Tools]
+      operationId: getToolVersion
+      summary: Get a specific tool version
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ToolName'
+        - $ref: '#/components/parameters/ToolVersion'
+      responses:
+        '200':
+          description: Tool version snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/tools/{name}/versions/{version}/rollback:
+    post:
+      tags: [Tools]
+      operationId: rollbackToolVersion
+      summary: Restore a prior tool version as a new version
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ToolName'
+        - $ref: '#/components/parameters/ToolVersion'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolRollbackRequest'
+      responses:
+        '200':
+          description: Tool rolled back (new version created)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tool'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/tools/{name}/invoke:
+    post:
+      tags: [Tools]
+      operationId: invokeTool
+      summary: Invoke a workspace tool (production call)
+      description: |
+        Calls the tool endpoint with rate-limit and circuit-breaker enforcement
+        and records the invocation to the workspace audit log.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ToolName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Tool invocation response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolTestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          description: Tool rate limit exceeded
+  /v1/workspaces/{id}/tools/{name}/invocations:
+    get:
+      tags: [Tools]
+      operationId: listToolInvocations
+      summary: List recent invocations for a tool
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ToolName'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Recent invocations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ToolInvocation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/workspaces/{id}/tools/export:
+    get:
+      tags: [Tools]
+      operationId: exportTools
+      summary: Export workspace tools as a JSON bundle (secrets excluded)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Exported tool definitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ExportedTool'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/tools/import:
+    post:
+      tags: [Tools]
+      operationId: importTools
+      summary: Import a JSON bundle of tool definitions
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportToolsRequest'
+      responses:
+        '200':
+          description: Import summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportToolsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/agent-skills:
+    get:
+      tags: [Agent Skills]
+      operationId: listAgentSkills
+      summary: List bundled agent skill files
+      description: Returns markdown-based agent skills discovered under `.claude/skills` and `.gemini/skills`.
+      responses:
+        '200':
+          description: Agent skill library
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentSkill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/agent-skills/{assistant}/{name}:
+    get:
+      tags: [Agent Skills]
+      operationId: getAgentSkill
+      summary: Read one bundled agent skill file
+      description: Returns the markdown contents for a single bundled agent skill file.
+      parameters:
+        - name: assistant
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [claude, gemini]
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent skill content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSkillContent'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1497,12 +1724,19 @@ components:
       required: true
       schema:
         type: string
-    SkillName:
+    ToolName:
       name: name
       in: path
       required: true
       schema:
         type: string
+    ToolVersion:
+      name: version
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
     FlagId:
       name: flag_id
       in: path
@@ -2327,6 +2561,33 @@ components:
             Decay score below which a memory is soft-deleted.
             Defaults to 0.10 when null.
           example: 0.10
+        retention_max_age_days:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 3650
+          description: >
+            Maximum age in days before memories become eligible for compliance retention purge.
+            Leave null to disable automatic retention purging.
+          example: 365
+        skill_version_retention_days:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 3650
+          description: >
+            Maximum age in days before historical skill versions are pruned.
+            The latest snapshot per skill is always retained. Leave null to disable pruning.
+          example: 90
+        compliance_hard_purge:
+          type: boolean
+          description: >
+            When true, compliance deletion also hard-deletes the originating raw events.
+            When false, only memory units are affected.
+        compliance_mode:
+          type: boolean
+          description: >
+            When true, skill create, update, and rollback operations require a non-empty change note.
         sub_agent_pools:
           type: array
           items:
@@ -2398,7 +2659,7 @@ components:
         next_cursor:
           type: [string, 'null']
           format: uuid
-    SkillWriteRequest:
+    ToolWriteRequest:
       type: object
       required: [name, description, endpoint_url]
       properties:
@@ -2422,7 +2683,21 @@ components:
           type: [string, 'null']
         auth_secret:
           type: [string, 'null']
-    SkillUpdateRequest:
+        change_note:
+          type: [string, 'null']
+        scope_visibility:
+          type: string
+          enum: [private, workspace, published]
+        rate_limit_per_minute:
+          type: integer
+          minimum: 0
+        circuit_breaker_threshold:
+          type: integer
+          minimum: 0
+        circuit_breaker_cooldown_seconds:
+          type: integer
+          minimum: 1
+    ToolUpdateRequest:
       type: object
       properties:
         description:
@@ -2445,7 +2720,26 @@ components:
           type: [string, 'null']
         enabled:
           type: boolean
-    Skill:
+        change_note:
+          type: [string, 'null']
+        scope_visibility:
+          type: string
+          enum: [private, workspace, published]
+        rate_limit_per_minute:
+          type: integer
+          minimum: 0
+        circuit_breaker_threshold:
+          type: integer
+          minimum: 0
+        circuit_breaker_cooldown_seconds:
+          type: integer
+          minimum: 1
+    ToolRollbackRequest:
+      type: object
+      properties:
+        change_note:
+          type: [string, 'null']
+    Tool:
       type: object
       required:
         - id
@@ -2457,6 +2751,11 @@ components:
         - input_schema
         - output_schema
         - enabled
+        - version
+        - scope_visibility
+        - rate_limit_per_minute
+        - circuit_breaker_threshold
+        - circuit_breaker_cooldown_seconds
         - created_at
         - updated_at
       properties:
@@ -2485,13 +2784,86 @@ components:
           type: [string, 'null']
         enabled:
           type: boolean
+        version:
+          type: integer
+          minimum: 1
+        scope_visibility:
+          type: string
+          enum: [private, workspace, published]
+        rate_limit_per_minute:
+          type: integer
+          minimum: 0
+        circuit_breaker_threshold:
+          type: integer
+          minimum: 0
+        circuit_breaker_cooldown_seconds:
+          type: integer
+          minimum: 1
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
-    SkillSecret:
+    ToolVersion:
+      type: object
+      required:
+        - id
+        - tool_id
+        - workspace_id
+        - name
+        - version
+        - description
+        - endpoint_url
+        - http_method
+        - input_schema
+        - output_schema
+        - enabled
+        - scope_visibility
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        tool_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        description:
+          type: string
+        endpoint_url:
+          type: string
+          format: uri
+        http_method:
+          type: string
+        input_schema:
+          type: object
+          additionalProperties: true
+        output_schema:
+          type: object
+          additionalProperties: true
+        auth_header:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+        scope_visibility:
+          type: string
+          enum: [private, workspace, published]
+        change_note:
+          type: [string, 'null']
+        created_by:
+          type: [string, 'null']
+        created_at:
+          type: string
+          format: date-time
+    ToolSecret:
       type: object
       required: [plaintext_secret]
       properties:
@@ -2499,7 +2871,7 @@ components:
           type: [string, 'null']
         plaintext_secret:
           type: string
-    SkillTestResponse:
+    ToolTestResponse:
       type: object
       required: [status, latency_ms]
       properties:
@@ -2508,7 +2880,132 @@ components:
         latency_ms:
           type: integer
         body:
-          description: JSON response body returned by the skill endpoint.
+          description: JSON response body returned by the tool endpoint.
+    ToolInvocation:
+      type: object
+      required: [id, tool_id, workspace_id, tool_name, tool_version, actor, source, status_code, latency_ms, occurred_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        tool_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        tool_name:
+          type: string
+        tool_version:
+          type: integer
+        actor:
+          type: string
+        source:
+          type: string
+          enum: [http, mcp, test]
+        status_code:
+          type: integer
+        latency_ms:
+          type: integer
+        error:
+          type: [string, 'null']
+        occurred_at:
+          type: string
+          format: date-time
+    ExportedTool:
+      type: object
+      required: [name, description, endpoint_url, http_method, input_schema, output_schema, enabled, scope_visibility, rate_limit_per_minute, circuit_breaker_threshold, circuit_breaker_cooldown_seconds, version]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        endpoint_url:
+          type: string
+        http_method:
+          type: string
+        input_schema:
+          type: object
+          additionalProperties: true
+        output_schema:
+          type: object
+          additionalProperties: true
+        auth_header:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+        scope_visibility:
+          type: string
+          enum: [private, workspace, published]
+        rate_limit_per_minute:
+          type: integer
+        circuit_breaker_threshold:
+          type: integer
+        circuit_breaker_cooldown_seconds:
+          type: integer
+        version:
+          type: integer
+    ImportToolsRequest:
+      type: object
+      required: [tools]
+      properties:
+        overwrite:
+          type: boolean
+          default: false
+        tools:
+          type: array
+          items:
+            type: object
+            required: [name, description, endpoint_url]
+            additionalProperties: true
+    ImportToolsResponse:
+      type: object
+      required: [created, updated, skipped, errors]
+      properties:
+        created:
+          type: integer
+        updated:
+          type: integer
+        skipped:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+            required: [name, error]
+            properties:
+              name:
+                type: string
+              error:
+                type: string
+    AgentSkill:
+      type: object
+      required: [name, filename, assistant, title, description]
+      properties:
+        name:
+          type: string
+        filename:
+          type: string
+        assistant:
+          type: string
+          enum: [claude, gemini]
+        title:
+          type: string
+        description:
+          type: string
+    AgentSkillContent:
+      type: object
+      required: [name, filename, assistant, content]
+      properties:
+        name:
+          type: string
+        filename:
+          type: string
+        assistant:
+          type: string
+          enum: [claude, gemini]
+        content:
+          type: string
     ContradictionListResponse:
       type: object
       required: [items]

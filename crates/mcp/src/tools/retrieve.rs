@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{MemoryToolResult, SkillToolResult, ToolDefinition};
+use super::{MemoryToolResult, ToolDefinition, ToolToolResult};
 
 const DEFAULT_LIMIT: u32 = 10;
 const MAX_LIMIT: u32 = 50;
@@ -40,7 +40,7 @@ pub struct RetrieveFeedbackRating {
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
 pub struct RetrieveOutput {
     pub memories: Vec<MemoryToolResult>,
-    pub skills: Vec<SkillToolResult>,
+    pub tools: Vec<ToolToolResult>,
 }
 
 pub fn definition() -> ToolDefinition {
@@ -115,8 +115,8 @@ pub async fn run(
     let token_budget = state.config.retrieval.default_token_budget;
 
     let memories = pack_results(results, min_score, token_budget, limit as usize);
-    let skills = load_enabled_skills(state, workspace_id).await?;
-    let output = RetrieveOutput { memories, skills };
+    let tools = load_enabled_tools(state, workspace_id).await?;
+    let output = RetrieveOutput { memories, tools };
 
     if let Some(feedback) = feedback.as_ref() {
         submit_feedback_batch(state, workspace_id, feedback).await?;
@@ -150,37 +150,40 @@ async fn submit_feedback_batch(
     Ok(())
 }
 
-async fn load_enabled_skills(
+async fn load_enabled_tools(
     state: &AppState,
     workspace_id: Uuid,
-) -> AppResult<Vec<SkillToolResult>> {
-    sqlx::query_as::<_, SkillRow>(
+) -> AppResult<Vec<ToolToolResult>> {
+    sqlx::query_as::<_, ToolRow>(
         r#"
-        SELECT name, description, endpoint_url, http_method, input_schema, output_schema
-        FROM workspace_skills
-        WHERE workspace_id = $1 AND enabled = TRUE
+        SELECT name, description, endpoint_url, http_method, input_schema, output_schema, version
+        FROM workspace_tools
+        WHERE workspace_id = $1
+          AND enabled = TRUE
+          AND scope_visibility IN ('workspace', 'published')
         ORDER BY name ASC
         "#,
     )
     .bind(workspace_id)
     .fetch_all(&state.db)
     .await
-    .map(|rows| rows.into_iter().map(SkillToolResult::from).collect())
+    .map(|rows| rows.into_iter().map(ToolToolResult::from).collect())
     .map_err(AppError::Database)
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct SkillRow {
+struct ToolRow {
     name: String,
     description: String,
     endpoint_url: String,
     http_method: String,
     input_schema: serde_json::Value,
     output_schema: serde_json::Value,
+    version: i32,
 }
 
-impl From<SkillRow> for SkillToolResult {
-    fn from(row: SkillRow) -> Self {
+impl From<ToolRow> for ToolToolResult {
+    fn from(row: ToolRow) -> Self {
         Self {
             name: row.name,
             description: row.description,
@@ -188,6 +191,7 @@ impl From<SkillRow> for SkillToolResult {
             http_method: row.http_method,
             input_schema: row.input_schema,
             output_schema: row.output_schema,
+            version: row.version,
         }
     }
 }

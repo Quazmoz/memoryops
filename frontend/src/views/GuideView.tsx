@@ -18,7 +18,7 @@ const SECTIONS = [
   { id: "direct-api", label: "Direct API" },
   { id: "ingest", label: "Ingest Memories" },
   { id: "retrieve", label: "Search & Retrieve" },
-  { id: "skills", label: "Skills" },
+  { id: "tools", label: "Tools" },
   { id: "contradictions", label: "Contradictions" },
   { id: "lifecycle", label: "Lifecycle & Decay" },
   { id: "config", label: "Workspace Config" },
@@ -401,12 +401,12 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/query \\
   }'`} />
           </Section>
 
-          <Section id="skills" title="Skills" tooltip="HTTP tools agents can call to augment memory retrieval with live external data.">
+          <Section id="tools" title="Tools" tooltip="HTTP endpoints agents can call to augment memory retrieval with live external data.">
             <p>
-              Skills are HTTP endpoints that agents can call at retrieval time to augment answers with live data. Register
-              a skill with a name, URL, and JSON schema, then enable it for the workspace.
+              Tools are HTTP endpoints that agents can call at retrieval time to augment answers with live data. Register
+              a tool with a name, URL, and JSON schema, then enable it for the workspace.
             </p>
-            <CodeBlock code={`curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/skills \\
+            <CodeBlock code={`curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/tools \\
   -H "x-api-key: {{API_KEY}}" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -424,8 +424,12 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/query \\
     "enabled": true
   }'`} />
             <p className="mt-4">
-              Use the <strong>Test</strong> button in the Skills table to send a live request and inspect the response
+              Use the <strong>Test</strong> button in the Tools table to send a live request and inspect the response
               without leaving the dashboard.
+            </p>
+            <p className="mt-4">
+              For reusable markdown instructions like <code>.claude/skills/use_memoryops.md</code> or{" "}
+              <code>.gemini/skills/use_memoryops.md</code>, open the <strong>Agent Skills</strong> view in the sidebar.
             </p>
           </Section>
 

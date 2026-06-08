@@ -210,6 +210,10 @@ pub struct ListQuery {
     pub user_id: Option<String>,
     pub repo: Option<String>,
     pub source: Option<String>,
+    /// Filter to memories derived from a specific source file. Matches the
+    /// `source_ref` recorded on linked raw events, ignoring any `#Lstart-Lend`
+    /// line anchor (e.g. `src/foo.rs` matches `src/foo.rs#L10-L20`).
+    pub source_ref: Option<String>,
     pub as_of: Option<DateTime<Utc>>,
     pub sort: Option<SortField>,
     pub direction: Option<SortDirection>,

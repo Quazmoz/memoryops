@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     let _telemetry_guard = init_telemetry(&config.telemetry)?;
     let state = build_state(config).await?;
     let server = Arc::new(McpServer::new(RuntimeBackend::new(state)));
-    let transport_mode = std::env::var("MCP_TRANSPORT").unwrap_or_else(|_| "sse".to_owned());
+    let transport_mode = std::env::var("MCP_TRANSPORT").unwrap_or_else(|_| "stdio".to_owned());
 
     match transport_mode.as_str() {
         "stdio" => {

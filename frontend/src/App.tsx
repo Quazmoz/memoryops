@@ -13,7 +13,8 @@ import { MemoryExplorer } from "./views/MemoryExplorer";
 import { RetrievalTraceView } from "./views/RetrievalTraceView";
 import { GuideView } from "./views/GuideView";
 import { SettingsView } from "./views/SettingsView";
-import { SkillsView } from "./views/SkillsView";
+import { ToolsView } from "./views/ToolsView";
+import { AgentSkillsView } from "./views/AgentSkillsView";
 
 export default function App() {
   return (
@@ -28,7 +29,8 @@ export default function App() {
           <Route path="/trace" element={<RetrievalTraceView />} />
           <Route path="/lifecycle" element={<LifecycleView />} />
           <Route path="/integrations" element={<IntegrationsView />} />
-          <Route path="/skills" element={<SkillsView />} />
+          <Route path="/tools" element={<ToolsView />} />
+          <Route path="/agent-skills" element={<AgentSkillsView />} />
           <Route path="/contradictions" element={<ContradictionsView />} />
           <Route path="/audit" element={<AuditView />} />
           <Route path="/guide" element={<GuideView />} />

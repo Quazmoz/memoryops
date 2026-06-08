@@ -44,4 +44,9 @@ pub enum AuditAction {
     WorkspaceDeleted,
     ObservationIngested,
     UserErasure,
+    ToolCreated,
+    ToolUpdated,
+    ToolDeleted,
+    ToolRolledBack,
+    ToolInvoked,
 }

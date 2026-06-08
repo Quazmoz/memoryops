@@ -1,15 +1,16 @@
-import { Activity, AlertTriangle, CheckCircle2, Download, GitMerge, KeyRound, Loader2, Play, RefreshCw, Save, ServerCog, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Upload, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clipboard, Download, GitMerge, KeyRound, Loader2, Play, RefreshCw, Save, ServerCog, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Upload, XCircle } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import type { ForgetUserDataResponse, ImportMemoriesResponse, PromotionReport, WorkspaceConfig } from "../api/types";
+import type { ApiKeySummary, ForgetUserDataResponse, ImportMemoriesResponse, PromotionReport, WorkspaceConfig } from "../api/types";
 import type { HealthCheck } from "../api/health";
-import { exportMemories, forgetUserData, getWorkspace, importMemories, triggerPromotion, triggerReindex, updateWorkspaceConfig } from "../api/workspaces";
+import { createApiKey, exportMemories, forgetUserData, getWorkspace, importMemories, listApiKeys, revokeApiKey, triggerPromotion, triggerReindex, updateWorkspaceConfig } from "../api/workspaces";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { Skeleton } from "../components/ui/skeleton";
 import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { useSystemHealth } from "../hooks/use-live-query";
 import { cn } from "../lib/utils";
@@ -36,7 +37,9 @@ export function SettingsView() {
   const [subAgentPools, setSubAgentPools] = useState("");
   const [contradictionMode, setContradictionMode] = useState<"quarantine" | "auto_resolve">("quarantine");
   const [retentionMaxAgeDays, setRetentionMaxAgeDays] = useState<number | undefined>(undefined);
+  const [skillVersionRetentionDays, setSkillVersionRetentionDays] = useState<number | undefined>(undefined);
   const [complianceHardPurge, setComplianceHardPurge] = useState(false);
+  const [complianceMode, setComplianceMode] = useState(false);
   const [eraseUserId, setEraseUserId] = useState("");
   const [confirmEraseUserId, setConfirmEraseUserId] = useState<string | null>(null);
   const [eraseNotice, setEraseNotice] = useState<string | null>(null);
@@ -51,6 +54,69 @@ export function SettingsView() {
   const canAct = hasApiKey && workspaceId.trim().length > 0;
 
   const healthQuery = useSystemHealth(canAct);
+
+  // API Key state
+  const [includeRevoked, setIncludeRevoked] = useState(false);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [createdPlaintextKey, setCreatedPlaintextKey] = useState<string | null>(null);
+  const [createdKeyName, setCreatedKeyName] = useState<string | null>(null);
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
+  const [keyToRevoke, setKeyToRevoke] = useState<ApiKeySummary | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const keysQuery = useQuery({
+    queryKey: ["workspace", workspaceId, "keys", includeRevoked],
+    queryFn: () => listApiKeys(workspaceId, includeRevoked),
+    enabled: hasApiKey && workspaceId.trim().length > 0,
+  });
+
+  const createKeyMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "create-key"],
+    mutationFn: (name: string) => createApiKey(workspaceId, name),
+    onSuccess: (result) => {
+      setApiKeyError(null);
+      setCreatedPlaintextKey(result.plaintext_key);
+      setCreatedKeyName(newKeyName);
+      setNewKeyName("");
+      void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "keys"] });
+    },
+    onError: (error: Error) => {
+      setApiKeyError(error.message);
+    },
+  });
+
+  const revokeKeyMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "revoke-key"],
+    mutationFn: (keyId: string) => revokeApiKey(workspaceId, keyId),
+    onSuccess: () => {
+      setApiKeyError(null);
+      setKeyToRevoke(null);
+      void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "keys"] });
+    },
+    onError: (error: Error) => {
+      setApiKeyError(error.message);
+      setKeyToRevoke(null);
+    },
+  });
+
+  function handleCopy(text: string) {
+    void navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  function formatKeyDate(value: string | null | undefined): string {
+    if (!value) return "Never";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Never";
+    return date.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
 
   const reindexMutation = useMutation({
     mutationKey: ["workspace", workspaceId, "reindex"],
@@ -109,7 +175,9 @@ export function SettingsView() {
       setLlmModel(workspace.llm_model ?? "llama3");
       setSubAgentPools((workspace.sub_agent_pools ?? []).join(", "));
       setRetentionMaxAgeDays(workspace.retention_max_age_days ?? undefined);
+      setSkillVersionRetentionDays(workspace.skill_version_retention_days ?? undefined);
       setComplianceHardPurge(workspace.compliance_hard_purge ?? false);
+      setComplianceMode(workspace.compliance_mode ?? false);
       const mode = workspace.contradiction_mode;
       if (mode === "quarantine" || mode === "auto_resolve") {
         setContradictionMode(mode);
@@ -159,7 +227,9 @@ export function SettingsView() {
       setLlmModel(workspaceQuery.data.llm_model ?? "llama3");
       setSubAgentPools((workspaceQuery.data.sub_agent_pools ?? []).join(", "));
       setRetentionMaxAgeDays(workspaceQuery.data.retention_max_age_days ?? undefined);
+      setSkillVersionRetentionDays(workspaceQuery.data.skill_version_retention_days ?? undefined);
       setComplianceHardPurge(workspaceQuery.data.compliance_hard_purge ?? false);
+      setComplianceMode(workspaceQuery.data.compliance_mode ?? false);
       const mode = workspaceQuery.data.contradiction_mode;
       if (mode === "quarantine" || mode === "auto_resolve") {
         setContradictionMode(mode);
@@ -261,6 +331,31 @@ export function SettingsView() {
     const next = !complianceHardPurge;
     setComplianceHardPurge(next);
     configMutation.mutate({ compliance_hard_purge: next });
+  }
+
+  function saveSkillVersionRetentionDays(value: string) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      setSkillVersionRetentionDays(undefined);
+      configMutation.mutate({ skill_version_retention_days: null });
+      return;
+    }
+
+    const days = Number(trimmed);
+    if (!Number.isInteger(days) || days < 1 || days > 3650) {
+      setConfigError("skill_version_retention_days must be between 1 and 3650");
+      return;
+    }
+
+    setConfigError(null);
+    setSkillVersionRetentionDays(days);
+    configMutation.mutate({ skill_version_retention_days: days });
+  }
+
+  function toggleComplianceMode() {
+    const next = !complianceMode;
+    setComplianceMode(next);
+    configMutation.mutate({ compliance_mode: next });
   }
 
   function requestEraseUserData() {
@@ -385,6 +480,129 @@ export function SettingsView() {
           </CardContent>
         </Card>
       </section>
+
+      {/* Workspace API Keys Card */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="flex items-center gap-1.5">
+            <span>Workspace API Keys</span>
+            <HelpTooltip label="Workspace API Keys">Manage API keys used by external agents or CLI tools to connect to this workspace.</HelpTooltip>
+          </CardTitle>
+          <KeyRound className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+        </CardHeader>
+        <CardContent className="grid gap-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-ink/75">
+              API keys allow external tools (like the VS Code extension, cursor, or custom agents) to securely connect to MemoryOps.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                id="show-revoked-keys"
+                type="checkbox"
+                checked={includeRevoked}
+                onChange={(e) => setIncludeRevoked(e.target.checked)}
+                className="h-4 w-4 rounded border-line text-accent focus:ring-accent"
+              />
+              <label htmlFor="show-revoked-keys" className="text-sm text-ink/70 cursor-pointer select-none">
+                Show revoked keys
+              </label>
+            </div>
+          </div>
+
+          {apiKeyError ? <InlineError title="API Key action failed" message={apiKeyError} /> : null}
+
+          {keysQuery.isLoading ? (
+            <Skeleton className="h-32 w-full" />
+          ) : keysQuery.isError ? (
+            <InlineError title="Failed to load keys" message={keysQuery.error.message} />
+          ) : keysQuery.data && keysQuery.data.length === 0 ? (
+            <div className="text-center py-6 text-sm text-ink/55 border border-dashed border-line rounded-md">
+              No API keys found. Generate a key below to get started.
+            </div>
+          ) : (
+            <div className="thin-scrollbar overflow-auto rounded-md border border-line">
+              <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+                <thead className="bg-soft text-xs uppercase text-ink/55">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Name</th>
+                    <th className="px-3 py-2 font-medium">Prefix</th>
+                    <th className="px-3 py-2 font-medium">Created</th>
+                    <th className="px-3 py-2 font-medium">Last Used</th>
+                    <th className="px-3 py-2 font-medium">Status</th>
+                    <th className="px-3 py-2 font-medium text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {keysQuery.data?.map((key) => {
+                    const isCurrent = apiKey.startsWith(key.prefix);
+                    return (
+                      <tr key={key.id} className="border-t border-line align-middle hover:bg-soft/10">
+                        <td className="px-3 py-3 text-ink font-medium">{key.name}</td>
+                        <td className="px-3 py-3 font-mono text-xs text-ink/70">{key.prefix}</td>
+                        <td className="px-3 py-3 text-ink/70">{formatKeyDate(key.created_at)}</td>
+                        <td className="px-3 py-3 text-ink/70">{formatKeyDate(key.last_used_at)}</td>
+                        <td className="px-3 py-3">
+                          {key.revoked ? (
+                            <Badge variant="rust">Revoked</Badge>
+                          ) : isCurrent ? (
+                            <Badge variant="blue">Current Key</Badge>
+                          ) : (
+                            <Badge variant="green">Active</Badge>
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          {!key.revoked && (
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              disabled={isCurrent || revokeKeyMutation.isPending}
+                              onClick={() => setKeyToRevoke(key)}
+                            >
+                              Revoke
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="grid gap-3 rounded-lg border border-line bg-soft/40 p-4">
+            <div>
+              <p className="text-sm font-medium text-ink">Generate New API Key</p>
+              <p className="mt-1 text-xs text-ink/60">Create a new secure key for an agent or client integration.</p>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const name = newKeyName.trim();
+                if (name.length > 0) {
+                  createKeyMutation.mutate(name);
+                }
+              }}
+              className="flex flex-col gap-2 sm:flex-row"
+            >
+              <Input
+                value={newKeyName}
+                onChange={(e) => setNewKeyName(e.target.value)}
+                placeholder="Key name (e.g. VS Code, Claude Code)"
+                disabled={!canAct || createKeyMutation.isPending}
+                required
+              />
+              <Button
+                type="submit"
+                disabled={!canAct || newKeyName.trim().length === 0 || createKeyMutation.isPending}
+              >
+                {createKeyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Generate"}
+              </Button>
+            </form>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -768,6 +986,31 @@ export function SettingsView() {
             />
           </div>
 
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
+            <div>
+              <p className="text-sm font-medium text-ink">
+                <InfoLabel label="Skill version retention days" tooltip="Maximum age in days before historical skill versions are pruned. The latest snapshot per skill is always kept." />
+              </p>
+              <p className="mt-1 text-xs text-ink/60">Prune older skill snapshots daily while preserving the newest version record for each skill. Leave blank to disable.</p>
+              {skillVersionRetentionDays ? (
+                <Badge variant="teal" className="mt-2">
+                  Active — historical skill versions older than {skillVersionRetentionDays} days will be pruned daily
+                </Badge>
+              ) : null}
+            </div>
+            <Input
+              data-testid="skill-version-retention-days-input"
+              type="number"
+              min={1}
+              max={3650}
+              placeholder="No limit"
+              value={skillVersionRetentionDays ?? ""}
+              onChange={(event) => saveSkillVersionRetentionDays(event.target.value)}
+              disabled={!canAct || configMutation.isPending}
+              className="w-full lg:w-48"
+            />
+          </div>
+
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-medium text-ink">
@@ -791,6 +1034,34 @@ export function SettingsView() {
                 className={cn(
                   "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform",
                   complianceHardPurge ? "translate-x-5" : "translate-x-0",
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-ink">
+                <InfoLabel label="Compliance mode" tooltip="Require an explicit change note for skill create, update, and rollback operations." />
+              </p>
+              <p className="mt-1 text-xs text-ink/60">When enabled, skill mutations must include a non-empty change note for auditability.</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={complianceMode}
+              data-testid="compliance-mode-toggle"
+              onClick={toggleComplianceMode}
+              disabled={!canAct || configMutation.isPending}
+              className={cn(
+                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50",
+                complianceMode ? "bg-accent" : "bg-ink/20",
+              )}
+            >
+              <span
+                className={cn(
+                  "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform",
+                  complianceMode ? "translate-x-5" : "translate-x-0",
                 )}
               />
             </button>
@@ -854,6 +1125,93 @@ export function SettingsView() {
           </div>
         </CardContent>
       </Card>
+
+      {/* API Key Plaintext One-Time Modal */}
+      {createdPlaintextKey && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-lg border border-line bg-white p-6 shadow-xl animate-in fade-in-50 zoom-in-95 duration-200">
+            <h2 className="text-lg font-semibold text-ink flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-accent-strong" />
+              <span>API Key Generated Successfully</span>
+            </h2>
+            
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" />
+              <div>
+                <p className="font-semibold">Copy this key now!</p>
+                <p className="mt-1 text-xs opacity-90">
+                  For security reasons, this key will only be displayed once. If you lose it, you will have to create a new one. It cannot be recovered later.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="text-xs font-semibold uppercase text-ink/45">Plaintext API Key</label>
+              <div className="mt-1 flex items-center gap-2 rounded-md border border-line bg-soft p-3 font-mono text-sm break-all select-all">
+                <span className="flex-1 select-all">{createdPlaintextKey}</span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleCopy(createdPlaintextKey)}
+                >
+                  <Clipboard className="mr-1.5 h-3.5 w-3.5" />
+                  {copied ? "Copied" : "Copy"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                onClick={() => {
+                  setCreatedPlaintextKey(null);
+                  setCreatedKeyName(null);
+                }}
+              >
+                I have saved this key
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revocation Confirmation Dialog */}
+      {keyToRevoke && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-lg border border-line bg-white p-6 shadow-xl animate-in fade-in-50 zoom-in-95 duration-200">
+            <h2 className="text-lg font-semibold text-ink flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-rust" />
+              <span>Revoke API Key</span>
+            </h2>
+            <p className="mt-3 text-sm text-ink/75">
+              Are you sure you want to revoke the API key <strong className="text-ink font-semibold">"{keyToRevoke.name}"</strong> (prefix: <code className="font-mono bg-soft px-1 rounded">{keyToRevoke.prefix}</code>)?
+            </p>
+            <p className="mt-2 text-xs text-rust font-medium">
+              This action is immediate and permanent. Any agents or services using this key will be disconnected and unable to authenticate.
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setKeyToRevoke(null)}
+                disabled={revokeKeyMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => revokeKeyMutation.mutate(keyToRevoke.id)}
+                disabled={revokeKeyMutation.isPending}
+              >
+                {revokeKeyMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Revoke Key"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

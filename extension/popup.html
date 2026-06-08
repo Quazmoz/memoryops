@@ -8,7 +8,7 @@
       background-color: #1c1b19;
       color: #cdccca;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      width: 320px;
+      width: 360px;
       margin: 0;
       padding: 16px;
       box-sizing: border-box;
@@ -65,6 +65,19 @@
       background-color: #01696f;
       color: #cdccca;
     }
+    button.secondary {
+      background-color: transparent;
+      border: 1px solid #393836;
+      color: #cdccca;
+      width: auto;
+      margin-top: 0;
+      padding: 6px 10px;
+    }
+    button.secondary:hover {
+      border-color: #4f98a3;
+      background-color: rgba(79, 152, 163, 0.1);
+      color: #cdccca;
+    }
     #status {
       margin-top: 12px;
       font-size: 12px;
@@ -73,6 +86,128 @@
     }
     .success { color: #4f98a3; }
     .error { color: #fdab43; }
+    .section {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid #393836;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .section-title {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #f5f3ef;
+    }
+    .section-copy {
+      margin: 0 0 12px;
+      color: #9f9d99;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    #skillsStatus {
+      min-height: 14px;
+      font-size: 12px;
+      color: #9f9d99;
+      margin-bottom: 8px;
+    }
+    #skillsList {
+      display: grid;
+      gap: 8px;
+      max-height: 260px;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+    .skill-card {
+      display: grid;
+      gap: 8px;
+      border: 1px solid #393836;
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(79, 152, 163, 0.08), rgba(23, 22, 20, 0.95));
+      padding: 10px;
+    }
+    .skill-meta {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .skill-title {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #f5f3ef;
+    }
+    .skill-description {
+      margin: 4px 0 0;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #b8b6b2;
+    }
+    .skill-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .badge.scope-private {
+      background-color: rgba(205, 204, 202, 0.12);
+      color: #cdccca;
+    }
+    .badge.scope-workspace {
+      background-color: rgba(79, 152, 163, 0.16);
+      color: #8fd0d8;
+    }
+    .badge.scope-published {
+      background-color: rgba(253, 171, 67, 0.14);
+      color: #fdab43;
+    }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .toggle-copy {
+      font-size: 11px;
+      color: #9f9d99;
+    }
+    .toggle-button {
+      width: auto;
+      min-width: 88px;
+      margin-top: 0;
+      padding: 6px 10px;
+    }
+    .toggle-button[aria-pressed="false"] {
+      background-color: #393836;
+      color: #cdccca;
+    }
+    .toggle-button[aria-pressed="false"]:hover {
+      background-color: #4a4946;
+      color: #f5f3ef;
+    }
+    .empty {
+      border: 1px dashed #393836;
+      border-radius: 12px;
+      padding: 14px;
+      text-align: center;
+      color: #9f9d99;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
@@ -96,6 +231,18 @@
   <button id="saveBtn">Save</button>
   <div id="status"></div>
 
+  <section class="section">
+    <div class="section-header">
+      <h3 class="section-title">Workspace skills</h3>
+      <button id="refreshSkillsBtn" class="secondary" type="button">Refresh</button>
+    </div>
+    <p class="section-copy">Review registered skills and toggle whether agents may invoke them without leaving the browser.</p>
+    <div id="skillsStatus">Configure the extension and refresh to load skills.</div>
+    <div id="skillsList">
+      <div class="empty">No skills loaded yet.</div>
+    </div>
+  </section>
+
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const apiUrlInput = document.getElementById('apiUrl');
@@ -103,14 +250,164 @@
       const workspaceIdInput = document.getElementById('workspaceId');
       const saveBtn = document.getElementById('saveBtn');
       const statusDiv = document.getElementById('status');
+      const refreshSkillsBtn = document.getElementById('refreshSkillsBtn');
+      const skillsStatusDiv = document.getElementById('skillsStatus');
+      const skillsList = document.getElementById('skillsList');
+
+      function setStatus(text, className) {
+        statusDiv.textContent = text;
+        statusDiv.className = className || '';
+      }
+
+      function setSkillsStatus(text, className) {
+        skillsStatusDiv.textContent = text;
+        skillsStatusDiv.className = className || '';
+      }
+
+      function isConfigured() {
+        return apiUrlInput.value.trim() && apiKeyInput.value.trim() && workspaceIdInput.value.trim();
+      }
+
+      function previewDescription(text) {
+        if (!text) {
+          return 'No description provided.';
+        }
+        return text.length > 110 ? text.slice(0, 107) + '...' : text;
+      }
+
+      function formatVisibility(value) {
+        if (!value) {
+          return 'Workspace';
+        }
+        return value.charAt(0).toUpperCase() + value.slice(1);
+      }
+
+      function renderSkills(skills) {
+        skillsList.textContent = '';
+
+        if (!skills.length) {
+          const empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = 'No skills are registered for this workspace.';
+          skillsList.appendChild(empty);
+          return;
+        }
+
+        skills.forEach((skill) => {
+          const card = document.createElement('div');
+          card.className = 'skill-card';
+
+          const meta = document.createElement('div');
+          meta.className = 'skill-meta';
+
+          const details = document.createElement('div');
+          const title = document.createElement('p');
+          title.className = 'skill-title';
+          title.textContent = skill.name;
+          const description = document.createElement('p');
+          description.className = 'skill-description';
+          description.textContent = previewDescription(skill.description);
+          details.appendChild(title);
+          details.appendChild(description);
+
+          const badges = document.createElement('div');
+          badges.className = 'skill-badges';
+
+          const scopeBadge = document.createElement('span');
+          scopeBadge.className = `badge scope-${skill.scope_visibility || 'workspace'}`;
+          scopeBadge.textContent = formatVisibility(skill.scope_visibility);
+          badges.appendChild(scopeBadge);
+
+          const versionBadge = document.createElement('span');
+          versionBadge.className = 'badge scope-private';
+          versionBadge.textContent = `v${skill.version}`;
+          badges.appendChild(versionBadge);
+
+          meta.appendChild(details);
+          meta.appendChild(badges);
+
+          const toggleRow = document.createElement('div');
+          toggleRow.className = 'toggle-row';
+
+          const copy = document.createElement('span');
+          copy.className = 'toggle-copy';
+          copy.textContent = skill.enabled ? 'Enabled for agent invocation.' : 'Disabled until you re-enable it.';
+
+          const toggle = document.createElement('button');
+          toggle.type = 'button';
+          toggle.className = 'toggle-button';
+          toggle.setAttribute('aria-pressed', String(Boolean(skill.enabled)));
+          toggle.textContent = skill.enabled ? 'Disable' : 'Enable';
+          toggle.addEventListener('click', () => toggleSkill(skill, toggle));
+
+          toggleRow.appendChild(copy);
+          toggleRow.appendChild(toggle);
+
+          card.appendChild(meta);
+          card.appendChild(toggleRow);
+          skillsList.appendChild(card);
+        });
+      }
+
+      function loadSkills() {
+        if (!isConfigured()) {
+          renderSkills([]);
+          setSkillsStatus('Save API URL, API key, and workspace ID to load workspace skills.', '');
+          return;
+        }
+
+        refreshSkillsBtn.disabled = true;
+        setSkillsStatus('Loading skills...', '');
+        chrome.runtime.sendMessage({ type: 'LIST_SKILLS' }, (response) => {
+          refreshSkillsBtn.disabled = false;
+
+          if (chrome.runtime.lastError) {
+            renderSkills([]);
+            setSkillsStatus('Could not load skills: ' + chrome.runtime.lastError.message, 'error');
+            return;
+          }
+
+          if (response && response.error) {
+            renderSkills([]);
+            setSkillsStatus(response.error, 'error');
+            return;
+          }
+
+          const skills = Array.isArray(response && response.skills) ? response.skills : [];
+          renderSkills(skills);
+          setSkillsStatus(skills.length ? `Loaded ${skills.length} skill${skills.length === 1 ? '' : 's'}.` : 'No skills registered for this workspace.', skills.length ? 'success' : '');
+        });
+      }
+
+      function toggleSkill(skill, button) {
+        button.disabled = true;
+        setSkillsStatus(`Updating ${skill.name}...`, '');
+
+        chrome.runtime.sendMessage({ type: 'SET_SKILL_ENABLED', name: skill.name, enabled: !skill.enabled }, (response) => {
+          button.disabled = false;
+
+          if (chrome.runtime.lastError) {
+            setSkillsStatus('Could not update skill: ' + chrome.runtime.lastError.message, 'error');
+            return;
+          }
+
+          if (response && response.error) {
+            setSkillsStatus(response.error, 'error');
+            return;
+          }
+
+          setSkillsStatus(`${skill.name} ${skill.enabled ? 'disabled' : 'enabled'}.`, 'success');
+          loadSkills();
+        });
+      }
 
       // Load settings
       chrome.runtime.sendMessage({ type: "GET_SETTINGS" }, (response) => {
-        if (response && response.settings) {
-          apiUrlInput.value = response.settings.apiUrl || '';
-          apiKeyInput.value = response.settings.apiKey || '';
-          workspaceIdInput.value = response.settings.workspaceId || '';
-        }
+        const settings = response && response.settings ? response.settings : response || {};
+        apiUrlInput.value = settings.apiUrl || '';
+        apiKeyInput.value = settings.apiKey || '';
+        workspaceIdInput.value = settings.workspaceId || '';
+        loadSkills();
       });
 
       // Save settings
@@ -123,20 +420,20 @@
 
         chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", settings: settings }, (response) => {
           if (chrome.runtime.lastError) {
-            statusDiv.textContent = "✗ Error: " + chrome.runtime.lastError.message;
-            statusDiv.className = 'error';
+            setStatus("✗ Error: " + chrome.runtime.lastError.message, 'error');
           } else if (response && response.success === false) {
-            statusDiv.textContent = "✗ Error: Failed to save";
-            statusDiv.className = 'error';
+            setStatus("✗ Error: Failed to save", 'error');
           } else {
-            statusDiv.textContent = "✓ Saved";
-            statusDiv.className = 'success';
+            setStatus("✓ Saved", 'success');
+            loadSkills();
             setTimeout(() => {
-              statusDiv.textContent = "";
+              setStatus('', '');
             }, 2000);
           }
         });
       });
+
+      refreshSkillsBtn.addEventListener('click', loadSkills);
     });
   </script>
 </body>

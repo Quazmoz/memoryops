@@ -46,11 +46,19 @@ async function handleMessage(message, sender) {
       return retrieveMemory(message.query);
 
     case "GET_SETTINGS":
-      return getSettings();
+      return { settings: await getSettings() };
 
     case "SAVE_SETTINGS":
       await saveSettings(message.settings);
-      return { ok: true };
+      return { success: true };
+
+    case "LIST_SKILLS":
+      return { skills: await listSkills() };
+
+    case "SET_SKILL_ENABLED":
+      return {
+        skill: await setSkillEnabled(message.name, message.enabled),
+      };
 
     default:
       throw new Error(`Unknown message type: ${message.type}`);
@@ -66,28 +74,11 @@ async function handleMessage(message, sender) {
  * @returns {Promise<object>} API response body.
  */
 async function ingestObservation(payload) {
-  const { apiUrl, apiKey, workspaceId } = await getSettings();
-
-  if (!apiUrl || !apiKey || !workspaceId) {
-    throw new Error("MemoryOps is not configured. Open the extension popup to set up your API credentials.");
-  }
-
-  const response = await fetch(`${apiUrl}/v1/ingest/observation`, {
+  const settings = await getConfiguredSettings();
+  return memoryOpsRequest(settings, "/v1/ingest/observation", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "x-workspace-id": workspaceId,
-    },
-    body: JSON.stringify(payload),
+    body: payload,
   });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "(no body)");
-    throw new Error(`MemoryOps API returned ${response.status}: ${body}`);
-  }
-
-  return response.json();
 }
 
 /**
@@ -97,25 +88,60 @@ async function ingestObservation(payload) {
  * @returns {Promise<object>} API response body (includes `results` array).
  */
 async function retrieveMemory(query) {
-  const { apiUrl, apiKey, workspaceId } = await getSettings();
+  const settings = await getConfiguredSettings();
+  return memoryOpsRequest(settings, "/v1/retrieve", {
+    method: "POST",
+    body: { query, workspace_id: settings.workspaceId },
+  });
+}
+
+async function listSkills() {
+  const settings = await getConfiguredSettings();
+  return memoryOpsRequest(settings, `/v1/workspaces/${settings.workspaceId}/tools`);
+}
+
+async function setSkillEnabled(name, enabled) {
+  const settings = await getConfiguredSettings();
+  return memoryOpsRequest(settings, `/v1/workspaces/${settings.workspaceId}/tools/${encodeURIComponent(name)}`, {
+    method: "PATCH",
+    body: { enabled },
+  });
+}
+
+async function getConfiguredSettings() {
+  const settings = await getSettings();
+  const apiUrl = settings.apiUrl?.trim().replace(/\/+$/, "") ?? "";
+  const apiKey = settings.apiKey?.trim() ?? "";
+  const workspaceId = settings.workspaceId?.trim() ?? "";
 
   if (!apiUrl || !apiKey || !workspaceId) {
     throw new Error("MemoryOps is not configured. Open the extension popup to set up your API credentials.");
   }
 
-  const response = await fetch(`${apiUrl}/v1/retrieve`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "x-workspace-id": workspaceId,
-    },
-    body: JSON.stringify({ query, workspace_id: workspaceId }),
+  return { apiUrl, apiKey, workspaceId };
+}
+
+async function memoryOpsRequest(settings, path, init = {}) {
+  const headers = {
+    "x-api-key": settings.apiKey,
+    "x-workspace-id": settings.workspaceId,
+    ...(init.body ? { "Content-Type": "application/json" } : {}),
+    ...(init.headers ?? {}),
+  };
+
+  const response = await fetch(`${settings.apiUrl}${path}`, {
+    method: init.method ?? "GET",
+    headers,
+    body: init.body ? JSON.stringify(init.body) : undefined,
   });
 
   if (!response.ok) {
     const body = await response.text().catch(() => "(no body)");
     throw new Error(`MemoryOps API returned ${response.status}: ${body}`);
+  }
+
+  if (response.status === 204) {
+    return null;
   }
 
   return response.json();

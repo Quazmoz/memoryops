@@ -23,14 +23,80 @@ type MemoryResultsTableProps = {
   pendingMemoryIds: string[];
   onTogglePinned?: (memory: MemoryUnit) => void;
   showPinControls?: boolean;
+  enableSelection?: boolean;
+  selectedIds?: string[];
+  onToggleSelected?: (id: string) => void;
+  onToggleSelectAllVisible?: (ids: string[]) => void;
 };
 
-export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePinned, showPinControls = true }: MemoryResultsTableProps) {
+export function MemoryResultsTable({
+  rows,
+  loading,
+  pendingMemoryIds,
+  onTogglePinned,
+  showPinControls = true,
+  enableSelection = false,
+  selectedIds = [],
+  onToggleSelected,
+  onToggleSelectAllVisible,
+}: MemoryResultsTableProps) {
   const navigate = useNavigate();
   const pendingIds = useMemo(() => new Set(pendingMemoryIds), [pendingMemoryIds]);
   const columns = useMemo<ColumnDef<MemoryRow>[]>(
     () => {
-      const tableColumns: ColumnDef<MemoryRow>[] = [
+      const tableColumns: ColumnDef<MemoryRow>[] = [];
+
+      if (enableSelection) {
+        tableColumns.push({
+          id: "select",
+          header: () => {
+            const allVisibleIds = rows.map((r) => r.id);
+            const isAllSelected =
+              allVisibleIds.length > 0 &&
+              allVisibleIds.every((id) => selectedIds.includes(id));
+            const isSomeSelected =
+              allVisibleIds.length > 0 &&
+              allVisibleIds.some((id) => selectedIds.includes(id)) &&
+              !isAllSelected;
+            return (
+              <input
+                type="checkbox"
+                checked={isAllSelected}
+                ref={(el) => {
+                  if (el) {
+                    el.indeterminate = isSomeSelected;
+                  }
+                }}
+                onChange={() => onToggleSelectAllVisible?.(allVisibleIds)}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+                className="h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                aria-label="Select all visible memories"
+                data-testid="select-all-checkbox"
+              />
+            );
+          },
+          cell: ({ row }) => {
+            const id = row.original.id;
+            const isSelected = selectedIds.includes(id);
+            return (
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={() => onToggleSelected?.(id)}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+                className="h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                aria-label={`Select memory ${id}`}
+                data-testid={`select-checkbox-${id}`}
+              />
+            );
+          },
+          meta: { className: "w-8 px-2" },
+        });
+      }
+
+      tableColumns.push(
       {
         id: "rank",
         header: "#",
@@ -104,7 +170,7 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
         header: () => <InfoLabel label="Updated" tooltip="Most recent update timestamp for the stored memory record." />,
         cell: ({ row }) => <span className="whitespace-nowrap text-xs text-ink/65">{formatDateTime(row.original.updated_at)}</span>,
       },
-      ];
+      );
 
       if (showPinControls) {
         tableColumns.push({
@@ -140,7 +206,7 @@ export function MemoryResultsTable({ rows, loading, pendingMemoryIds, onTogglePi
 
       return tableColumns;
     },
-    [onTogglePinned, pendingIds, showPinControls],
+    [onTogglePinned, pendingIds, showPinControls, enableSelection, selectedIds, onToggleSelected, onToggleSelectAllVisible, rows],
   );
   const table = useReactTable({ data: rows, columns, getCoreRowModel: getCoreRowModel() });
 
