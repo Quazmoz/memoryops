@@ -121,6 +121,7 @@ export async function deleteTool(workspaceId: string, name: string): Promise<voi
 export interface ToolTestRequest {
   body?: JsonValue;
   headers?: Record<string, string>;
+  version?: number;
 }
 
 export interface ToolTestResponse {

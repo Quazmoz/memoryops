@@ -566,10 +566,10 @@ export class MemoryOpsClient {
     );
   }
 
-  async testSkill(name: string, body: unknown): Promise<SkillTestResult> {
+  async testSkill(name: string, body: unknown, version?: number): Promise<SkillTestResult> {
     const response = await this.request(
       `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}/test`,
-      { method: "POST", authenticated: true, idempotent: true, body: { body } },
+      { method: "POST", authenticated: true, idempotent: true, body: { body, version } },
     );
     if (!isRecord(response)) {
       return { status: 0, latency_ms: 0, body: response };
@@ -601,10 +601,10 @@ export class MemoryOpsClient {
     return expectSkill(response, "MemoryOps returned an unexpected rollback response.");
   }
 
-  async invokeSkill(name: string, body: unknown): Promise<SkillTestResult> {
+  async invokeSkill(name: string, body: unknown, version?: number): Promise<SkillTestResult> {
     const response = await this.request(
       `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}/invoke`,
-      { method: "POST", authenticated: true, body: { body } },
+      { method: "POST", authenticated: true, body: { body, version } },
     );
     if (!isRecord(response)) {
       return { status: 0, latency_ms: 0, body: response };

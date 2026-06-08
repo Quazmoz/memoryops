@@ -84,6 +84,7 @@ pub struct RollbackToolRequest {
 pub struct InvokeToolRequest {
     pub body: Option<Value>,
     pub headers: Option<HashMap<String, String>>,
+    pub version: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -990,6 +991,7 @@ async fn persist_migrated_ciphertext(
 pub struct ToolTestRequest {
     pub body: Option<Value>,
     pub headers: Option<HashMap<String, String>>,
+    pub version: Option<i32>,
 }
 
 /// Response from the tool test proxy.
@@ -1016,6 +1018,7 @@ pub async fn test_tool(
         request.headers.as_ref(),
         SkillInvocationSource::Test,
         &auth.actor(),
+        request.version,
     )
     .await?;
     Ok(Json(response))
@@ -1037,6 +1040,7 @@ pub async fn invoke_tool(
         request.headers.as_ref(),
         SkillInvocationSource::Http,
         &auth.actor(),
+        request.version,
     )
     .await?;
     Ok(Json(response))
@@ -1220,9 +1224,10 @@ pub async fn invoke_tool_core(
     headers: Option<&HashMap<String, String>>,
     source: SkillInvocationSource,
     actor: &str,
+    version: Option<i32>,
 ) -> AppResult<(ToolTestResponse, i32)> {
     let (response, version) =
-        invoke_workspace_skill(state, workspace_id, name, body, headers, source, actor).await?;
+        invoke_workspace_skill(state, workspace_id, name, body, headers, source, actor, version).await?;
     Ok((
         ToolTestResponse {
             status: response.status,

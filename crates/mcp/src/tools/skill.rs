@@ -16,6 +16,7 @@ pub struct SkillInvokeInput {
     pub name: String,
     pub body: Option<Value>,
     pub headers: Option<HashMap<String, String>>,
+    pub version: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -44,6 +45,10 @@ pub fn definition() -> ToolDefinition {
                     "type": "object",
                     "additionalProperties": { "type": "string" },
                     "description": "Optional caller headers. Sensitive and transport headers are filtered server-side."
+                },
+                "version": {
+                    "type": "integer",
+                    "description": "Optional specific version of the skill to invoke. If omitted, the active version is used."
                 }
             }
         }),
@@ -69,6 +74,7 @@ pub async fn run(
         input.headers.as_ref(),
         SkillInvocationSource::Mcp,
         &actor,
+        input.version,
     )
     .await?;
 

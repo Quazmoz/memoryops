@@ -41,6 +41,7 @@ export function ToolsView() {
   const [errors, setErrors] = useState<FormErrors>({});
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [testingToolName, setTestingToolName] = useState<string | null>(null);
+  const [testVersion, setTestVersion] = useState<number | null>(null);
   const [testBody, setTestBody] = useState("");
   const [testResult, setTestResult] = useState<ToolTestResponse | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
@@ -104,7 +105,7 @@ export function ToolsView() {
 
   const testMutation = useMutation({
     mutationKey: ["workspace", workspaceId, "tools", "test"],
-    mutationFn: ({ name, body }: { name: string; body: JsonValue }) => testTool(workspaceId, name, { body }),
+    mutationFn: ({ name, body, version }: { name: string; body: JsonValue; version?: number }) => testTool(workspaceId, name, { body, version }),
     onSuccess: (data) => {
       setTestResult(data);
       setTestError(null);
@@ -114,6 +115,28 @@ export function ToolsView() {
       setTestResult(null);
     },
   });
+
+  const testVersionsQuery = useQuery({
+    queryKey: toolVersionsKey(workspaceId, testingToolName ?? ""),
+    queryFn: () => listToolVersions(workspaceId, testingToolName as string),
+    enabled: hasAuth && testingToolName !== null,
+  });
+
+  const selectedVersionData = useMemo(() => {
+    if (testVersion === null) return null;
+    return testVersionsQuery.data?.find((v) => v.version === testVersion) ?? null;
+  }, [testVersion, testVersionsQuery.data]);
+
+  useEffect(() => {
+    if (selectedVersionData) {
+      setTestBody(JSON.stringify(selectedVersionData.input_schema ?? {}, null, 2));
+    } else if (testingToolName) {
+      const activeTool = rows.find((t) => t.name === testingToolName);
+      if (activeTool) {
+        setTestBody(JSON.stringify(activeTool.input_schema ?? {}, null, 2));
+      }
+    }
+  }, [testVersion, selectedVersionData, testingToolName, rows]);
 
   const versionsQuery = useQuery({
     queryKey: toolVersionsKey(workspaceId, historyToolName ?? ""),
@@ -214,6 +237,7 @@ export function ToolsView() {
   function openTestPanel(tool: Tool) {
     if (testingToolName === tool.name) {
       setTestingToolName(null);
+      setTestVersion(null);
       return;
     }
     setTestingToolName(tool.name);
@@ -222,6 +246,7 @@ export function ToolsView() {
     setTestBody(JSON.stringify(tool.input_schema ?? {}, null, 2));
     setTestResult(null);
     setTestError(null);
+    setTestVersion(null);
   }
 
   function openHistoryPanel(tool: Tool) {
@@ -233,6 +258,7 @@ export function ToolsView() {
     }
     setHistoryToolName(tool.name);
     setTestingToolName(null);
+    setTestVersion(null);
     setRollbackNote("");
     setConfirmingRollback(null);
     setComparisonVersions([]);
@@ -260,7 +286,7 @@ export function ToolsView() {
       return;
     }
     setTestError(null);
-    testMutation.mutate({ name, body });
+    testMutation.mutate({ name, body, version: testVersion ?? undefined });
   }
 
   return (
@@ -420,11 +446,34 @@ export function ToolsView() {
                           <div className="flex flex-wrap gap-6 text-sm">
                             <div>
                               <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="Method" tooltip="HTTP method MemoryOps will use for this test request." /></span>
-                              <p className="mt-0.5 font-mono text-ink">{tool.http_method}</p>
+                              <p className="mt-0.5 font-mono text-ink">{selectedVersionData ? selectedVersionData.http_method : tool.http_method}</p>
                             </div>
                             <div className="min-w-0 flex-1">
                               <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="URL" tooltip="HTTPS endpoint MemoryOps will call when this tool is invoked." /></span>
-                              <p className="mt-0.5 truncate font-mono text-xs text-ink/70">{tool.endpoint_url}</p>
+                              <p className="mt-0.5 truncate font-mono text-xs text-ink/70">{selectedVersionData ? selectedVersionData.endpoint_url : tool.endpoint_url}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs font-medium uppercase text-ink/45"><InfoLabel label="Version to Test" tooltip="Select which version of the tool to invoke." /></span>
+                              <div className="mt-0.5">
+                                <select
+                                  data-testid={`tool-test-version-${tool.name}`}
+                                  value={testVersion ?? ""}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setTestVersion(val ? Number(val) : null);
+                                  }}
+                                  className="h-8 rounded-md border border-line bg-white px-2 text-xs text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent/20"
+                                >
+                                  <option value="">Active (v{tool.version})</option>
+                                  {testVersionsQuery.data
+                                    ?.filter((v) => v.version !== tool.version)
+                                    .map((v) => (
+                                      <option key={v.id} value={v.version}>
+                                        v{v.version} ({v.change_note || "No note"})
+                                      </option>
+                                    ))}
+                                </select>
+                              </div>
                             </div>
                           </div>
                           <label className="grid gap-1">
