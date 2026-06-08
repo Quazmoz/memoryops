@@ -1,6 +1,5 @@
 use std::{
     net::{IpAddr, SocketAddr},
-    str,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -8,8 +7,7 @@ use anyhow::anyhow;
 use axum::{
     body::Body,
     extract::{connect_info::ConnectInfo, Path, Query, State},
-    http::{header::HeaderName, HeaderMap, Request, StatusCode},
-    response::IntoResponse,
+    http::{header::HeaderName, HeaderMap, Request},
     Extension, Json,
 };
 use chrono::{DateTime, NaiveDate, Utc};
@@ -18,11 +16,10 @@ use common::{
     auth::AuthContext,
     build_embedding_provider_for_workspace, build_llm_provider_for_workspace,
     error::AppResult,
-    models::{AuditAction, ContradictionMode, MemoryUnit, Workspace, WorkspaceConfig},
+    models::{AuditAction, ContradictionMode, Workspace, WorkspaceConfig},
     services::{VectorIndexService, WorkspaceConfigService},
     AppError, AppState,
 };
-use futures_util::StreamExt;
 use processor::embedder::COLLECTION_NAME;
 use processor::worker::enqueue_slow_job;
 use processor::{
@@ -37,7 +34,10 @@ use uuid::Uuid;
 
 use super::{keys, require_workspace};
 
-pub const MAX_IMPORT_BODY_BYTES: usize = 50 * 1024 * 1024;
+mod import;
+
+pub use import::{import_memories, MAX_IMPORT_BODY_BYTES};
+
 const WORKSPACE_CREATE_RATE_LIMIT_CAPACITY: i64 = 5;
 const WORKSPACE_CREATE_REFILL_TOKENS_PER_SEC: f64 = 5.0 / 3600.0;
 const X_ADMIN_TOKEN_HEADER: HeaderName = HeaderName::from_static("x-admin-token");
@@ -515,218 +515,6 @@ pub async fn promote(
     );
 
     Ok(Json(report))
-}
-
-#[axum::debug_handler]
-pub async fn import_memories(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Path(id): Path<Uuid>,
-    body: Body,
-) -> Result<impl IntoResponse, AppError> {
-    require_workspace(&auth, id)?;
-    let workspace_id = auth.workspace_id;
-    let mut response = ImportMemoriesResponse::default();
-    let mut buffer = String::new();
-    let mut stream = body.into_data_stream();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| AppError::Internal(anyhow!(error)))?;
-        let text = str::from_utf8(&chunk).map_err(|_| {
-            AppError::Validation("import body must be valid UTF-8 JSONL".to_owned())
-        })?;
-        buffer.push_str(text);
-        if buffer.len() > MAX_IMPORT_BODY_BYTES {
-            process_complete_import_lines(&state, workspace_id, &mut buffer, &mut response).await;
-            response.errors = response.errors.saturating_add(1);
-            return Ok((StatusCode::UNPROCESSABLE_ENTITY, Json(response)));
-        }
-        process_complete_import_lines(&state, workspace_id, &mut buffer, &mut response).await;
-    }
-
-    if !buffer.trim().is_empty() {
-        process_import_line(
-            &state,
-            workspace_id,
-            buffer.trim_end_matches('\r'),
-            &mut response,
-        )
-        .await;
-    }
-
-    Ok((StatusCode::OK, Json(response)))
-}
-
-async fn process_complete_import_lines(
-    state: &AppState,
-    workspace_id: Uuid,
-    buffer: &mut String,
-    response: &mut ImportMemoriesResponse,
-) {
-    while let Some(index) = buffer.find('\n') {
-        let line = buffer[..index].trim_end_matches('\r').to_owned();
-        buffer.drain(..=index);
-        process_import_line(state, workspace_id, &line, response).await;
-    }
-}
-
-async fn process_import_line(
-    state: &AppState,
-    workspace_id: Uuid,
-    line: &str,
-    response: &mut ImportMemoriesResponse,
-) {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-
-    let memory = match serde_json::from_str::<MemoryUnit>(trimmed) {
-        Ok(memory) => memory,
-        Err(error) => {
-            response.errors = response.errors.saturating_add(1);
-            tracing::warn!(error = ?error, "failed to parse JSONL memory import line");
-            return;
-        }
-    };
-
-    if should_skip_import(&memory, workspace_id) {
-        response.skipped = response.skipped.saturating_add(1);
-        return;
-    }
-
-    let memory = sanitize_imported_memory(memory, workspace_id);
-    match upsert_imported_memory(&state.db, &memory).await {
-        Ok(memory_id) => {
-            response.imported = response.imported.saturating_add(1);
-            match state.redis.get().await {
-                Ok(mut conn) => {
-                    if let Err(error) =
-                        enqueue_slow_job(&mut *conn, memory_id, workspace_id, 0).await
-                    {
-                        tracing::warn!(error = ?error, memory_id = %memory_id, "failed to enqueue imported memory for embedding");
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(error = ?error, memory_id = %memory_id, "failed to get Redis connection for import enqueue")
-                }
-            }
-        }
-        Err(error) => {
-            response.errors = response.errors.saturating_add(1);
-            tracing::warn!(error = ?error, memory_id = %memory.id, "failed to upsert imported memory");
-        }
-    }
-}
-
-fn should_skip_import(memory: &MemoryUnit, workspace_id: Uuid) -> bool {
-    memory.workspace_id != workspace_id
-}
-
-fn sanitize_imported_memory(mut memory: MemoryUnit, workspace_id: Uuid) -> MemoryUnit {
-    memory.workspace_id = workspace_id;
-    memory.scope.workspace_id = workspace_id;
-    memory.embedding_id = None;
-    memory.deleted_at = None;
-    // Reset promotion state so the memory goes through the normal promotion
-    // pipeline in the target workspace rather than arriving pre-promoted.
-    memory.promoted_at = None;
-    // Reset corroboration count so inflated weights from the source workspace
-    // don't carry over without the corresponding source events being present.
-    memory.corroboration_count = 0;
-    // Reset version so conflict resolution starts clean in the target workspace.
-    memory.version = 1;
-    // Retrieval feedback is workspace-local; imported memories should start neutral.
-    memory.relevance_score = 0.5;
-    memory
-}
-
-async fn upsert_imported_memory(db: &PgPool, memory: &MemoryUnit) -> AppResult<Uuid> {
-    let scope =
-        serde_json::to_value(&memory.scope).map_err(|error| AppError::Internal(anyhow!(error)))?;
-    let entities = serde_json::to_value(&memory.entities.0)
-        .map_err(|error| AppError::Internal(anyhow!(error)))?;
-
-    sqlx::query_scalar::<_, Uuid>(
-        r#"
-        INSERT INTO memory_units (
-            id,
-            workspace_id,
-            scope,
-            memory_type,
-            scope_visibility,
-            content,
-            entities,
-            importance_score,
-            importance_overridden,
-            source_events,
-            embedding_id,
-            token_count,
-            decay_score,
-            relevance_score,
-            pinned,
-            tags,
-            version,
-            promoted_at,
-            source_episode_ids,
-            corroboration_count,
-            deleted_at,
-            last_accessed_at,
-            created_at,
-            updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11, $12, $13, $14, $15, $16, $17, $18, $19, NULL, $20, $21, $22)
-        ON CONFLICT (id) DO UPDATE SET
-            workspace_id = EXCLUDED.workspace_id,
-            scope = EXCLUDED.scope,
-            memory_type = EXCLUDED.memory_type,
-            scope_visibility = EXCLUDED.scope_visibility,
-            content = EXCLUDED.content,
-            entities = EXCLUDED.entities,
-            importance_score = EXCLUDED.importance_score,
-            importance_overridden = EXCLUDED.importance_overridden,
-            source_events = EXCLUDED.source_events,
-            embedding_id = NULL,
-            token_count = EXCLUDED.token_count,
-            decay_score = EXCLUDED.decay_score,
-            relevance_score = EXCLUDED.relevance_score,
-            pinned = EXCLUDED.pinned,
-            tags = EXCLUDED.tags,
-            version = EXCLUDED.version,
-            promoted_at = EXCLUDED.promoted_at,
-            source_episode_ids = EXCLUDED.source_episode_ids,
-            corroboration_count = EXCLUDED.corroboration_count,
-            deleted_at = NULL,
-            last_accessed_at = EXCLUDED.last_accessed_at,
-            updated_at = now()
-        RETURNING id
-        "#,
-    )
-    .bind(memory.id)
-    .bind(memory.workspace_id)
-    .bind(scope)
-    .bind(memory.memory_type)
-    .bind(memory.scope_visibility)
-    .bind(&memory.content)
-    .bind(entities)
-    .bind(memory.importance_score)
-    .bind(memory.importance_overridden)
-    .bind(&memory.source_events)
-    .bind(memory.token_count)
-    .bind(memory.decay_score)
-    .bind(memory.relevance_score)
-    .bind(memory.pinned)
-    .bind(&memory.tags)
-    .bind(memory.version)
-    .bind(memory.promoted_at)
-    .bind(&memory.source_episode_ids)
-    .bind(memory.corroboration_count)
-    .bind(memory.last_accessed_at)
-    .bind(memory.created_at)
-    .bind(memory.updated_at)
-    .fetch_one(db)
-    .await
-    .map_err(AppError::Database)
 }
 
 async fn get_workspace_by_id(state: &AppState, id: Uuid) -> AppResult<Option<Workspace>> {
@@ -1508,6 +1296,46 @@ mod tests {
         memory_id
     }
 
+    async fn fetch_memory_unit(pool: &PgPool, memory_id: Uuid) -> MemoryUnit {
+        match sqlx::query_as::<_, MemoryUnit>(
+            r#"
+            SELECT id,
+                workspace_id,
+                scope,
+                memory_type,
+                scope_visibility,
+                content,
+                entities,
+                importance_score,
+                importance_overridden,
+                source_events,
+                embedding_id,
+                token_count,
+                decay_score,
+                relevance_score,
+                pinned,
+                tags,
+                version,
+                promoted_at,
+                source_episode_ids,
+                corroboration_count,
+                deleted_at,
+                last_accessed_at,
+                created_at,
+                updated_at
+            FROM memory_units
+            WHERE id = $1
+            "#,
+        )
+        .bind(memory_id)
+        .fetch_one(pool)
+        .await
+        {
+            Ok(memory) => memory,
+            Err(error) => panic!("memory query should succeed: {error}"),
+        }
+    }
+
     fn request(method: Method, uri: String, api_key: &str) -> Request<Body> {
         let builder = Request::builder()
             .method(method)
@@ -1654,14 +1482,14 @@ mod tests {
             embedding_id: Some("stale-embedding".to_owned()),
             token_count: Some(4),
             decay_score: 1.0,
-            relevance_score: 0.5,
+            relevance_score: 0.91,
             pinned: false,
             tags: vec!["import".to_owned()],
-            version: 1,
-            promoted_at: None,
+            version: 7,
+            promoted_at: Some(now),
             source_episode_ids: Vec::new(),
-            corroboration_count: 1,
-            deleted_at: None,
+            corroboration_count: 3,
+            deleted_at: Some(now),
             last_accessed_at: None,
             created_at: now,
             updated_at: now,
@@ -1714,22 +1542,12 @@ mod tests {
     }
 
     #[test]
-    fn import_line_with_mismatched_workspace_id_is_skipped() {
-        let target_workspace_id = Uuid::now_v7();
-        let source_workspace_id = Uuid::now_v7();
-        let memory = import_memory_unit(source_workspace_id);
-
-        assert!(should_skip_import(&memory, target_workspace_id));
-        assert!(!should_skip_import(&memory, source_workspace_id));
-    }
-
-    #[test]
     fn imported_memory_is_sanitized_for_target_workspace_and_reembedding() {
         let source_workspace_id = Uuid::now_v7();
         let target_workspace_id = Uuid::now_v7();
         let memory = import_memory_unit(source_workspace_id);
 
-        let sanitized = sanitize_imported_memory(memory, target_workspace_id);
+        let sanitized = import::sanitize_imported_memory(memory, target_workspace_id);
 
         assert_eq!(sanitized.workspace_id, target_workspace_id);
         assert_eq!(sanitized.scope.workspace_id, target_workspace_id);
@@ -1738,6 +1556,7 @@ mod tests {
         assert_eq!(sanitized.promoted_at, None);
         assert_eq!(sanitized.corroboration_count, 0);
         assert_eq!(sanitized.version, 1);
+        assert_eq!(sanitized.relevance_score, 0.5);
     }
 
     #[test]
@@ -1949,6 +1768,81 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
+    async fn import_memories_sanitizes_cross_workspace_records_into_target_workspace(pool: PgPool) {
+        let target_workspace_id = insert_workspace(&pool).await;
+        let source_workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, target_workspace_id).await;
+        let memory = import_memory_unit(source_workspace_id);
+        let app = crate::router(test_state(pool.clone()).await);
+
+        let response = match app
+            .oneshot(request_with_body(
+                Method::POST,
+                format!("/v1/workspaces/{target_workspace_id}/import"),
+                &api_key,
+                format!(
+                    "{}\n",
+                    serde_json::to_string(&memory).expect("memory unit should serialize")
+                ),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("import request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body.get("imported").and_then(Value::as_u64), Some(1));
+        assert_eq!(body.get("skipped").and_then(Value::as_u64), Some(0));
+        assert_eq!(body.get("errors").and_then(Value::as_u64), Some(0));
+
+        let stored = fetch_memory_unit(&pool, memory.id).await;
+        assert_eq!(stored.workspace_id, target_workspace_id);
+        assert_eq!(stored.scope.workspace_id, target_workspace_id);
+        assert_eq!(stored.embedding_id, None);
+        assert_eq!(stored.promoted_at, None);
+        assert_eq!(stored.deleted_at, None);
+        assert_eq!(stored.corroboration_count, 0);
+        assert_eq!(stored.version, 1);
+        assert_eq!(stored.relevance_score, 0.5);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn import_memories_accepts_same_workspace_records(pool: PgPool) {
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id).await;
+        let memory = import_memory_unit(workspace_id);
+        let app = crate::router(test_state(pool.clone()).await);
+
+        let response = match app
+            .oneshot(request_with_body(
+                Method::POST,
+                format!("/v1/workspaces/{workspace_id}/import"),
+                &api_key,
+                format!(
+                    "{}\n",
+                    serde_json::to_string(&memory).expect("memory unit should serialize")
+                ),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("import request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body.get("imported").and_then(Value::as_u64), Some(1));
+        assert_eq!(body.get("skipped").and_then(Value::as_u64), Some(0));
+        assert_eq!(body.get("errors").and_then(Value::as_u64), Some(0));
+
+        let stored = fetch_memory_unit(&pool, memory.id).await;
+        assert_eq!(stored.workspace_id, workspace_id);
+        assert_eq!(stored.scope.workspace_id, workspace_id);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
     async fn import_memories_returns_structured_422_when_body_exceeds_limit(pool: PgPool) {
         let workspace_id = insert_workspace(&pool).await;
         let api_key = insert_api_key(&pool, workspace_id).await;
@@ -1964,7 +1858,7 @@ mod tests {
         let response = match app
             .oneshot(request_with_body(
                 Method::POST,
-                format!("/v1/workspaces/{workspace_id}/memories/import"),
+                format!("/v1/workspaces/{workspace_id}/import"),
                 &api_key,
                 oversized_line,
             ))
