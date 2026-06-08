@@ -2,11 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  firstLine,
   formatMemoryFeedbackMarkdown,
   formatMemoryHistoryMarkdown,
   formatMemoryProvenanceMarkdown,
   formatRetrievalMarkdown,
 } from "../markdown";
+
+test("firstLine extracts first non-empty line and handles edge cases", () => {
+  assert.equal(firstLine("Hello\nWorld"), "Hello");
+  assert.equal(firstLine("\n\nFirst non-empty line\nSecond line"), "First non-empty line");
+  assert.equal(firstLine("   \n\n  Spaced non-empty line  \nOther"), "  Spaced non-empty line  ");
+  assert.equal(firstLine("\n\n\n"), "");
+  assert.equal(firstLine(""), "");
+});
 
 test("formatMemoryHistoryMarkdown renders version metadata and body", () => {
   const markdown = formatMemoryHistoryMarkdown(

@@ -1058,19 +1058,25 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
     // Event Listeners
 
     // Realtime Search
+    let lastSearchedQuery = "";
     let searchTimeout;
     searchInput.addEventListener("input", (e) => {
       const val = e.target.value;
       searchClear.style.display = val ? "block" : "none";
       clearTimeout(searchTimeout);
       searchTimeout = setTimeout(() => {
-        vscode.postMessage({ type: "search", query: val });
+        const trimmed = val.trim();
+        if (trimmed !== lastSearchedQuery) {
+          lastSearchedQuery = trimmed;
+          vscode.postMessage({ type: "search", query: val });
+        }
       }, 300);
     });
 
     searchClear.addEventListener("click", () => {
       searchInput.value = "";
       searchClear.style.display = "none";
+      lastSearchedQuery = "";
       vscode.postMessage({ type: "search", query: "" });
       searchInput.focus();
     });
@@ -1477,7 +1483,16 @@ export class MemoryWebviewViewProvider implements vscode.WebviewViewProvider {
       }
 
       const elapsedDays = Math.round(elapsedHours / 24);
-      return \`\${elapsedDays}d ago\`;
+      if (elapsedDays < 7) {
+        return \`\${elapsedDays}d ago\`;
+      }
+
+      const date = new Date(timestamp);
+      return date.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: date.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined
+      });
     }
   </script>
 </body>

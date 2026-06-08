@@ -191,7 +191,9 @@ export function formatSkillTestMarkdown(skill: Skill, result: SkillTestResult): 
 }
 
 export function firstLine(value: string): string {
-  return value.split(/\r?\n/)[0] ?? value;
+  const lines = value.split(/\r?\n/);
+  const firstNonEmpty = lines.find(line => line.trim().length > 0);
+  return firstNonEmpty !== undefined ? firstNonEmpty : (lines[0] ?? value);
 }
 
 export function truncate(value: string, maxLength: number): string {
