@@ -50,7 +50,8 @@ Commands:
   retrieve "<query>"       Retrieve relevant memories and tools matching query
   store "<content>" [tags] Directly persist an episodic memory
   observe "<content>" [tags] Submit a raw observation to the classification queue
-  tools                   List all registered workspace tools
+  tools                   List all registered workspace tools (alias: skills)
+  sync-skills             Sync remote agent skills to local directories (.gemini/skills, .claude/skills)
   help                     Show this help message
 
 Environment Variables:
@@ -152,10 +153,31 @@ async function run() {
         console.log(JSON.stringify(res, null, 2));
         break;
       }
-      case 'tools': {
+      case 'tools':
+      case 'skills': {
         const endpoint = `/v1/workspaces/${workspaceId}/tools`;
         const res = await apiRequest('GET', endpoint);
         console.log(JSON.stringify(res, null, 2));
+        break;
+      }
+      case 'sync-skills': {
+        console.log("Fetching agent skills from server...");
+        const skills = await apiRequest('GET', '/v1/agent-skills');
+        if (!Array.isArray(skills)) {
+          console.error("Error: Server did not return an array of skills.");
+          process.exit(1);
+        }
+        console.log(`Found ${skills.length} skills on server. Syncing to local folders...`);
+        for (const skill of skills) {
+          const { assistant, name, filename } = skill;
+          console.log(`Downloading ${assistant} skill: ${name}...`);
+          const detail = await apiRequest('GET', `/v1/agent-skills/${assistant}/${name}`);
+          const dir = path.join(process.cwd(), `.${assistant}`, 'skills');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, filename), detail.content);
+          console.log(`Successfully synced ${assistant} skill: ${name} to ${filename}`);
+        }
+        console.log("Sync complete!");
         break;
       }
       default:

@@ -293,6 +293,8 @@ curl http://localhost:8080/health/ready
 
 See [docs/local-development.md](docs/local-development.md) for the complete local development guide including Ollama setup, port reference, and the test stack.
 
+For hosting in production environments (such as Docker, Kubernetes, or K3s), see the [Production Deployment Guide](docs/deployment.md).
+
 Note: You may see a Qdrant client/server version mismatch warning in the API logs (e.g., client 1.17 vs server 1.13). This is harmless for local development and API compatibility is maintained.
 
 ---

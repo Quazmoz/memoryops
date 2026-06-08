@@ -6,6 +6,9 @@
 host = "0.0.0.0"
 port = 8080
 request_timeout_secs = 30
+# Allow tools/skills endpoint URLs to resolve to loopback/private IP addresses.
+# Useful for development or private VPC deployments. Off by default.
+allow_private_ips = false
 
 [database]
 # Connection string read from DATABASE_URL env var.

@@ -133,7 +133,7 @@ pub async fn invoke_workspace_skill(
         }
     }
 
-    validate_endpoint_url_dns(&skill.endpoint_url).await?;
+    validate_endpoint_url_dns(&skill.endpoint_url, state.config.server.allow_private_ips).await?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -282,12 +282,22 @@ async fn persist_migrated_ciphertext(
     Ok(())
 }
 
-async fn validate_endpoint_url_dns(url: &str) -> AppResult<()> {
+async fn validate_endpoint_url_dns(url: &str, allow_private_ips: bool) -> AppResult<()> {
+    if allow_private_ips {
+        return Ok(());
+    }
+
     let parsed = Url::parse(url)
         .map_err(|_| AppError::Validation("invalid endpoint URL".to_owned()))?;
 
     let host = parsed.host_str().unwrap_or("");
-    if host.parse::<IpAddr>().is_ok() {
+    let ip_str = if host.starts_with('[') && host.ends_with(']') {
+        &host[1..host.len() - 1]
+    } else {
+        host
+    };
+    if let Ok(ip) = ip_str.parse::<IpAddr>() {
+        reject_forbidden_ip(ip)?;
         return Ok(());
     }
 

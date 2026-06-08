@@ -24,6 +24,7 @@ import {
 import { getRelativeFileName, getSourceRef, getWorkspaceRepoHint } from "./repo";
 import { registerSkillCommands } from "./skillCommands";
 import { SkillTreeProvider } from "./skillTree";
+import { syncAgentSkills } from "./agentSkillsSync";
 
 let statusBarItem: vscode.StatusBarItem;
 let memoryTreeProvider: MemoryWebviewViewProvider;
@@ -95,6 +96,14 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("memoryops.showMemoriesForFile", showMemoriesForFile),
     vscode.commands.registerCommand("memoryops.openWalkthrough", openWalkthrough),
     vscode.commands.registerCommand("memoryops.configureFromLocal", () => configureFromLocalCommand(context)),
+    vscode.commands.registerCommand("memoryops.skills.syncAgentSkills", async () => {
+      const { client, missing } = getClient();
+      if (missing.length > 0) {
+        await promptForMissingConfig(missing);
+        return;
+      }
+      await syncAgentSkills(client);
+    }),
     vscode.commands.registerCommand("memoryops.setApiKey", async () => {
       const value = await vscode.window.showInputBox({
         title: "MemoryOps: Set API Key",
@@ -282,6 +291,7 @@ async function testConnection(): Promise<void> {
     statusBarItem.command = "memoryops.testConnection";
     skillTreeProvider?.refresh();
     void refreshMemories({ showProgress: false, promptOnMissingConfig: false });
+    void syncAgentSkills(client);
     void vscode.window.showInformationMessage("MemoryOps connection is healthy.");
   } catch (error) {
     statusBarItem.text = "$(error) MemoryOps";
@@ -895,6 +905,8 @@ async function initializeSidebar(): Promise<void> {
   setDefaultStatusBar();
   try {
     await refreshMemories({ showProgress: false, promptOnMissingConfig: false });
+    const { client } = getClient();
+    void syncAgentSkills(client);
   } catch {
     // refreshMemories already updates the tree provider state.
   }

@@ -111,17 +111,23 @@ async fn build_state(
     let trusted_proxy_cidrs = Arc::new(parse_trusted_proxy_cidrs());
 
     let db = connect_pool(&database_url, &config.database).await?;
-    tracing::info!("running database migrations...");
-    common::db::run_migrations(&db)
-        .await
-        .map_err(|error| anyhow::anyhow!("failed to run database migrations: {error}"))?;
+    if std::env::var("SKIP_MIGRATIONS").unwrap_or_default() != "true" {
+        tracing::info!("running database migrations...");
+        common::db::run_migrations(&db)
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to run database migrations: {error}"))?;
+    } else {
+        tracing::info!("bypassing database migrations on startup due to SKIP_MIGRATIONS=true");
+    }
     ensure_tool_secret_configuration(&db).await?;
     let redis = {
         let cfg = deadpool_redis::Config::from_url(&redis_url);
         cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))
             .map_err(|error| anyhow::anyhow!("failed to create Redis pool: {error}"))?
     };
-    let qdrant = Qdrant::from_url(&qdrant_url).build()?;
+    let mut qdrant_config = qdrant_client::config::QdrantConfig::from_url(&qdrant_url);
+    qdrant_config.check_compatibility = false;
+    let qdrant = Qdrant::new(qdrant_config)?;
 
     let embedding_provider = build_embedding_provider(&config);
     let llm_provider = build_llm_provider(&config);
@@ -591,7 +597,9 @@ async fn check_qdrant() -> DependencyStatus {
         return DependencyStatus::MissingConfig;
     };
 
-    let Ok(client) = Qdrant::from_url(&qdrant_url).build() else {
+    let mut qdrant_config = qdrant_client::config::QdrantConfig::from_url(&qdrant_url);
+    qdrant_config.check_compatibility = false;
+    let Ok(client) = Qdrant::new(qdrant_config) else {
         return DependencyStatus::Unavailable;
     };
 
@@ -637,7 +645,9 @@ mod tests {
         };
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:16333".to_owned());
-        let qdrant = match Qdrant::from_url(&qdrant_url).build() {
+        let mut qdrant_config = qdrant_client::config::QdrantConfig::from_url(&qdrant_url);
+        qdrant_config.check_compatibility = false;
+        let qdrant = match Qdrant::new(qdrant_config) {
             Ok(client) => client,
             Err(error) => panic!("test Qdrant URL should be valid: {error}"),
         };

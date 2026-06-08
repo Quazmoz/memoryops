@@ -244,6 +244,38 @@ export interface SkillTestResult {
   body: unknown;
 }
 
+export interface AgentSkill {
+  name: string;
+  filename: string;
+  assistant: string;
+  title: string;
+  description: string;
+}
+
+export interface AgentSkillContent {
+  name: string;
+  filename: string;
+  assistant: string;
+  title: string;
+  description: string;
+  instructions: string;
+  content: string;
+}
+
+export interface AgentSkillCreateInput {
+  assistant: string;
+  name: string;
+  title: string;
+  description: string;
+  instructions: string;
+}
+
+export interface AgentSkillUpdateInput {
+  title: string;
+  description: string;
+  instructions: string;
+}
+
 export class MemoryOpsClient {
   constructor(
     private readonly config: MemoryOpsConfig,
@@ -592,8 +624,55 @@ export class MemoryOpsClient {
     return Array.isArray(response) ? response : [];
   }
 
+  async listAgentSkills(): Promise<AgentSkill[]> {
+    const response = await this.request("/v1/agent-skills", {
+      method: "GET",
+      authenticated: true,
+      idempotent: true,
+    });
+    return Array.isArray(response) ? response.filter(isRecord).map(normalizeAgentSkill) : [];
+  }
+
+  async getAgentSkill(assistant: string, name: string): Promise<AgentSkillContent> {
+    const response = await this.request(
+      `/v1/agent-skills/${encodeURIComponent(assistant)}/${encodeURIComponent(name)}`,
+      { method: "GET", authenticated: true, idempotent: true },
+    );
+    if (!isRecord(response)) {
+      throw new Error("MemoryOps returned an unexpected agent skill response.");
+    }
+    return normalizeAgentSkillContent(response);
+  }
+
+  async createAgentSkill(input: AgentSkillCreateInput): Promise<AgentSkillContent> {
+    const response = await this.request("/v1/agent-skills", {
+      method: "POST",
+      authenticated: true,
+      body: input,
+    });
+    if (!isRecord(response)) {
+      throw new Error("MemoryOps returned an unexpected agent skill response.");
+    }
+    return normalizeAgentSkillContent(response);
+  }
+
+  async updateAgentSkill(
+    assistant: string,
+    name: string,
+    input: AgentSkillUpdateInput,
+  ): Promise<AgentSkillContent> {
+    const response = await this.request(
+      `/v1/agent-skills/${encodeURIComponent(assistant)}/${encodeURIComponent(name)}`,
+      { method: "PUT", authenticated: true, body: input },
+    );
+    if (!isRecord(response)) {
+      throw new Error("MemoryOps returned an unexpected agent skill response.");
+    }
+    return normalizeAgentSkillContent(response);
+  }
+
   private async request(path: string, options: {
-    method: "GET" | "POST" | "PATCH" | "DELETE";
+    method: "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
     authenticated: boolean;
     body?: unknown;
     // Mark a POST as safe to auto-retry (read-only endpoints like search/retrieve).
@@ -632,7 +711,7 @@ export class MemoryOpsClient {
   }
 
   private async performRequest(path: string, options: {
-    method: "GET" | "POST" | "PATCH" | "DELETE";
+    method: "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
     authenticated: boolean;
     body?: unknown;
   }): Promise<unknown> {
@@ -1004,4 +1083,26 @@ function isTransientError(error: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeAgentSkill(value: Record<string, unknown>): AgentSkill {
+  return {
+    name: stringOrUndefined(value.name) ?? "",
+    filename: stringOrUndefined(value.filename) ?? "",
+    assistant: stringOrUndefined(value.assistant) ?? "",
+    title: stringOrUndefined(value.title) ?? "",
+    description: stringOrUndefined(value.description) ?? "",
+  };
+}
+
+function normalizeAgentSkillContent(value: Record<string, unknown>): AgentSkillContent {
+  return {
+    name: stringOrUndefined(value.name) ?? "",
+    filename: stringOrUndefined(value.filename) ?? "",
+    assistant: stringOrUndefined(value.assistant) ?? "",
+    title: stringOrUndefined(value.title) ?? "",
+    description: stringOrUndefined(value.description) ?? "",
+    instructions: stringOrUndefined(value.instructions) ?? "",
+    content: stringOrUndefined(value.content) ?? "",
+  };
 }

@@ -273,6 +273,12 @@
         "icon": "$(discard)"
       },
       {
+        "command": "memoryops.skills.syncAgentSkills",
+        "title": "MemoryOps: Sync Agent Skills",
+        "category": "MemoryOps",
+        "icon": "$(sync)"
+      },
+      {
         "command": "memoryops.configureFromLocal",
         "title": "MemoryOps: Configure from Local Config File",
         "category": "MemoryOps",

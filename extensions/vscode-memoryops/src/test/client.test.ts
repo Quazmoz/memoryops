@@ -534,6 +534,94 @@ test("bulkMemory issues a POST with ids and action and normalizes the response",
   }
 });
 
+test("listAgentSkills, getAgentSkill, createAgentSkill, and updateAgentSkill function correctly", async () => {
+  let requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }> = [];
+  const restoreFetch = mockFetch(async (url, init) => {
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(init.body as string) : null;
+    requests.push({ url, method, body });
+
+    if (url.endsWith("/agent-skills")) {
+      if (method === "POST") {
+        return jsonResponse({
+          name: "test_skill",
+          filename: "test_skill.md",
+          assistant: "gemini",
+          title: "Test Skill",
+          description: "Test description",
+          instructions: "Test instructions",
+          content: "# Test Skill\n\n**Description:** Test description\n\nTest instructions",
+        });
+      }
+      return jsonResponse([
+        {
+          name: "test_skill",
+          filename: "test_skill.md",
+          assistant: "gemini",
+          title: "Test Skill",
+          description: "Test description",
+        },
+      ]);
+    }
+
+    if (url.includes("/agent-skills/gemini/test_skill")) {
+      return jsonResponse({
+        name: "test_skill",
+        filename: "test_skill.md",
+        assistant: "gemini",
+        title: "Test Skill",
+        description: "Test description",
+        instructions: "Test instructions",
+        content: "# Test Skill\n\n**Description:** Test description\n\nTest instructions",
+      });
+    }
+
+    return jsonResponse({ error: "not found" }, 404);
+  });
+
+  try {
+    const client = new MemoryOpsClient(CONFIG);
+    const summary = await client.listAgentSkills();
+    assert.equal(summary.length, 1);
+    assert.equal(summary[0]?.name, "test_skill");
+
+    const detail = await client.getAgentSkill("gemini", "test_skill");
+    assert.equal(detail.name, "test_skill");
+    assert.equal(detail.instructions, "Test instructions");
+
+    const created = await client.createAgentSkill({
+      assistant: "gemini",
+      name: "test_skill",
+      title: "Test Skill",
+      description: "Test description",
+      instructions: "Test instructions",
+    });
+    assert.equal(created.name, "test_skill");
+
+    const updated = await client.updateAgentSkill("gemini", "test_skill", {
+      title: "Test Skill",
+      description: "Test description",
+      instructions: "Test instructions",
+    });
+    assert.equal(updated.name, "test_skill");
+
+    assert.equal(requests[0]?.url, "https://memoryops.test/v1/agent-skills");
+    assert.equal(requests[0]?.method, "GET");
+
+    assert.equal(requests[1]?.url, "https://memoryops.test/v1/agent-skills/gemini/test_skill");
+    assert.equal(requests[1]?.method, "GET");
+
+    assert.equal(requests[2]?.url, "https://memoryops.test/v1/agent-skills");
+    assert.equal(requests[2]?.method, "POST");
+
+    assert.equal(requests[3]?.url, "https://memoryops.test/v1/agent-skills/gemini/test_skill");
+    assert.equal(requests[3]?.method, "PUT");
+
+  } finally {
+    restoreFetch();
+  }
+});
+
 function mockFetch(handler: (url: string, init?: RequestInit) => Promise<Response> | Response): () => void {
   const originalFetch = globalThis.fetch;
 

@@ -852,8 +852,14 @@ fn reject_forbidden_host(host: &str) -> AppResult<()> {
         ));
     }
 
+    let ip_str = if lower.starts_with('[') && lower.ends_with(']') {
+        &lower[1..lower.len() - 1]
+    } else {
+        &lower
+    };
+
     // Parse as an IP literal (IPv4 or bracket-stripped IPv6)
-    if let Ok(ip) = lower.parse::<std::net::IpAddr>() {
+    if let Ok(ip) = ip_str.parse::<std::net::IpAddr>() {
         reject_forbidden_ip(ip)?;
     }
 

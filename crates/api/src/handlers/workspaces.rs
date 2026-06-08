@@ -220,6 +220,8 @@ pub async fn create_workspace(
 
     let (api_key, _record) = keys::insert_key(&state.db, workspace_id, "bootstrap").await?;
 
+    super::agent_skills::seed_default_skills(&state.db, workspace_id).await?;
+
     Ok(Json(CreateWorkspaceResponse {
         workspace_id,
         api_key,
@@ -1413,7 +1415,9 @@ mod tests {
         };
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:16333".to_owned());
-        let qdrant = match Qdrant::from_url(&qdrant_url).build() {
+        let mut qdrant_config = qdrant_client::config::QdrantConfig::from_url(&qdrant_url);
+        qdrant_config.check_compatibility = false;
+        let qdrant = match Qdrant::new(qdrant_config) {
             Ok(client) => client,
             Err(error) => panic!("test Qdrant URL should be valid: {error}"),
         };
@@ -2017,7 +2021,7 @@ mod tests {
         let response = match app
             .oneshot(request_with_body(
                 Method::POST,
-                format!("/v1/workspaces/{workspace_id}/memories/import"),
+                format!("/v1/workspaces/{workspace_id}/import"),
                 &api_key,
                 oversized_line,
             ))
@@ -2034,7 +2038,7 @@ mod tests {
 
     async fn created_from_ip_for_workspace(pool: &PgPool, workspace_id: Uuid) -> String {
         match sqlx::query_scalar::<_, Option<String>>(
-            "SELECT created_from_ip::TEXT FROM workspaces WHERE id = $1",
+            "SELECT HOST(created_from_ip) FROM workspaces WHERE id = $1",
         )
         .bind(workspace_id)
         .fetch_one(pool)
