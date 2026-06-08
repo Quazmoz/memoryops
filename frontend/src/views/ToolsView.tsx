@@ -57,6 +57,8 @@ export function ToolsView() {
     enabled: hasAuth,
   });
 
+  const rows = useMemo(() => toolsQuery.data ?? [], [toolsQuery.data]);
+
   const createMutation = useMutation({
     mutationKey: ["workspace", workspaceId, "tools", "create"],
     mutationFn: (payload: CreateToolPayload) => createTool(workspaceId, payload),
@@ -105,7 +107,13 @@ export function ToolsView() {
 
   const testMutation = useMutation({
     mutationKey: ["workspace", workspaceId, "tools", "test"],
-    mutationFn: ({ name, body, version }: { name: string; body: JsonValue; version?: number }) => testTool(workspaceId, name, { body, version }),
+    mutationFn: ({ name, body, version }: { name: string; body: JsonValue; version?: number }) => {
+      const payload: { body: JsonValue; version?: number } = { body };
+      if (version !== undefined) {
+        payload.version = version;
+      }
+      return testTool(workspaceId, name, payload);
+    },
     onSuccess: (data) => {
       setTestResult(data);
       setTestError(null);
@@ -160,7 +168,6 @@ export function ToolsView() {
     },
   });
 
-  const rows = useMemo(() => toolsQuery.data ?? [], [toolsQuery.data]);
   const comparedVersions = useMemo(
     () => comparisonVersions
       .map((version) => versionsQuery.data?.find((candidate) => candidate.version === version))
@@ -286,7 +293,11 @@ export function ToolsView() {
       return;
     }
     setTestError(null);
-    testMutation.mutate({ name, body, version: testVersion ?? undefined });
+    if (testVersion !== null) {
+      testMutation.mutate({ name, body, version: testVersion });
+    } else {
+      testMutation.mutate({ name, body });
+    }
   }
 
   return (

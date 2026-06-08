@@ -52,7 +52,10 @@ struct ParsedAgentSkillMarkdown {
     instructions: String,
 }
 
-pub async fn seed_default_skills(db: &sqlx::PgPool, workspace_id: uuid::Uuid) -> Result<(), AppError> {
+pub async fn seed_default_skills(
+    db: &sqlx::PgPool,
+    workspace_id: uuid::Uuid,
+) -> Result<(), AppError> {
     let root = Path::new(".");
     let mut skills = Vec::new();
 
@@ -129,7 +132,7 @@ pub async fn list_agent_skills(
         FROM agent_skills
         WHERE workspace_id = $1
         ORDER BY assistant ASC, LOWER(title) ASC, name ASC
-        "#
+        "#,
     )
     .bind(workspace_id)
     .fetch_all(&state.db)
@@ -146,7 +149,7 @@ pub async fn list_agent_skills(
             FROM agent_skills
             WHERE workspace_id = $1
             ORDER BY assistant ASC, LOWER(title) ASC, name ASC
-            "#
+            "#,
         )
         .bind(workspace_id)
         .fetch_all(&state.db)
@@ -172,7 +175,7 @@ pub async fn get_agent_skill(
         SELECT name, filename, assistant, title, description, instructions, content
         FROM agent_skills
         WHERE workspace_id = $1 AND assistant = $2 AND name = $3
-        "#
+        "#,
     )
     .bind(workspace_id)
     .bind(assistant)
@@ -185,7 +188,7 @@ pub async fn get_agent_skill(
         Ok(Json(skill))
     } else {
         let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM agent_skills WHERE workspace_id = $1"
+            "SELECT COUNT(*) FROM agent_skills WHERE workspace_id = $1",
         )
         .bind(workspace_id)
         .fetch_one(&state.db)
@@ -201,7 +204,7 @@ pub async fn get_agent_skill(
                 SELECT name, filename, assistant, title, description, instructions, content
                 FROM agent_skills
                 WHERE workspace_id = $1 AND assistant = $2 AND name = $3
-                "#
+                "#,
             )
             .bind(workspace_id)
             .bind(assistant)
@@ -301,7 +304,7 @@ pub async fn update_agent_skill(
             updated_at = NOW()
         WHERE workspace_id = $1 AND assistant = $2 AND name = $3
         RETURNING name, filename, assistant, title, description, instructions, content
-        "#
+        "#,
     )
     .bind(workspace_id)
     .bind(assistant)
@@ -384,7 +387,9 @@ fn validate_single_line_text<'a>(
         )));
     }
     if trimmed.contains('\n') || trimmed.contains('\r') {
-        return Err(AppError::Validation(format!("{label} must be a single line")));
+        return Err(AppError::Validation(format!(
+            "{label} must be a single line"
+        )));
     }
     Ok(trimmed)
 }
@@ -440,9 +445,7 @@ fn parse_markdown_metadata(content: &str, fallback_name: &str) -> ParsedAgentSki
     }
 
     if description.is_empty() {
-        description = format!(
-            "Instructions on how to configure and run the {title} agent skill."
-        );
+        description = format!("Instructions on how to configure and run the {title} agent skill.");
     }
 
     let instructions = lines
@@ -464,22 +467,20 @@ fn compose_skill_markdown(title: &str, description: &str, instructions: &str) ->
     if trimmed_instructions.is_empty() {
         format!("# Skill: {title}\n\n**Description:** {description}\n")
     } else {
-        format!(
-            "# Skill: {title}\n\n**Description:** {description}\n\n{trimmed_instructions}\n"
-        )
+        format!("# Skill: {title}\n\n**Description:** {description}\n\n{trimmed_instructions}\n")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
-    use sqlx::PgPool;
-    use qdrant_client::Qdrant;
     use common::providers::{FastEmbedProvider, OllamaProvider};
     use common::AppConfig;
+    use qdrant_client::Qdrant;
+    use sqlx::PgPool;
     use std::sync::Arc;
     use tokio::sync::Semaphore;
+    use uuid::Uuid;
 
     #[test]
     fn parse_markdown_metadata_extracts_title_description_and_instructions() {
@@ -517,12 +518,16 @@ mod tests {
 
         let state = AppState {
             db: pool.clone(),
-            redis: deadpool_redis::Config::from_url("redis://localhost:16379").create_pool(None).unwrap(),
+            redis: deadpool_redis::Config::from_url("redis://localhost:16379")
+                .create_pool(None)
+                .unwrap(),
             qdrant: Qdrant::from_url("http://localhost:16333").build().unwrap(),
             processor_semaphore: Arc::new(Semaphore::new(1)),
             embedding_provider: Arc::new(FastEmbedProvider::new("test")),
             llm_provider: Arc::new(OllamaProvider::new("http://localhost:9", "test", 1, None)),
-            config: Arc::new(AppConfig::from_toml_str(include_str!("../../../../config.toml")).unwrap()),
+            config: Arc::new(
+                AppConfig::from_toml_str(include_str!("../../../../config.toml")).unwrap(),
+            ),
             app_secret_key: Arc::new(zeroize::Zeroizing::new("secret".to_owned())),
             trusted_proxy_cidrs: Arc::new(Vec::new()),
         };
@@ -554,13 +559,10 @@ mod tests {
         assert_eq!(created.title, "Release Notes");
 
         // 2. List skills
-        let listed = list_agent_skills(
-            State(state.clone()),
-            Extension(auth.clone()),
-        )
-        .await
-        .expect("list should succeed")
-        .0;
+        let listed = list_agent_skills(State(state.clone()), Extension(auth.clone()))
+            .await
+            .expect("list should succeed")
+            .0;
 
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].name, "release_notes");
@@ -609,12 +611,16 @@ mod tests {
 
         let state = AppState {
             db: pool.clone(),
-            redis: deadpool_redis::Config::from_url("redis://localhost:16379").create_pool(None).unwrap(),
+            redis: deadpool_redis::Config::from_url("redis://localhost:16379")
+                .create_pool(None)
+                .unwrap(),
             qdrant: Qdrant::from_url("http://localhost:16333").build().unwrap(),
             processor_semaphore: Arc::new(Semaphore::new(1)),
             embedding_provider: Arc::new(FastEmbedProvider::new("test")),
             llm_provider: Arc::new(OllamaProvider::new("http://localhost:9", "test", 1, None)),
-            config: Arc::new(AppConfig::from_toml_str(include_str!("../../../../config.toml")).unwrap()),
+            config: Arc::new(
+                AppConfig::from_toml_str(include_str!("../../../../config.toml")).unwrap(),
+            ),
             app_secret_key: Arc::new(zeroize::Zeroizing::new("secret".to_owned())),
             trusted_proxy_cidrs: Arc::new(Vec::new()),
         };

@@ -421,7 +421,10 @@ pub async fn run_skill_version_prune_pass(state: &AppState) -> AppResult<u64> {
         cursor = workspaces.last().map(|workspace| workspace.workspace_id);
     }
 
-    tracing::info!(pruned = total, "scheduler skill version prune pass completed");
+    tracing::info!(
+        pruned = total,
+        "scheduler skill version prune pass completed"
+    );
     Ok(total)
 }
 

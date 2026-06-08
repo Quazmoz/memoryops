@@ -295,8 +295,11 @@ pub async fn handle_bulk(
             store::bulk_update_memory_units(&state.db, &ids, workspace_id, store_action).await?
         }
         BulkMemoryAction::Delete => {
-            let deletion_service = MemoryDeletionService::new(&state, COLLECTION_NAME, "retrieval memory bulk delete");
-            deletion_service.soft_delete_many_required(&ids, workspace_id).await?
+            let deletion_service =
+                MemoryDeletionService::new(&state, COLLECTION_NAME, "retrieval memory bulk delete");
+            deletion_service
+                .soft_delete_many_required(&ids, workspace_id)
+                .await?
         }
     };
 

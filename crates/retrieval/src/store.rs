@@ -487,7 +487,12 @@ async fn list_memory_units_at(
         builder.push(" AND m.scope->>'source' = ");
         builder.push_bind(source.as_str());
     }
-    push_source_ref_filter(&mut builder, params.source_ref.as_deref(), workspace_id, "m.");
+    push_source_ref_filter(
+        &mut builder,
+        params.source_ref.as_deref(),
+        workspace_id,
+        "m.",
+    );
     push_scope_filter(
         &mut builder,
         &scope_from_list_query(params),
@@ -1904,7 +1909,8 @@ mod tests {
         insert_workspace(&pool, workspace_id).await;
 
         // Two memories reference src/foo.rs (one with a line anchor, one without).
-        let anchored = insert_memory_for_source_ref(&pool, workspace_id, "foo a", "src/foo.rs#L1-L10").await;
+        let anchored =
+            insert_memory_for_source_ref(&pool, workspace_id, "foo a", "src/foo.rs#L1-L10").await;
         let bare = insert_memory_for_source_ref(&pool, workspace_id, "foo b", "src/foo.rs").await;
         // A memory for a different file must be excluded.
         let _other = insert_memory_for_source_ref(&pool, workspace_id, "bar", "src/bar.rs").await;
@@ -2010,27 +2016,40 @@ mod tests {
         let id2 = insert_memory(&pool, workspace_id, "memory 2", 0.6).await;
 
         // Test bulk pin
-        let pinned = bulk_update_memory_units(&pool, &[id1, id2], workspace_id, BulkStoreAction::Pin).await.unwrap();
+        let pinned =
+            bulk_update_memory_units(&pool, &[id1, id2], workspace_id, BulkStoreAction::Pin)
+                .await
+                .unwrap();
         assert_eq!(pinned.len(), 2);
         assert!(pinned[0].pinned);
         assert!(pinned[1].pinned);
         assert!(pinned[0].updated_at > chrono::Utc::now() - chrono::Duration::seconds(5));
 
         // Test bulk unpin
-        let unpinned = bulk_update_memory_units(&pool, &[id1, id2], workspace_id, BulkStoreAction::Unpin).await.unwrap();
+        let unpinned =
+            bulk_update_memory_units(&pool, &[id1, id2], workspace_id, BulkStoreAction::Unpin)
+                .await
+                .unwrap();
         assert_eq!(unpinned.len(), 2);
         assert!(!unpinned[0].pinned);
         assert!(!unpinned[1].pinned);
 
         // Test bulk delete
-        let deleted = soft_delete_memory_units(&pool, &[id1, id2], workspace_id).await.unwrap();
+        let deleted = soft_delete_memory_units(&pool, &[id1, id2], workspace_id)
+            .await
+            .unwrap();
         assert_eq!(deleted.len(), 2);
-        
+
         // Check database
-        let m1 = get_memory_unit_by_id(&pool, id1, workspace_id).await.unwrap();
+        let m1 = get_memory_unit_by_id(&pool, id1, workspace_id)
+            .await
+            .unwrap();
         assert!(m1.is_none()); // deleted_at is not null, so it shouldn't be found
-        
-        let m1_inc = get_memory_unit_by_id_including_deleted(&pool, id1, workspace_id).await.unwrap().unwrap();
+
+        let m1_inc = get_memory_unit_by_id_including_deleted(&pool, id1, workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(m1_inc.deleted_at.is_some());
     }
 
@@ -2043,11 +2062,17 @@ mod tests {
         let fake_id = Uuid::now_v7();
 
         // Should return NotFound and not update the database due to transaction rollback
-        let err = bulk_update_memory_units(&pool, &[id1, fake_id], workspace_id, BulkStoreAction::Pin).await.unwrap_err();
+        let err =
+            bulk_update_memory_units(&pool, &[id1, fake_id], workspace_id, BulkStoreAction::Pin)
+                .await
+                .unwrap_err();
         assert!(matches!(err, AppError::NotFound { .. }));
 
         // Verify id1 is not pinned
-        let m1 = get_memory_unit_by_id(&pool, id1, workspace_id).await.unwrap().unwrap();
+        let m1 = get_memory_unit_by_id(&pool, id1, workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!m1.pinned);
     }
 }

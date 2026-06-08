@@ -2,6 +2,7 @@ use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use uuid::Uuid;
 
+pub mod agent_skills;
 pub mod audit;
 pub mod compliance;
 pub mod contradictions;
@@ -9,9 +10,8 @@ pub mod export;
 pub mod integrations;
 pub mod keys;
 pub mod metrics;
-pub mod tools;
-pub mod agent_skills;
 pub mod tags;
+pub mod tools;
 pub mod workspaces;
 
 pub fn bootstrap_router() -> Router<AppState> {
@@ -120,23 +120,18 @@ pub fn protected_router() -> Router<AppState> {
             "/v1/workspaces/{id}/tools/{name}/invocations",
             get(tools::list_tool_invocations),
         )
-        .route(
-            "/v1/workspaces/{id}/tools/export",
-            get(tools::export_tools),
-        )
+        .route("/v1/workspaces/{id}/tools/export", get(tools::export_tools))
         .route(
             "/v1/workspaces/{id}/tools/import",
             axum::routing::post(tools::import_tools),
         )
         .route(
             "/v1/agent-skills",
-            get(agent_skills::list_agent_skills)
-                .post(agent_skills::create_agent_skill),
+            get(agent_skills::list_agent_skills).post(agent_skills::create_agent_skill),
         )
         .route(
             "/v1/agent-skills/{assistant}/{name}",
-            get(agent_skills::get_agent_skill)
-                .put(agent_skills::update_agent_skill),
+            get(agent_skills::get_agent_skill).put(agent_skills::update_agent_skill),
         )
         .route(
             "/v1/workspaces/{id}/integrations",

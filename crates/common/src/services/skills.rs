@@ -117,9 +117,7 @@ pub async fn invoke_workspace_skill(
         })?;
 
     if !skill.enabled {
-        return Err(AppError::Validation(format!(
-            "tool {name} is disabled"
-        )));
+        return Err(AppError::Validation(format!("tool {name} is disabled")));
     }
 
     if matches!(source, SkillInvocationSource::Mcp) && skill.scope_visibility == "private" {
@@ -174,8 +172,8 @@ pub async fn invoke_workspace_skill(
         .build()
         .map_err(|error| AppError::Internal(anyhow!(error)))?;
 
-    let method = reqwest::Method::from_bytes(skill.http_method.as_bytes())
-        .unwrap_or(reqwest::Method::POST);
+    let method =
+        reqwest::Method::from_bytes(skill.http_method.as_bytes()).unwrap_or(reqwest::Method::POST);
     let mut req_builder = client.request(method, &skill.endpoint_url);
 
     if let (Some(header_name), Some(enc)) = (
@@ -320,8 +318,8 @@ async fn validate_endpoint_url_dns(url: &str, allow_private_ips: bool) -> AppRes
         return Ok(());
     }
 
-    let parsed = Url::parse(url)
-        .map_err(|_| AppError::Validation("invalid endpoint URL".to_owned()))?;
+    let parsed =
+        Url::parse(url).map_err(|_| AppError::Validation("invalid endpoint URL".to_owned()))?;
 
     let host = parsed.host_str().unwrap_or("");
     let ip_str = if host.starts_with('[') && host.ends_with(']') {

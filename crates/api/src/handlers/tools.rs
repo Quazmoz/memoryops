@@ -20,8 +20,7 @@ use crate::security::{decrypt_secret_legacy_or_current, encrypt_secret};
 use super::require_workspace;
 
 /// Column list for SELECT/RETURNING on workspace_tools.
-const TOOL_COLUMNS: &str =
-    "id, workspace_id, name, description, endpoint_url, http_method, \
+const TOOL_COLUMNS: &str = "id, workspace_id, name, description, endpoint_url, http_method, \
      input_schema, output_schema, auth_header, enabled, version, \
      scope_visibility, rate_limit_per_minute, circuit_breaker_threshold, \
      circuit_breaker_cooldown_seconds, created_at, updated_at";
@@ -760,8 +759,7 @@ pub async fn rollback_tool_version(
     })?;
 
     let note = change_note.unwrap_or_else(|| format!("rollback to v{version}"));
-    insert_tool_version_snapshot(&mut tx, &tool, Some(&note), Some(auth.actor().as_str()))
-        .await?;
+    insert_tool_version_snapshot(&mut tx, &tool, Some(&note), Some(auth.actor().as_str())).await?;
 
     tx.commit().await.map_err(AppError::Database)?;
 
@@ -1152,14 +1150,13 @@ async fn import_one_tool(
     let auth_secret_enc = encrypted_secret(state, item.auth_secret.as_deref())?;
     validate_auth_pair(auth_header.as_ref(), auth_secret_enc.as_ref())?;
 
-    let exists: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM workspace_tools WHERE workspace_id = $1 AND name = $2",
-    )
-    .bind(workspace_id)
-    .bind(&item.name)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(AppError::Database)?;
+    let exists: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM workspace_tools WHERE workspace_id = $1 AND name = $2")
+            .bind(workspace_id)
+            .bind(&item.name)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(AppError::Database)?;
 
     if exists.is_some() && !overwrite {
         return Ok(None);
@@ -1226,8 +1223,17 @@ pub async fn invoke_tool_core(
     actor: &str,
     version: Option<i32>,
 ) -> AppResult<(ToolTestResponse, i32)> {
-    let (response, version) =
-        invoke_workspace_skill(state, workspace_id, name, body, headers, source, actor, version).await?;
+    let (response, version) = invoke_workspace_skill(
+        state,
+        workspace_id,
+        name,
+        body,
+        headers,
+        source,
+        actor,
+        version,
+    )
+    .await?;
     Ok((
         ToolTestResponse {
             status: response.status,

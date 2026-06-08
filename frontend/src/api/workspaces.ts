@@ -1,6 +1,7 @@
 import { ApiError, apiUrl, extractDetail, parseResponse, queryString, requestHeaders } from "./client";
 import { apiContractRequest, operationMethod, resolveOperationPath } from "./generated/contract";
 import type {
+  ApiKeySummary,
   CreatedApiKey,
   CreateApiKeyResponse,
   CreateWorkspaceResponse,
@@ -53,6 +54,18 @@ export async function createApiKey(workspaceId: string, name: string): Promise<C
   }
 
   return { plaintext_key: plaintextKey };
+}
+
+export function listApiKeys(workspaceId: string, includeRevoked = false): Promise<ApiKeySummary[]> {
+  return apiContractRequest<ApiKeySummary[]>("listApiKeys", {
+    path: `${resolveOperationPath("listApiKeys", { id: workspaceId })}${queryString({ include_revoked: includeRevoked })}`,
+  });
+}
+
+export function revokeApiKey(workspaceId: string, keyId: string): Promise<ApiKeySummary> {
+  return apiContractRequest<ApiKeySummary>("revokeApiKey", {
+    path: resolveOperationPath("revokeApiKey", { id: workspaceId, key_id: keyId }),
+  });
 }
 
 export function getWorkspace(workspaceId: string): Promise<WorkspaceDetail> {

@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{MemoryToolResult, ToolToolResult, ToolDefinition};
+use super::{MemoryToolResult, ToolDefinition, ToolToolResult};
 
 const DEFAULT_LIMIT: u32 = 10;
 const MAX_LIMIT: u32 = 50;

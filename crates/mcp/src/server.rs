@@ -456,8 +456,9 @@ impl<B: McpBackend> McpServer<B> {
                 serialize_tool_value(self.backend.memory_retrieve(&context, input).await?)
             }
             "skill_invoke" => {
-                let input = serde_json::from_value::<tools::skill::SkillInvokeInput>(call.arguments)
-                    .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
+                let input =
+                    serde_json::from_value::<tools::skill::SkillInvokeInput>(call.arguments)
+                        .map_err(|error| JsonRpcError::new(INVALID_PARAMS, error.to_string()))?;
                 serialize_tool_value(self.backend.skill_invoke(&context, input).await?)
             }
             "memory_search" => {

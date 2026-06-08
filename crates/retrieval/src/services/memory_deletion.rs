@@ -60,7 +60,8 @@ impl<'a> MemoryDeletionService<'a> {
             return Ok(Vec::new());
         }
 
-        let deleted = store::soft_delete_memory_units(&self.state.db, memory_ids, workspace_id).await?;
+        let deleted =
+            store::soft_delete_memory_units(&self.state.db, memory_ids, workspace_id).await?;
 
         // Clean up Qdrant vector points best-effort
         self.vector_index()
