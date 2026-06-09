@@ -6,6 +6,8 @@ import {
   formatSkillMarkdown,
   formatSkillTestMarkdown,
   formatSkillVersionsMarkdown,
+  formatSkillInvokeMarkdown,
+  formatSkillInvocationsMarkdown,
   truncate,
 } from "./markdown";
 import { SkillItem } from "./skillTree";
@@ -28,9 +30,11 @@ export function registerSkillCommands(
     vscode.commands.registerCommand("memoryops.skills.create", () => createSkillCommand(deps)),
     vscode.commands.registerCommand("memoryops.skills.toggleEnabled", (item) => toggleSkillEnabledCommand(deps, item)),
     vscode.commands.registerCommand("memoryops.skills.delete", (item) => deleteSkillCommand(deps, item)),
-    vscode.commands.registerCommand("memoryops.skills.test", (item) => testSkillCommand(deps, item)),
+    vscode.commands.registerCommand("memoryops.skills.test", (item, version) => testSkillCommand(deps, item, version)),
     vscode.commands.registerCommand("memoryops.skills.viewHistory", (item) => viewSkillHistoryCommand(deps, item)),
-    vscode.commands.registerCommand("memoryops.skills.rollback", (item) => rollbackSkillCommand(deps, item)),
+    vscode.commands.registerCommand("memoryops.skills.rollback", (item, version) => rollbackSkillCommand(deps, item, version)),
+    vscode.commands.registerCommand("memoryops.skills.invoke", (item, version) => invokeSkillCommand(deps, item, version)),
+    vscode.commands.registerCommand("memoryops.skills.viewInvocations", (item) => viewSkillInvocationsCommand(deps, item)),
   );
 }
 
@@ -57,7 +61,27 @@ async function resolveSkillSelection(client: MemoryOpsClient, argument: unknown)
   if (isSkill(argument)) {
     return argument;
   }
+  if (typeof argument === "string") {
+    const skills = await client.listSkills();
+    return skills.find((s) => s.name === argument);
+  }
+  if (typeof argument === "object" && argument !== null) {
+    if ("name" in argument && typeof (argument as any).name === "string") {
+      const name = (argument as any).name;
+      const skills = await client.listSkills();
+      return skills.find((s) => s.name === name);
+    }
+  }
   return pickSkill(client, "MemoryOps: Select Skill");
+}
+
+function extractVersion(argument: unknown): number | undefined {
+  if (typeof argument === "object" && argument !== null) {
+    if ("version" in argument && typeof (argument as any).version === "number") {
+      return (argument as any).version;
+    }
+  }
+  return undefined;
 }
 
 async function pickSkill(client: MemoryOpsClient, title: string): Promise<Skill | undefined> {
@@ -213,15 +237,22 @@ async function deleteSkillCommand(deps: SkillCommandDeps, item?: unknown): Promi
   }
 }
 
-async function testSkillCommand(deps: SkillCommandDeps, item?: unknown): Promise<void> {
+async function testSkillCommand(deps: SkillCommandDeps, item?: unknown, versionArg?: unknown): Promise<void> {
   const client = await withClient(deps);
   if (!client) return;
   const skill = await resolveSkillSelection(client, item);
   if (!skill) return;
 
+  let version: number | undefined;
+  if (typeof versionArg === "number") {
+    version = versionArg;
+  } else {
+    version = extractVersion(item);
+  }
+
   const defaultBody = JSON.stringify(skill.input_schema ?? {}, null, 2);
   const bodyText = await vscode.window.showInputBox({
-    title: `Test skill ${skill.name} — request body JSON`,
+    title: `Test skill ${skill.name}${version !== undefined ? ` (v${version})` : ""} — request body JSON`,
     prompt: "JSON body sent to the skill endpoint",
     value: defaultBody,
     ignoreFocusOut: true,
@@ -245,7 +276,7 @@ async function testSkillCommand(deps: SkillCommandDeps, item?: unknown): Promise
   try {
     const result = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Testing skill ${skill.name}...`, cancellable: false },
-      () => client.testSkill(skill.name, body),
+      () => client.testSkill(skill.name, body, version),
     );
     await deps.openMarkdownDocument(formatSkillTestMarkdown(skill, result));
   } catch (error) {
@@ -269,50 +300,125 @@ async function viewSkillHistoryCommand(deps: SkillCommandDeps, item?: unknown): 
   }
 }
 
-async function rollbackSkillCommand(deps: SkillCommandDeps, item?: unknown): Promise<void> {
+async function rollbackSkillCommand(deps: SkillCommandDeps, item?: unknown, versionArg?: unknown): Promise<void> {
   const client = await withClient(deps);
   if (!client) return;
   const skill = await resolveSkillSelection(client, item);
   if (!skill) return;
-  let versions: SkillVersion[];
-  try {
-    versions = await client.listSkillVersions(skill.name);
-  } catch (error) {
-    void vscode.window.showErrorMessage(`Load skill history failed: ${errorMessage(error)}`);
-    return;
+
+  let version: number | undefined;
+  if (typeof versionArg === "number") {
+    version = versionArg;
+  } else {
+    version = extractVersion(item);
   }
-  const candidates = versions.filter((v) => v.version !== skill.version);
-  if (candidates.length === 0) {
-    void vscode.window.showInformationMessage("No previous versions available to roll back to.");
-    return;
+
+  if (version === undefined) {
+    let versions: SkillVersion[];
+    try {
+      versions = await client.listSkillVersions(skill.name);
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Load skill history failed: ${errorMessage(error)}`);
+      return;
+    }
+    const candidates = versions.filter((v) => v.version !== skill.version);
+    if (candidates.length === 0) {
+      void vscode.window.showInformationMessage("No previous versions available to roll back to.");
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      candidates.map((v) => ({
+        label: `v${v.version}`,
+        description: v.change_note ?? "",
+        detail: [v.created_at, v.created_by].filter(Boolean).join(" · "),
+        version: v,
+      })),
+      { title: `Roll back ${skill.name} (current v${skill.version})` },
+    );
+    if (!picked) return;
+    version = picked.version.version;
   }
-  const picked = await vscode.window.showQuickPick(
-    candidates.map((v) => ({
-      label: `v${v.version}`,
-      description: v.change_note ?? "",
-      detail: [v.created_at, v.created_by].filter(Boolean).join(" · "),
-      version: v,
-    })),
-    { title: `Roll back ${skill.name} (current v${skill.version})` },
-  );
-  if (!picked) return;
+
   const note = await vscode.window.showInputBox({
-    title: `Rollback ${skill.name} → v${picked.version.version}`,
+    title: `Rollback ${skill.name} → v${version}`,
     prompt: "Change note (optional)",
     ignoreFocusOut: true,
   });
   if (note === undefined) return;
   const confirm = await vscode.window.showWarningMessage(
-    `Roll back '${skill.name}' to v${picked.version.version}? A new version will be created.`,
+    `Roll back '${skill.name}' to v${version}? A new version will be created.`,
     { modal: true },
     "Roll back",
   );
   if (confirm !== "Roll back") return;
   try {
-    const updated = await client.rollbackSkillVersion(skill.name, picked.version.version, note.trim() || undefined);
-    void vscode.window.showInformationMessage(`Rolled back '${updated.name}' to snapshot of v${picked.version.version} (now v${updated.version}).`);
+    const updated = await client.rollbackSkillVersion(skill.name, version, note.trim() || undefined);
+    void vscode.window.showInformationMessage(`Rolled back '${updated.name}' to snapshot of v${version} (now v${updated.version}).`);
     deps.onSkillsChanged?.();
   } catch (error) {
     void vscode.window.showErrorMessage(`Rollback failed: ${errorMessage(error)}`);
+  }
+}
+
+async function invokeSkillCommand(deps: SkillCommandDeps, item?: unknown, versionArg?: unknown): Promise<void> {
+  const client = await withClient(deps);
+  if (!client) return;
+  const skill = await resolveSkillSelection(client, item);
+  if (!skill) return;
+
+  let version: number | undefined;
+  if (typeof versionArg === "number") {
+    version = versionArg;
+  } else {
+    version = extractVersion(item);
+  }
+
+  const defaultBody = JSON.stringify(skill.input_schema ?? {}, null, 2);
+  const bodyText = await vscode.window.showInputBox({
+    title: `Invoke skill ${skill.name}${version !== undefined ? ` (v${version})` : ""} — request body JSON`,
+    prompt: "JSON body sent to the skill endpoint",
+    value: defaultBody,
+    ignoreFocusOut: true,
+    validateInput: (v) => {
+      try {
+        JSON.parse(v || "{}");
+        return undefined;
+      } catch {
+        return "Invalid JSON.";
+      }
+    },
+  });
+  if (bodyText === undefined) return;
+  let body: unknown;
+  try {
+    body = JSON.parse(bodyText || "{}");
+  } catch {
+    void vscode.window.showErrorMessage("Invalid JSON body.");
+    return;
+  }
+  try {
+    const result = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Invoking skill ${skill.name}...`, cancellable: false },
+      () => client.invokeSkill(skill.name, body, version),
+    );
+    await deps.openMarkdownDocument(formatSkillInvokeMarkdown(skill, result, version));
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Invoke skill failed: ${errorMessage(error)}`);
+  }
+}
+
+async function viewSkillInvocationsCommand(deps: SkillCommandDeps, item?: unknown): Promise<void> {
+  const client = await withClient(deps);
+  if (!client) return;
+  const skill = await resolveSkillSelection(client, item);
+  if (!skill) return;
+  try {
+    const invocations = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Loading invocations for ${skill.name}...`, cancellable: false },
+      () => client.listSkillInvocations(skill.name),
+    );
+    await deps.openMarkdownDocument(formatSkillInvocationsMarkdown(skill.name, invocations));
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Load skill invocations failed: ${errorMessage(error)}`);
   }
 }

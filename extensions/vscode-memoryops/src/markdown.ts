@@ -7,6 +7,7 @@ import {
   Skill,
   SkillTestResult,
   SkillVersion,
+  ToolInvocation,
 } from "./client";
 
 export function formatMemoryMarkdown(memory: MemoryUnit): string {
@@ -135,8 +136,19 @@ export function formatMemoryFeedbackMarkdown(memory: MemoryUnit, feedback: Feedb
 }
 
 export function formatSkillMarkdown(skill: Skill): string {
+  const skillArg = [{ name: skill.name }];
+  const actions = [
+    commandLink("memoryops.skills.test", skillArg, "Test Skill"),
+    commandLink("memoryops.skills.invoke", skillArg, "Invoke Skill"),
+    commandLink("memoryops.skills.viewHistory", skillArg, "View Version History"),
+    commandLink("memoryops.skills.viewInvocations", skillArg, "View Invocations"),
+    commandLink("memoryops.skills.toggleEnabled", skillArg, "Toggle Enabled"),
+  ].join(" | ");
+
   return [
     `# MemoryOps Skill \`${skill.name}\``,
+    actions,
+    "",
     `Version: ${skill.version}`,
     `Enabled: ${skill.enabled ? "yes" : "no"}`,
     `Method: ${skill.http_method}`,
@@ -165,16 +177,27 @@ export function formatSkillVersionsMarkdown(skill: Skill, versions: SkillVersion
     `Total versions: ${versions.length}`,
     "",
     ...(versions.length > 0
-      ? versions.map((v) => [
-          `## v${v.version}${v.version === skill.version ? " (current)" : ""}`,
-          v.created_at ? `Created: ${v.created_at}` : undefined,
-          v.created_by ? `By: ${v.created_by}` : undefined,
-          `Method: ${v.http_method}`,
-          `URL: ${v.endpoint_url}`,
-          `Enabled: ${v.enabled ? "yes" : "no"}`,
-          v.change_note ? `Change note: ${v.change_note}` : undefined,
-          v.description ? `Description: ${v.description}` : undefined,
-        ].filter(Boolean).join("\n"))
+      ? versions.map((v) => {
+          const versionArg = [{ name: skill.name, version: v.version }];
+          const actions = [
+            commandLink("memoryops.skills.rollback", versionArg, "Roll Back to this Version"),
+            commandLink("memoryops.skills.test", versionArg, "Test this Version"),
+            commandLink("memoryops.skills.invoke", versionArg, "Invoke this Version"),
+          ].join(" | ");
+
+          return [
+            `## v${v.version}${v.version === skill.version ? " (current)" : ""}`,
+            actions,
+            "",
+            v.created_at ? `Created: ${v.created_at}` : undefined,
+            v.created_by ? `By: ${v.created_by}` : undefined,
+            `Method: ${v.http_method}`,
+            `URL: ${v.endpoint_url}`,
+            `Enabled: ${v.enabled ? "yes" : "no"}`,
+            v.change_note ? `Change note: ${v.change_note}` : undefined,
+            v.description ? `Description: ${v.description}` : undefined,
+          ].filter(Boolean).join("\n");
+        })
       : ["No version history recorded yet."]),
   ].join("\n");
 }
@@ -224,4 +247,40 @@ function formatRating(value: number): string {
     return `Not helpful (${value})`;
   }
   return `Neutral (${value})`;
+}
+
+export function formatSkillInvokeMarkdown(skill: Skill, result: SkillTestResult, version?: number): string {
+  return [
+    `# Skill invocation \`${skill.name}\`${version !== undefined ? ` (v${version})` : ""}`,
+    `Status: ${result.status}`,
+    `Latency: ${result.latency_ms} ms`,
+    "",
+    "## Response body",
+    formatJsonBlock(result.body),
+  ].join("\n");
+}
+
+export function formatSkillInvocationsMarkdown(skillName: string, invocations: ToolInvocation[]): string {
+  const tableRows = invocations.map((inv) => {
+    const errorText = inv.error ? `\`${truncate(inv.error, 100)}\`` : "_none_";
+    const statusText = inv.status_code >= 200 && inv.status_code < 300
+      ? `🟢 ${inv.status_code}`
+      : `🔴 ${inv.status_code}`;
+    return `| v${inv.tool_version} | ${statusText} | ${inv.latency_ms} ms | ${inv.actor} | ${inv.source} | ${errorText} | ${inv.occurred_at} |`;
+  });
+
+  return [
+    `# Skill invocation history \`${skillName}\``,
+    `Total invocations loaded: ${invocations.length}`,
+    "",
+    "| Version | Status | Latency | Actor | Source | Error | Occurred At |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    ...tableRows,
+    ...(invocations.length === 0 ? ["| _No invocations recorded yet_ | | | | | | |"] : []),
+  ].join("\n");
+}
+
+function commandLink(command: string, args: unknown[], label: string): string {
+  const encodedArgs = encodeURIComponent(JSON.stringify(args));
+  return `[${label}](command:${command}?${encodedArgs})`;
 }

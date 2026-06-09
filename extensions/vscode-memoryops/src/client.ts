@@ -211,6 +211,21 @@ export interface SkillVersion {
   created_at?: string;
 }
 
+export interface ToolInvocation {
+  id: number;
+  tool_id: string;
+  workspace_id: string;
+  tool_name: string;
+  tool_version: number;
+  actor: string;
+  source: string;
+  status_code: number;
+  latency_ms: number;
+  error: string | null;
+  occurred_at: string;
+  [key: string]: unknown;
+}
+
 export interface SkillCreateInput {
   name: string;
   description: string;
@@ -616,12 +631,12 @@ export class MemoryOpsClient {
     };
   }
 
-  async listSkillInvocations(name: string, limit = 50): Promise<unknown[]> {
+  async listSkillInvocations(name: string, limit = 50): Promise<ToolInvocation[]> {
     const response = await this.request(
       `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}/invocations?limit=${limit}`,
       { method: "GET", authenticated: true, idempotent: true },
     );
-    return Array.isArray(response) ? response : [];
+    return Array.isArray(response) ? response.filter(isRecord).map(normalizeToolInvocation) : [];
   }
 
   async listAgentSkills(): Promise<AgentSkill[]> {
@@ -1104,5 +1119,21 @@ function normalizeAgentSkillContent(value: Record<string, unknown>): AgentSkillC
     description: stringOrUndefined(value.description) ?? "",
     instructions: stringOrUndefined(value.instructions) ?? "",
     content: stringOrUndefined(value.content) ?? "",
+  };
+}
+
+function normalizeToolInvocation(value: Record<string, unknown>): ToolInvocation {
+  return {
+    id: numberOrDefault(value.id, 0),
+    tool_id: stringOrUndefined(value.tool_id) ?? "",
+    workspace_id: stringOrUndefined(value.workspace_id) ?? "",
+    tool_name: stringOrUndefined(value.tool_name) ?? "",
+    tool_version: numberOrDefault(value.tool_version, 1),
+    actor: stringOrUndefined(value.actor) ?? "",
+    source: stringOrUndefined(value.source) ?? "",
+    status_code: numberOrDefault(value.status_code, 0),
+    latency_ms: numberOrDefault(value.latency_ms, 0),
+    error: stringOrNullOrUndefined(value.error) ?? null,
+    occurred_at: stringOrUndefined(value.occurred_at) ?? "",
   };
 }

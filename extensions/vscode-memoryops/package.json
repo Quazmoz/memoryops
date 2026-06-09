@@ -2,7 +2,7 @@
   "name": "memoryops-vscode",
   "displayName": "MemoryOps",
   "description": "Bring governed MemoryOps agent memory into VS Code.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publisher": "quazmoz",
   "author": {
     "name": "Quazmoz",
@@ -279,6 +279,18 @@
         "icon": "$(sync)"
       },
       {
+        "command": "memoryops.skills.invoke",
+        "title": "MemoryOps: Invoke Skill",
+        "category": "MemoryOps",
+        "icon": "$(play)"
+      },
+      {
+        "command": "memoryops.skills.viewInvocations",
+        "title": "MemoryOps: View Skill Invocations",
+        "category": "MemoryOps",
+        "icon": "$(list-unordered)"
+      },
+      {
         "command": "memoryops.configureFromLocal",
         "title": "MemoryOps: Configure from Local Config File",
         "category": "MemoryOps",
@@ -367,14 +379,24 @@
           "group": "inline@2"
         },
         {
+          "command": "memoryops.skills.invoke",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill.enabled/",
+          "group": "inline@3"
+        },
+        {
           "command": "memoryops.skills.viewHistory",
           "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
-          "group": "inline@3"
+          "group": "inline@4"
+        },
+        {
+          "command": "memoryops.skills.viewInvocations",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
+          "group": "inline@5"
         },
         {
           "command": "memoryops.skills.delete",
           "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
-          "group": "inline@4"
+          "group": "inline@6"
         }
       ],
       "editor/context": [
