@@ -219,7 +219,11 @@ describe("AgentSkillsView", () => {
     renderWithQueryClient(<AgentSkillsView />);
 
     fireEvent.click(await screen.findByRole("button", { name: /release notes/i }));
-    
+
+    // Verify version badges are rendered in the sidebar list and detail header
+    expect(await screen.findByTestId("skill-version-release_notes")).toHaveTextContent("v2");
+    expect(await screen.findByTestId("skill-detail-version-release_notes")).toHaveTextContent("v2");
+
     // Switch to Version History tab
     fireEvent.click(await screen.findByRole("button", { name: /version history/i }));
 

@@ -327,7 +327,16 @@ export function AgentSkillsView() {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <span className="block truncate text-sm font-semibold text-ink">{skill.title}</span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="block truncate text-sm font-semibold text-ink">{skill.title}</span>
+                        <span
+                          className="inline-flex items-center rounded border border-line bg-soft px-1.5 py-0.5 text-[10px] font-semibold text-ink/60 font-mono"
+                          title={`Current version: ${skill.version}`}
+                          data-testid={`skill-version-${skill.name}`}
+                        >
+                          v{skill.version}
+                        </span>
+                      </div>
                       <span className="mt-1 block font-mono text-[11px] text-ink/45">{skill.name}</span>
                     </div>
                     <Badge
@@ -362,9 +371,20 @@ export function AgentSkillsView() {
                 <div className="flex items-center gap-2">
                   <FileCode className="h-5 w-5 text-accent" />
                   <div>
-                    <h2 className="text-base font-semibold leading-none text-ink">
-                      {skillContentQuery.data?.title || selectedSkillMeta?.title || selectedSkill.name}
-                    </h2>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-semibold leading-none text-ink">
+                        {skillContentQuery.data?.title || selectedSkillMeta?.title || selectedSkill.name}
+                      </h2>
+                      {selectedSkillMeta && (
+                        <span
+                          className="inline-flex items-center rounded border border-line bg-soft px-1.5 py-0.5 text-[10px] font-semibold text-ink/60 font-mono"
+                          title={`Current version: ${selectedSkillMeta.version}`}
+                          data-testid={`skill-detail-version-${selectedSkill.name}`}
+                        >
+                          v{selectedSkillMeta.version}
+                        </span>
+                      )}
+                    </div>
                     <span className="mt-1 block text-xs font-mono text-ink/50">
                       {selectedSkill.assistant === "gemini" ? ".gemini" : ".claude"}/skills/{selectedSkill.name}.md
                     </span>
@@ -683,7 +703,23 @@ export function AgentSkillsView() {
           >
             <div className="flex items-center justify-between border-b border-line px-5 py-4">
               <div>
-                <h2 className="text-lg font-semibold text-ink">{editingSkill ? "Edit Skill" : "Add Skill"}</h2>
+                <h2 className="text-lg font-semibold text-ink">
+                  {editingSkill ? (
+                    <div className="flex items-center gap-2">
+                      <span>Edit Skill</span>
+                      {selectedSkillMeta && (
+                        <span
+                          className="inline-flex items-center rounded border border-line bg-soft px-1.5 py-0.5 text-[10px] font-semibold text-ink/60 font-mono"
+                          title={`Current version: ${selectedSkillMeta.version}`}
+                        >
+                          v{selectedSkillMeta.version}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    "Add Skill"
+                  )}
+                </h2>
                 <p className="mt-1 text-sm text-ink/55">
                   {editingSkill
                     ? "Update the markdown instructions saved in this repository."
