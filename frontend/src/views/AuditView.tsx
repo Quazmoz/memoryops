@@ -1,7 +1,9 @@
-import { ChevronLeft, ChevronRight, Clipboard, ScrollText } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clipboard, Clock, ScrollText, Shield } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+
+import { cn } from "../lib/utils";
 
 import { listAuditEvents } from "../api/audit";
 import type { AuditEvent } from "../api/types";
@@ -22,6 +24,7 @@ export function AuditView() {
   const apiKey = useAppStore((state) => state.apiKey);
   const [pageIndex, setPageIndex] = useState(0);
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
+  const [activeTab, setActiveTab] = useState<"activity" | "compliance">("activity");
   const [cursorWorkspaceId, setCursorWorkspaceId] = useState(workspaceId);
   const authReady = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
   const paginationReady = cursorWorkspaceId === workspaceId;
@@ -85,78 +88,181 @@ export function AuditView() {
           <p className="text-sm font-medium text-accent-strong">Operations</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Audit Log</h1>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="muted">{items.length} rows</Badge>
-          <HelpTooltip label="Rows badge">Number of audit events currently loaded into this page of the log.</HelpTooltip>
-        </div>
+        {activeTab === "activity" && (
+          <div className="flex items-center gap-2">
+            <Badge variant="muted">{items.length} rows</Badge>
+            <HelpTooltip label="Rows badge">Number of audit events currently loaded into this page of the log.</HelpTooltip>
+          </div>
+        )}
       </header>
 
-      {audit.isError ? <InlineError message={audit.error.message} /> : null}
+      <div className="flex overflow-x-auto thin-scrollbar border-b border-line" role="tablist" aria-label="Audit sections">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "activity"}
+              onClick={() => setActiveTab("activity")}
+              className={cn(
+                "shrink-0 whitespace-nowrap border-b-2 px-4 pb-2.5 pt-1.5 text-sm font-medium transition-colors",
+                activeTab === "activity"
+                  ? "border-accent text-accent-strong"
+                  : "border-transparent text-ink/55 hover:border-line hover:text-ink",
+              )}
+            >
+              Activity Log
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Inspect all operator activity and system events recorded in the workspace.</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "compliance"}
+              onClick={() => setActiveTab("compliance")}
+              className={cn(
+                "shrink-0 whitespace-nowrap border-b-2 px-4 pb-2.5 pt-1.5 text-sm font-medium transition-colors inline-flex items-center gap-1.5",
+                activeTab === "compliance"
+                  ? "border-accent text-accent-strong"
+                  : "border-transparent text-ink/55 hover:border-line hover:text-ink",
+              )}
+            >
+              Compliance Logs
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100/80 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 animate-pulse">
+                WIP
+              </span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>GDPR/CCPA user erasure actions and automatic data retention purge logs.</TooltipContent>
+        </Tooltip>
+      </div>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="flex items-center gap-1.5">
-            <span>Activity</span>
-            <HelpTooltip label="Activity">Audited operations performed in this workspace, including system and operator actions.</HelpTooltip>
-          </CardTitle>
-          <ScrollText className="h-4 w-4 text-accent-strong" aria-hidden="true" />
-        </CardHeader>
-        <CardContent>
-          {audit.isLoading ? <Skeleton className="h-72 w-full" /> : null}
-          {!audit.isLoading && !audit.isError && items.length === 0 ? (
-            <EmptyState title="No audit events" message="No audit events yet — actions you take will appear here." />
-          ) : null}
-          {!audit.isLoading && items.length > 0 ? (
-            <div className="thin-scrollbar overflow-auto rounded-md border border-line">
-              <table className="w-full min-w-[780px] border-collapse text-left text-sm">
-                <thead className="bg-soft text-xs uppercase text-ink/55">
-                  {table.getHeaderGroups().map((headerGroup) => (
-                    <tr key={headerGroup.id}>
-                      {headerGroup.headers.map((header) => (
-                        <th key={header.id} className="px-3 py-2 font-medium">
-                          {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                        </th>
-                      ))}
-                    </tr>
-                  ))}
-                </thead>
-                <tbody>
-                  {table.getRowModel().rows.map((row) => (
-                    <tr key={row.id} className="border-t border-line align-top">
-                      {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="px-3 py-3 text-ink/70">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {activeTab === "activity" && audit.isError ? <InlineError message={audit.error.message} /> : null}
+
+      {activeTab === "activity" && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle className="flex items-center gap-1.5">
+              <span>Activity</span>
+              <HelpTooltip label="Activity">Audited operations performed in this workspace, including system and operator actions.</HelpTooltip>
+            </CardTitle>
+            <ScrollText className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+          </CardHeader>
+          <CardContent>
+            {audit.isLoading ? <Skeleton className="h-72 w-full" /> : null}
+            {!audit.isLoading && !audit.isError && items.length === 0 ? (
+              <EmptyState title="No audit events" message="No audit events yet — actions you take will appear here." />
+            ) : null}
+            {!audit.isLoading && items.length > 0 ? (
+              <div className="thin-scrollbar overflow-auto rounded-md border border-line">
+                <table className="w-full min-w-[780px] border-collapse text-left text-sm">
+                  <thead className="bg-soft text-xs uppercase text-ink/55">
+                    {table.getHeaderGroups().map((headerGroup) => (
+                      <tr key={headerGroup.id}>
+                        {headerGroup.headers.map((header) => (
+                          <th key={header.id} className="px-3 py-2 font-medium">
+                            {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                          </th>
+                        ))}
+                      </tr>
+                    ))}
+                  </thead>
+                  <tbody>
+                    {table.getRowModel().rows.map((row) => (
+                      <tr key={row.id} className="border-t border-line align-top">
+                        {row.getVisibleCells().map((cell) => (
+                          <td key={cell.id} className="px-3 py-3 text-ink/70">
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => setPageIndex((index) => Math.max(0, index - 1))} disabled={pageIndex === 0 || audit.isFetching}>
+                    <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                    Prev
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Load the previous page of audit events.</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => goToNextPage(nextCursor, pageIndex, setCursors, setPageIndex)} disabled={!nextCursor || audit.isFetching}>
+                    Next
+                    <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Load the next page of audit events.</TooltipContent>
+              </Tooltip>
             </div>
-          ) : null}
+          </CardContent>
+        </Card>
+      )}
 
-          <div className="mt-4 flex items-center justify-end gap-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button type="button" variant="secondary" size="sm" onClick={() => setPageIndex((index) => Math.max(0, index - 1))} disabled={pageIndex === 0 || audit.isFetching}>
-                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-                  Prev
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Load the previous page of audit events.</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button type="button" variant="secondary" size="sm" onClick={() => goToNextPage(nextCursor, pageIndex, setCursors, setPageIndex)} disabled={!nextCursor || audit.isFetching}>
-                  Next
-                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Load the next page of audit events.</TooltipContent>
-            </Tooltip>
-          </div>
-        </CardContent>
-      </Card>
+      {activeTab === "compliance" && (
+        <Card className="border-line/60 bg-soft/10">
+          <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+            <div>
+              <CardTitle className="flex items-center gap-1.5 text-ink/75">
+                <span>Compliance Deletion Logs</span>
+                <HelpTooltip label="Compliance Logs">GDPR right-to-erasure and automatic data retention logs.</HelpTooltip>
+              </CardTitle>
+              <p className="mt-1 text-xs text-ink/45">Work in Progress — Compliance reporting engine in development</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100/80 px-2 py-0.5 text-[10px] font-semibold text-amber-800 animate-pulse">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                WIP
+              </span>
+              <Shield className="h-4 w-4 text-ink/40" aria-hidden="true" />
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-6">
+            <p className="text-sm text-ink/60 leading-relaxed">
+              Compliance deletion audits are securely logged in the database (`compliance_audit_log` table), including record purges and automatic data retention limits. The upcoming frontend panel will display:
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border border-dashed border-line bg-white/40 p-4 flex flex-col gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Shield className="h-4 w-4 text-ink/50" />
+                  <span className="text-sm font-semibold text-ink/70">GDPR / CCPA Erasure Trail</span>
+                </div>
+                <p className="text-xs text-ink/45 leading-relaxed">
+                  Timestamped records of user data erasure calls (`DELETE /v1/workspaces/:id/forget/user/:user_id`), noting the count of episodic memories and webhook events purged.
+                </p>
+                <div className="mt-auto pt-3 flex justify-between text-[11px] font-mono text-ink/30 border-t border-line/40">
+                  <span>Action Status</span>
+                  <span>PENDING VIEWER</span>
+                </div>
+              </div>
+              
+              <div className="rounded-lg border border-dashed border-line bg-white/40 p-4 flex flex-col gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Clock className="h-4 w-4 text-ink/50" />
+                  <span className="text-sm font-semibold text-ink/70">Retention Purge Scheduler</span>
+                </div>
+                <p className="text-xs text-ink/45 leading-relaxed">
+                  Daily logs of the automatic background retention agent cleaning up memories older than your configured threshold (e.g. 365 days max age limit).
+                </p>
+                <div className="mt-auto pt-3 flex justify-between text-[11px] font-mono text-ink/30 border-t border-line/40">
+                  <span>Action Status</span>
+                  <span>PENDING VIEWER</span>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
