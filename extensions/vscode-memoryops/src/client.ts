@@ -311,6 +311,35 @@ export interface AgentSkillUpdateInput {
   change_note?: string;
 }
 
+export interface ContradictionMemoryRef {
+  id: string;
+  content_preview: string;
+  created_at: string;
+}
+
+export interface ContradictionItem {
+  id: string;
+  workspace_id: string;
+  memory_a: ContradictionMemoryRef;
+  memory_b: ContradictionMemoryRef;
+  similarity: number;
+  conflict_score: number;
+  resolution: string;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  notes: string | null;
+  kept_memory_id: string | null;
+  discarded_memory_id: string | null;
+  created_at: string;
+}
+
+export type ContradictionResolution = "accepted" | "dismissed" | "keep_a" | "keep_b";
+
+export interface ContradictionListResponse {
+  items: ContradictionItem[];
+  next_cursor: string | null;
+}
+
 export class MemoryOpsClient {
   constructor(
     private readonly config: MemoryOpsConfig,
@@ -732,6 +761,69 @@ export class MemoryOpsClient {
       throw new Error("MemoryOps returned an unexpected rollback response.");
     }
     return normalizeAgentSkillContent(response);
+  }
+
+  async listContradictions(status?: string, after?: string): Promise<ContradictionListResponse> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/contradictions${queryString({
+        status,
+        after,
+        limit: 20,
+      })}`,
+      { method: "GET", authenticated: true, idempotent: true }
+    );
+
+    if (!isRecord(response)) {
+      return { items: [], next_cursor: null };
+    }
+
+    const items = Array.isArray(response.items) ? response.items.filter(isRecord).map(normalizeContradictionItem) : [];
+    return {
+      items,
+      next_cursor: typeof response.next_cursor === "string" ? response.next_cursor : null,
+    };
+  }
+
+  async resolveContradiction(flagId: string, resolution: ContradictionResolution, notes?: string): Promise<ContradictionItem> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/contradictions/${encodeURIComponent(flagId)}/resolve`,
+      {
+        method: "POST",
+        authenticated: true,
+        body: { resolution, notes: notes ?? null },
+      }
+    );
+    return expectContradictionItem(response, "MemoryOps returned an unexpected contradiction resolution response.");
+  }
+
+  async bulkDismissContradictions(flagIds: string[], notes?: string): Promise<{ dismissed: number }> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/contradictions/bulk-dismiss`,
+      {
+        method: "POST",
+        authenticated: true,
+        body: { flag_ids: flagIds, notes: notes ?? null },
+      }
+    );
+    if (!isRecord(response)) {
+      return { dismissed: 0 };
+    }
+    return {
+      dismissed: numberOrDefault(response.dismissed, 0),
+    };
+  }
+
+  async getContradictionCount(): Promise<{ open: number }> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/contradictions/count`,
+      { method: "GET", authenticated: true, idempotent: true }
+    );
+    if (!isRecord(response)) {
+      return { open: 0 };
+    }
+    return {
+      open: numberOrDefault(response.open, 0),
+    };
   }
 
   private async request(path: string, options: {
@@ -1204,4 +1296,40 @@ function normalizeToolInvocation(value: Record<string, unknown>): ToolInvocation
     error: stringOrNullOrUndefined(value.error) ?? null,
     occurred_at: stringOrUndefined(value.occurred_at) ?? "",
   };
+}
+
+function normalizeContradictionItem(value: Record<string, unknown>): ContradictionItem {
+  return {
+    id: stringOrUndefined(value.id) ?? "",
+    workspace_id: stringOrUndefined(value.workspace_id) ?? "",
+    memory_a: normalizeContradictionMemoryRef(value.memory_a),
+    memory_b: normalizeContradictionMemoryRef(value.memory_b),
+    similarity: numberOrDefault(value.similarity, 0),
+    conflict_score: numberOrDefault(value.conflict_score, 0),
+    resolution: stringOrUndefined(value.resolution) ?? "open",
+    resolved_by: stringOrNullOrUndefined(value.resolved_by) ?? null,
+    resolved_at: stringOrNullOrUndefined(value.resolved_at) ?? null,
+    notes: stringOrNullOrUndefined(value.notes) ?? null,
+    kept_memory_id: stringOrNullOrUndefined(value.kept_memory_id) ?? null,
+    discarded_memory_id: stringOrNullOrUndefined(value.discarded_memory_id) ?? null,
+    created_at: stringOrUndefined(value.created_at) ?? "",
+  };
+}
+
+function normalizeContradictionMemoryRef(value: unknown): ContradictionMemoryRef {
+  if (!isRecord(value)) {
+    return { id: "", content_preview: "", created_at: "" };
+  }
+  return {
+    id: stringOrUndefined(value.id) ?? "",
+    content_preview: stringOrUndefined(value.content_preview) ?? "",
+    created_at: stringOrUndefined(value.created_at) ?? "",
+  };
+}
+
+function expectContradictionItem(value: unknown, errorMsg: string): ContradictionItem {
+  if (!isRecord(value)) {
+    throw new Error(errorMsg);
+  }
+  return normalizeContradictionItem(value);
 }

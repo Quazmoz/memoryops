@@ -1,12 +1,13 @@
 import * as vscode from "vscode";
 import * as path from "path";
 
-import { MemoryOpsClient, MemorySearchResult } from "./client";
+import { MemoryOpsClient, MemorySearchResult, ContradictionResolution } from "./client";
 
 import { getConfig, openMemoryOpsSettings, setCachedApiKeySecret, validateConfig } from "./config";
 import { registerChatParticipant } from "./chatParticipant";
 import { MemoryCodeLensProvider } from "./codeLensProvider";
 import { MemoryWebviewViewProvider } from "./webviewProvider";
+import { ContradictionsWebviewViewProvider } from "./contradictionsProvider";
 import { memoryFromCommandArgument, memoryLabel } from "./memoryTree";
 import {
   errorMessage,
@@ -27,6 +28,7 @@ import { syncAgentSkills } from "./agentSkillsSync";
 let extensionContext: vscode.ExtensionContext;
 let statusBarItem: vscode.StatusBarItem;
 let memoryTreeProvider: MemoryWebviewViewProvider;
+let contradictionsProvider: ContradictionsWebviewViewProvider;
 let skillTreeProvider: SkillTreeProvider;
 let outputChannel: vscode.OutputChannel;
 let codeLensProvider: MemoryCodeLensProvider | undefined;
@@ -54,6 +56,11 @@ export function activate(context: vscode.ExtensionContext): void {
   memoryTreeProvider = new MemoryWebviewViewProvider(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("memoryops.memories", memoryTreeProvider)
+  );
+
+  contradictionsProvider = new ContradictionsWebviewViewProvider(context.extensionUri);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider("memoryops.contradictions", contradictionsProvider)
   );
 
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -95,6 +102,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("memoryops.showMemoriesForFile", showMemoriesForFile),
     vscode.commands.registerCommand("memoryops.openWalkthrough", openWalkthrough),
     vscode.commands.registerCommand("memoryops.configureFromLocal", () => configureFromLocalCommand(context)),
+    vscode.commands.registerCommand("memoryops.refreshContradictions", refreshContradictions),
+    vscode.commands.registerCommand("memoryops.resolveContradiction", resolveContradictionCommand),
+    vscode.commands.registerCommand("memoryops.bulkDismissContradictions", bulkDismissContradictionsCommand),
     vscode.commands.registerCommand("memoryops.skills.syncAgentSkills", async () => {
       const { client, missing } = getClient();
       if (missing.length > 0) {
@@ -812,6 +822,95 @@ async function copyMemory(item?: unknown): Promise<void> {
   void vscode.window.showInformationMessage("MemoryOps memory content copied.");
 }
 
+async function refreshContradictions(options: { append?: boolean; promptOnMissingConfig?: boolean } = {}): Promise<void> {
+  const append = options.append ?? false;
+  const promptOnMissingConfig = options.promptOnMissingConfig ?? true;
+  const { client, missing } = getClient();
+  if (missing.length > 0) {
+    if (promptOnMissingConfig) {
+      await promptForMissingConfig(missing);
+    } else {
+      contradictionsProvider.setError("Configure MemoryOps settings to load contradictions.");
+    }
+    return;
+  }
+
+  const after = append ? (contradictionsProvider.getNextCursor() || undefined) : undefined;
+  if (append && !after) {
+    void vscode.window.showInformationMessage("No more contradictions to load.");
+    return;
+  }
+
+  try {
+    const status = contradictionsProvider.getActiveTab();
+    const response = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Window,
+        title: append ? "MemoryOps: loading more contradictions..." : "MemoryOps: loading contradictions...",
+        cancellable: false,
+      },
+      () => client.listContradictions(status, after)
+    );
+
+    contradictionsProvider.setContradictions(response, { append });
+  } catch (error) {
+    contradictionsProvider.setError(errorMessage(error));
+    throw error;
+  }
+}
+
+async function resolveContradictionCommand(args: { id: string; resolution: ContradictionResolution; notes?: string }): Promise<void> {
+  const { client, missing } = getClient();
+  if (missing.length > 0) {
+    await promptForMissingConfig(missing);
+    return;
+  }
+
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Resolving contradiction flag...`,
+        cancellable: false,
+      },
+      () => client.resolveContradiction(args.id, args.resolution, args.notes)
+    );
+
+    void vscode.window.showInformationMessage(`Contradiction resolved successfully.`);
+    contradictionsProvider.removeContradiction(args.id);
+    void refreshMemories({ showProgress: false, promptOnMissingConfig: false });
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Failed to resolve contradiction: ${errorMessage(error)}`);
+  }
+}
+
+async function bulkDismissContradictionsCommand(args: { ids: string[] }): Promise<void> {
+  const { client, missing } = getClient();
+  if (missing.length > 0) {
+    await promptForMissingConfig(missing);
+    return;
+  }
+
+  try {
+    const response = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Dismissing selected contradictions...`,
+        cancellable: false,
+      },
+      () => client.bulkDismissContradictions(args.ids)
+    );
+
+    void vscode.window.showInformationMessage(`Dismissed ${response.dismissed} flag(s).`);
+    for (const id of args.ids) {
+      contradictionsProvider.removeContradiction(id);
+    }
+    contradictionsProvider.clearSelection();
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Failed to bulk dismiss contradictions: ${errorMessage(error)}`);
+  }
+}
+
 function getClient(): { client: MemoryOpsClient; config: ReturnType<typeof getConfig>; missing: string[] } {
   const config = getConfig();
   const configKey = `${config.apiUrl}|${config.workspaceId}|${config.apiKey}`;
@@ -893,16 +992,18 @@ async function initializeSidebar(): Promise<void> {
   if (missing.length > 0) {
     setIncompleteStatusBar(missing);
     memoryTreeProvider.setMessage("Configure MemoryOps settings to load recent memories.");
+    contradictionsProvider.setError("Configure MemoryOps settings to load contradictions.");
     return;
   }
 
   setDefaultStatusBar();
   try {
     await refreshMemories({ showProgress: false, promptOnMissingConfig: false });
+    await refreshContradictions({ promptOnMissingConfig: false });
     const { client } = getClient();
     void syncAgentSkills(client, { interactive: false });
   } catch {
-    // refreshMemories already updates the tree provider state.
+    // refresh already updates the tree provider state.
   }
 }
 
