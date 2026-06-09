@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
 
-import { MemoryOpsClient, Skill, SkillVersion } from "./client";
+import { MemoryOpsClient, Skill, SkillVersion, AgentSkill, AgentSkillVersion } from "./client";
 import {
   errorMessage,
   formatSkillMarkdown,
@@ -8,6 +10,7 @@ import {
   formatSkillVersionsMarkdown,
   formatSkillInvokeMarkdown,
   formatSkillInvocationsMarkdown,
+  formatAgentSkillVersionsMarkdown,
   truncate,
 } from "./markdown";
 import { SkillItem } from "./skillTree";
@@ -35,6 +38,8 @@ export function registerSkillCommands(
     vscode.commands.registerCommand("memoryops.skills.rollback", (item, version) => rollbackSkillCommand(deps, item, version)),
     vscode.commands.registerCommand("memoryops.skills.invoke", (item, version) => invokeSkillCommand(deps, item, version)),
     vscode.commands.registerCommand("memoryops.skills.viewInvocations", (item) => viewSkillInvocationsCommand(deps, item)),
+    vscode.commands.registerCommand("memoryops.agentSkills.viewHistory", (item) => viewAgentSkillHistoryCommand(deps, item)),
+    vscode.commands.registerCommand("memoryops.agentSkills.rollback", (item, version) => rollbackAgentSkillCommand(deps, item, version)),
   );
 }
 
@@ -420,5 +425,139 @@ async function viewSkillInvocationsCommand(deps: SkillCommandDeps, item?: unknow
     await deps.openMarkdownDocument(formatSkillInvocationsMarkdown(skill.name, invocations));
   } catch (error) {
     void vscode.window.showErrorMessage(`Load skill invocations failed: ${errorMessage(error)}`);
+  }
+}
+
+async function resolveAgentSkillSelection(client: MemoryOpsClient, argument: unknown): Promise<AgentSkill | undefined> {
+  if (argument && typeof argument === "object" && "agentSkill" in argument) {
+    return (argument as any).agentSkill;
+  }
+  if (isAgentSkill(argument)) {
+    return argument;
+  }
+  return pickAgentSkill(client, "MemoryOps: Select Agent Skill");
+}
+
+function isAgentSkill(value: unknown): value is AgentSkill {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && "name" in value && "assistant" in value && "filename" in value;
+}
+
+async function pickAgentSkill(client: MemoryOpsClient, title: string): Promise<AgentSkill | undefined> {
+  let skills: AgentSkill[];
+  try {
+    skills = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Loading MemoryOps agent skills...", cancellable: false },
+      () => client.listAgentSkills(),
+    );
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Could not load agent skills: ${errorMessage(error)}`);
+    return undefined;
+  }
+  if (skills.length === 0) {
+    void vscode.window.showInformationMessage("No agent skills registered.");
+    return undefined;
+  }
+  const picked = await vscode.window.showQuickPick(
+    skills.map((skill) => ({
+      label: `${skill.assistant}/${skill.name}`,
+      description: `v${skill.version}`,
+      detail: skill.description,
+      skill,
+    })),
+    { title, matchOnDescription: true, matchOnDetail: true },
+  );
+  return picked?.skill;
+}
+
+async function viewAgentSkillHistoryCommand(deps: SkillCommandDeps, item?: unknown): Promise<void> {
+  const client = await withClient(deps);
+  if (!client) return;
+  const skill = await resolveAgentSkillSelection(client, item);
+  if (!skill) return;
+  try {
+    const versions = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Loading history for agent skill ${skill.assistant}/${skill.name}...`, cancellable: false },
+      () => client.listAgentSkillVersions(skill.assistant, skill.name),
+    );
+    await deps.openMarkdownDocument(formatAgentSkillVersionsMarkdown(skill, versions));
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Load agent skill history failed: ${errorMessage(error)}`);
+  }
+}
+
+async function rollbackAgentSkillCommand(deps: SkillCommandDeps, item?: unknown, versionArg?: unknown): Promise<void> {
+  const client = await withClient(deps);
+  if (!client) return;
+  const skill = await resolveAgentSkillSelection(client, item);
+  if (!skill) return;
+
+  let version: number | undefined;
+  if (typeof versionArg === "number") {
+    version = versionArg;
+  } else {
+    version = extractVersion(item);
+  }
+
+  if (version === undefined) {
+    let versions: AgentSkillVersion[];
+    try {
+      versions = await client.listAgentSkillVersions(skill.assistant, skill.name);
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Load agent skill history failed: ${errorMessage(error)}`);
+      return;
+    }
+    const candidates = versions.filter((v) => v.version !== skill.version);
+    if (candidates.length === 0) {
+      void vscode.window.showInformationMessage("No previous versions available to roll back to.");
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      candidates.map((v) => ({
+        label: `v${v.version}`,
+        description: v.change_note ?? "",
+        detail: [v.created_at, v.created_by].filter(Boolean).join(" · "),
+        version: v,
+      })),
+      { title: `Roll back agent skill ${skill.assistant}/${skill.name} (current v${skill.version})` },
+    );
+    if (!picked) return;
+    version = picked.version.version;
+  }
+
+  const note = await vscode.window.showInputBox({
+    title: `Rollback agent skill ${skill.assistant}/${skill.name} → v${version}`,
+    prompt: "Change note (optional)",
+    ignoreFocusOut: true,
+  });
+  if (note === undefined) return;
+  const confirm = await vscode.window.showWarningMessage(
+    `Roll back agent skill '${skill.assistant}/${skill.name}' to v${version}? Local file will be updated and a new version created.`,
+    { modal: true },
+    "Roll back",
+  );
+  if (confirm !== "Roll back") return;
+  try {
+    const updated = await client.rollbackAgentSkillVersion(
+      skill.assistant,
+      skill.name,
+      version,
+      note.trim() || undefined,
+    );
+
+    // Update local file
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders && folders.length > 0) {
+      const workspaceRoot = folders[0].uri.fsPath;
+      const dir = path.join(workspaceRoot, `.${skill.assistant}`, "skills");
+      const localPath = path.join(dir, `${skill.name}.md`);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(localPath, updated.content, "utf8");
+    }
+
+    void vscode.window.showInformationMessage(`Rolled back agent skill '${updated.name}' to snapshot of v${version} (now v${updated.version}).`);
+    deps.onSkillsChanged?.();
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Rollback failed: ${errorMessage(error)}`);
   }
 }

@@ -57,7 +57,11 @@ function parseMarkdownMetadata(content: string, fallbackName: string): ParsedAge
   return { title, description, instructions };
 }
 
-export async function syncAgentSkills(client: MemoryOpsClient): Promise<void> {
+export async function syncAgentSkills(
+  client: MemoryOpsClient,
+  options: { interactive?: boolean } = {}
+): Promise<void> {
+  const interactive = options.interactive ?? false;
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {
     return;
@@ -68,12 +72,14 @@ export async function syncAgentSkills(client: MemoryOpsClient): Promise<void> {
 
   await vscode.window.withProgress(
     {
-      location: vscode.ProgressLocation.Notification,
+      location: interactive ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window,
       title: "Syncing MemoryOps agent skills...",
       cancellable: false,
     },
     async (progress) => {
       try {
+        let conflictDetected = false;
+
         // 1. Fetch remote skills
         progress.report({ message: "Listing remote agent skills..." });
         const remoteSkillsSummary = await client.listAgentSkills();
@@ -121,6 +127,7 @@ export async function syncAgentSkills(client: MemoryOpsClient): Promise<void> {
               title: localSkill.parsed.title,
               description: localSkill.parsed.description,
               instructions: localSkill.parsed.instructions,
+              change_note: "Synced via VS Code (initial upload)",
             });
           } else {
             // Compare content
@@ -128,6 +135,11 @@ export async function syncAgentSkills(client: MemoryOpsClient): Promise<void> {
             const remoteNorm = remoteSkill.content.replace(/\r\n/g, "\n").trim();
 
             if (localNorm !== remoteNorm) {
+              if (!interactive) {
+                conflictDetected = true;
+                continue;
+              }
+
               // Conflict! Ask user
               const choice = await vscode.window.showWarningMessage(
                 `Agent skill '${key}' has conflicting changes. Which version would you like to keep?`,
@@ -142,6 +154,7 @@ export async function syncAgentSkills(client: MemoryOpsClient): Promise<void> {
                   title: localSkill.parsed.title,
                   description: localSkill.parsed.description,
                   instructions: localSkill.parsed.instructions,
+                  change_note: "Synced via VS Code (manual upload)",
                 });
               } else if (choice === "Keep Remote (Overwrite Local)") {
                 progress.report({ message: `Downloading remote skill: ${key}...` });
@@ -164,7 +177,20 @@ export async function syncAgentSkills(client: MemoryOpsClient): Promise<void> {
           }
         }
 
-        void vscode.window.showInformationMessage("MemoryOps agent skills sync complete!");
+        if (conflictDetected) {
+          void vscode.window
+            .showWarningMessage(
+              "MemoryOps: Some agent skills have conflicting changes.",
+              "Resolve Sync Conflicts"
+            )
+            .then((action) => {
+              if (action === "Resolve Sync Conflicts") {
+                void vscode.commands.executeCommand("memoryops.skills.syncAgentSkills");
+              }
+            });
+        } else if (interactive) {
+          void vscode.window.showInformationMessage("MemoryOps agent skills sync complete!");
+        }
       } catch (err: any) {
         void vscode.window.showErrorMessage(`Agent skills sync failed: ${err.message}`);
       }

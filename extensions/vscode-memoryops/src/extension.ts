@@ -102,7 +102,7 @@ export function activate(context: vscode.ExtensionContext): void {
         await promptForMissingConfig(missing);
         return;
       }
-      await syncAgentSkills(client);
+      await syncAgentSkills(client, { interactive: true });
     }),
     vscode.commands.registerCommand("memoryops.setApiKey", async () => {
       const value = await vscode.window.showInputBox({
@@ -291,7 +291,7 @@ async function testConnection(): Promise<void> {
     statusBarItem.command = "memoryops.testConnection";
     skillTreeProvider?.refresh();
     void refreshMemories({ showProgress: false, promptOnMissingConfig: false });
-    void syncAgentSkills(client);
+    void syncAgentSkills(client, { interactive: false });
     void vscode.window.showInformationMessage("MemoryOps connection is healthy.");
   } catch (error) {
     statusBarItem.text = "$(error) MemoryOps";
@@ -906,7 +906,7 @@ async function initializeSidebar(): Promise<void> {
   try {
     await refreshMemories({ showProgress: false, promptOnMissingConfig: false });
     const { client } = getClient();
-    void syncAgentSkills(client);
+    void syncAgentSkills(client, { interactive: false });
   } catch {
     // refreshMemories already updates the tree provider state.
   }

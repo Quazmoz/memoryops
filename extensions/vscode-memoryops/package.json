@@ -295,6 +295,18 @@
         "title": "MemoryOps: Configure from Local Config File",
         "category": "MemoryOps",
         "icon": "$(gear)"
+      },
+      {
+        "command": "memoryops.agentSkills.viewHistory",
+        "title": "MemoryOps: View Agent Skill Version History",
+        "category": "MemoryOps",
+        "icon": "$(history)"
+      },
+      {
+        "command": "memoryops.agentSkills.rollback",
+        "title": "MemoryOps: Roll Back Agent Skill Version",
+        "category": "MemoryOps",
+        "icon": "$(discard)"
       }
     ],
     "keybindings": [
@@ -365,6 +377,11 @@
           "command": "memoryops.skills.create",
           "when": "view == memoryops.skills",
           "group": "navigation@1"
+        },
+        {
+          "command": "memoryops.skills.syncAgentSkills",
+          "when": "view == memoryops.skills",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -397,6 +414,16 @@
           "command": "memoryops.skills.delete",
           "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
           "group": "inline@6"
+        },
+        {
+          "command": "memoryops.agentSkills.viewHistory",
+          "when": "view == memoryops.skills && viewItem == memoryops.agentSkill",
+          "group": "inline@1"
+        },
+        {
+          "command": "memoryops.agentSkills.rollback",
+          "when": "view == memoryops.skills && viewItem == memoryops.agentSkill",
+          "group": "inline@2"
         }
       ],
       "editor/context": [
@@ -433,7 +460,8 @@
         "memoryops.apiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Fallback MemoryOps workspace API key. **Prefer using the `MemoryOps: Set API Key (Secure)` command**, which stores the key in your OS keychain via VS Code SecretStorage. This setting is only used when no secure key is stored."
+          "markdownDescription": "Fallback MemoryOps workspace API key. **Prefer using the `MemoryOps: Set API Key (Secure)` command**, which stores the key in your OS keychain via VS Code SecretStorage. This setting is only used when no secure key is stored.",
+          "deprecationMessage": "Use the secure 'MemoryOps: Set API Key (Secure)' command instead of setting a raw text key in settings.json to avoid leaking it in git repositories."
         },
         "memoryops.defaultTopK": {
           "type": "number",

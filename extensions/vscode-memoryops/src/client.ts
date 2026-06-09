@@ -265,6 +265,7 @@ export interface AgentSkill {
   assistant: string;
   title: string;
   description: string;
+  version: number;
 }
 
 export interface AgentSkillContent {
@@ -275,6 +276,23 @@ export interface AgentSkillContent {
   description: string;
   instructions: string;
   content: string;
+  version: number;
+}
+
+export interface AgentSkillVersion {
+  id: string;
+  agent_skill_id: string;
+  workspace_id: string;
+  name: string;
+  version: number;
+  assistant: string;
+  title: string;
+  description: string;
+  instructions: string;
+  content: string;
+  change_note: string | null;
+  created_by: string | null;
+  created_at: string;
 }
 
 export interface AgentSkillCreateInput {
@@ -283,12 +301,14 @@ export interface AgentSkillCreateInput {
   title: string;
   description: string;
   instructions: string;
+  change_note?: string;
 }
 
 export interface AgentSkillUpdateInput {
   title: string;
   description: string;
   instructions: string;
+  change_note?: string;
 }
 
 export class MemoryOpsClient {
@@ -682,6 +702,34 @@ export class MemoryOpsClient {
     );
     if (!isRecord(response)) {
       throw new Error("MemoryOps returned an unexpected agent skill response.");
+    }
+    return normalizeAgentSkillContent(response);
+  }
+
+  async listAgentSkillVersions(assistant: string, name: string): Promise<AgentSkillVersion[]> {
+    const response = await this.request(
+      `/v1/agent-skills/${encodeURIComponent(assistant)}/${encodeURIComponent(name)}/versions`,
+      { method: "GET", authenticated: true, idempotent: true },
+    );
+    return Array.isArray(response) ? response.filter(isRecord).map(normalizeAgentSkillVersion) : [];
+  }
+
+  async rollbackAgentSkillVersion(
+    assistant: string,
+    name: string,
+    version: number,
+    changeNote?: string,
+  ): Promise<AgentSkillContent> {
+    const response = await this.request(
+      `/v1/agent-skills/${encodeURIComponent(assistant)}/${encodeURIComponent(name)}/versions/${version}/rollback`,
+      {
+        method: "POST",
+        authenticated: true,
+        body: changeNote ? { change_note: changeNote } : {},
+      },
+    );
+    if (!isRecord(response)) {
+      throw new Error("MemoryOps returned an unexpected rollback response.");
     }
     return normalizeAgentSkillContent(response);
   }
@@ -1107,6 +1155,7 @@ function normalizeAgentSkill(value: Record<string, unknown>): AgentSkill {
     assistant: stringOrUndefined(value.assistant) ?? "",
     title: stringOrUndefined(value.title) ?? "",
     description: stringOrUndefined(value.description) ?? "",
+    version: numberOrDefault(value.version, 1),
   };
 }
 
@@ -1119,6 +1168,25 @@ function normalizeAgentSkillContent(value: Record<string, unknown>): AgentSkillC
     description: stringOrUndefined(value.description) ?? "",
     instructions: stringOrUndefined(value.instructions) ?? "",
     content: stringOrUndefined(value.content) ?? "",
+    version: numberOrDefault(value.version, 1),
+  };
+}
+
+function normalizeAgentSkillVersion(value: Record<string, unknown>): AgentSkillVersion {
+  return {
+    id: stringOrUndefined(value.id) ?? "",
+    agent_skill_id: stringOrUndefined(value.agent_skill_id) ?? "",
+    workspace_id: stringOrUndefined(value.workspace_id) ?? "",
+    name: stringOrUndefined(value.name) ?? "",
+    version: numberOrDefault(value.version, 1),
+    assistant: stringOrUndefined(value.assistant) ?? "",
+    title: stringOrUndefined(value.title) ?? "",
+    description: stringOrUndefined(value.description) ?? "",
+    instructions: stringOrUndefined(value.instructions) ?? "",
+    content: stringOrUndefined(value.content) ?? "",
+    change_note: stringOrNullOrUndefined(value.change_note) ?? null,
+    created_by: stringOrNullOrUndefined(value.created_by) ?? null,
+    created_at: stringOrUndefined(value.created_at) ?? "",
   };
 }
 

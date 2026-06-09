@@ -8,6 +8,8 @@ import {
   SkillTestResult,
   SkillVersion,
   ToolInvocation,
+  AgentSkill,
+  AgentSkillVersion,
 } from "./client";
 
 export function formatMemoryMarkdown(memory: MemoryUnit): string {
@@ -283,4 +285,34 @@ export function formatSkillInvocationsMarkdown(skillName: string, invocations: T
 function commandLink(command: string, args: unknown[], label: string): string {
   const encodedArgs = encodeURIComponent(JSON.stringify(args));
   return `[${label}](command:${command}?${encodedArgs})`;
+}
+
+export function formatAgentSkillVersionsMarkdown(skill: AgentSkill, versions: AgentSkillVersion[]): string {
+  return [
+    `# Agent Skill version history \`${skill.assistant}/${skill.name}\``,
+    `Current version: ${skill.version}`,
+    `Total versions: ${versions.length}`,
+    "",
+    ...(versions.length > 0
+      ? versions.map((v) => {
+          const versionArg = [{ assistant: skill.assistant, name: skill.name, version: v.version }];
+          const actions = [
+            commandLink("memoryops.agentSkills.rollback", versionArg, "Roll Back to this Version"),
+          ].join(" | ");
+
+          return [
+            `## v${v.version}${v.version === skill.version ? " (current)" : ""}`,
+            actions,
+            "",
+            v.created_at ? `Created: ${v.created_at}` : undefined,
+            v.created_by ? `By: ${v.created_by}` : undefined,
+            v.change_note ? `Change note: ${v.change_note}` : undefined,
+            v.description ? `Description: ${v.description}` : undefined,
+            "",
+            "### Instructions snippet",
+            v.instructions ? truncate(v.instructions, 500) : "_(no instructions)_",
+          ].filter(Boolean).join("\n");
+        })
+      : ["No version history recorded yet."]),
+  ].join("\n");
 }
