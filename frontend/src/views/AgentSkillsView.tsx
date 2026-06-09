@@ -1,4 +1,4 @@
-import { Check, Copy, Download, Edit3, FileCode, Loader2, Plus, Search, X } from "lucide-react";
+import { Check, Copy, Download, Edit3, FileCode, Loader2, Plus, Search, X, History, RotateCcw } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 
@@ -7,8 +7,11 @@ import {
   getAgentSkill,
   listAgentSkills,
   updateAgentSkill,
+  listAgentSkillVersions,
+  rollbackAgentSkillVersion,
   type AgentSkillContent,
   type CreateAgentSkillPayload,
+  type AgentSkillVersion,
 } from "../api/agentSkills";
 import { EmptyState } from "../components/EmptyState";
 import { InlineError } from "../components/InlineError";
@@ -53,6 +56,11 @@ export function AgentSkillsView() {
   const [editingSkill, setEditingSkill] = useState<{ assistant: SkillAssistant; name: string } | null>(null);
   const [draft, setDraft] = useState<SkillDraft>(() => createEmptyDraft("claude"));
   const [errors, setErrors] = useState<FormErrors>({});
+  const [detailTab, setDetailTab] = useState<"instructions" | "history">("instructions");
+  const [comparisonVersions, setComparisonVersions] = useState<number[]>([]);
+  const [confirmingRollback, setConfirmingRollback] = useState<number | null>(null);
+  const [rollbackNote, setRollbackNote] = useState("");
+  const [changeNote, setChangeNote] = useState("");
 
   const skillsQuery = useQuery({
     queryKey: agentSkillsKey(),
@@ -63,6 +71,12 @@ export function AgentSkillsView() {
     queryKey: agentSkillContentKey(selectedSkill?.assistant, selectedSkill?.name),
     queryFn: () => getAgentSkill(selectedSkill!.assistant, selectedSkill!.name),
     enabled: selectedSkill !== null,
+  });
+
+  const versionsQuery = useQuery({
+    queryKey: agentSkillVersionsKey(selectedSkill?.assistant, selectedSkill?.name),
+    queryFn: () => listAgentSkillVersions(selectedSkill!.assistant, selectedSkill!.name),
+    enabled: selectedSkill !== null && detailTab === "history",
   });
 
   const createMutation = useMutation({
@@ -81,6 +95,32 @@ export function AgentSkillsView() {
       finishSave(skill);
     },
   });
+
+  const rollbackMutation = useMutation({
+    mutationKey: ["agent-skills", "rollback"],
+    mutationFn: ({ assistant, name, version, changeNote }: { assistant: SkillAssistant; name: string; version: number; changeNote?: string | undefined }) =>
+      rollbackAgentSkillVersion(assistant, name, version, changeNote),
+    onSuccess: (skill) => {
+      setConfirmingRollback(null);
+      setRollbackNote("");
+      finishSave(skill);
+    },
+  });
+
+  const leftComparedVersion = useMemo(() => {
+    if (comparisonVersions.length === 0) return null;
+    return versionsQuery.data?.find((v) => v.version === comparisonVersions[0]) ?? null;
+  }, [comparisonVersions, versionsQuery.data]);
+
+  const rightComparedVersion = useMemo(() => {
+    if (comparisonVersions.length < 2) return null;
+    return versionsQuery.data?.find((v) => v.version === comparisonVersions[1]) ?? null;
+  }, [comparisonVersions, versionsQuery.data]);
+
+  const comparisonDiffEntries = useMemo(() => {
+    if (!leftComparedVersion || !rightComparedVersion) return [];
+    return buildAgentSkillVersionDiffEntries(leftComparedVersion, rightComparedVersion);
+  }, [leftComparedVersion, rightComparedVersion]);
 
   const filteredSkills = useMemo(() => {
     const list = skillsQuery.data ?? [];
@@ -109,9 +149,14 @@ export function AgentSkillsView() {
       current === "all" || current === skill.assistant ? current : skill.assistant,
     );
     closeDrawer();
+    setDetailTab("instructions");
+    setComparisonVersions([]);
     void queryClient.invalidateQueries({ queryKey: agentSkillsKey() });
     void queryClient.invalidateQueries({
       queryKey: agentSkillContentKey(skill.assistant, skill.name),
+    });
+    void queryClient.invalidateQueries({
+      queryKey: agentSkillVersionsKey(skill.assistant, skill.name),
     });
   }
 
@@ -119,6 +164,7 @@ export function AgentSkillsView() {
     const assistant = selectedAssistant === "all" ? "claude" : selectedAssistant;
     setEditingSkill(null);
     setDraft(createEmptyDraft(assistant));
+    setChangeNote("");
     setErrors({});
     setDrawerOpen(true);
   }
@@ -133,6 +179,7 @@ export function AgentSkillsView() {
       description: skillContentQuery.data.description,
       instructions: skillContentQuery.data.instructions || defaultInstructionsTemplate,
     });
+    setChangeNote("");
     setErrors({});
     setDrawerOpen(true);
   }
@@ -164,12 +211,16 @@ export function AgentSkillsView() {
           title: parsed.payload.title,
           description: parsed.payload.description,
           instructions: parsed.payload.instructions,
+          change_note: changeNote.trim() || undefined,
         },
       });
       return;
     }
 
-    createMutation.mutate(parsed.payload);
+    createMutation.mutate({
+      ...parsed.payload,
+      change_note: changeNote.trim() || undefined,
+    });
   }
 
   const handleCopy = async () => {
@@ -260,7 +311,13 @@ export function AgentSkillsView() {
                 <button
                   key={`${skill.assistant}-${skill.name}`}
                   type="button"
-                  onClick={() => setSelectedSkill({ assistant: skill.assistant, name: skill.name })}
+                  onClick={() => {
+                    setSelectedSkill({ assistant: skill.assistant, name: skill.name });
+                    setDetailTab("instructions");
+                    setComparisonVersions([]);
+                    setConfirmingRollback(null);
+                    setRollbackNote("");
+                  }}
                   className={cn(
                     "flex w-full flex-col gap-2 rounded-lg border p-3.5 text-left transition-all duration-200 hover:border-accent/40",
                     isSelected
@@ -364,25 +421,249 @@ export function AgentSkillsView() {
                 </div>
               </div>
 
-              <div className="thin-scrollbar max-h-[680px] flex-1 overflow-y-auto p-6">
-                {skillContentQuery.isLoading ? (
-                  <div className="space-y-4">
-                    <Skeleton className="h-8 w-3/4" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-5/6" />
-                    <Skeleton className="h-40 w-full" />
-                  </div>
-                ) : null}
+              <div className="flex border-b border-line bg-white px-5">
+                <button
+                  type="button"
+                  onClick={() => setDetailTab("instructions")}
+                  className={cn(
+                    "border-b-2 px-4 py-2 text-sm font-medium transition-all duration-200 focus:outline-none",
+                    detailTab === "instructions"
+                      ? "border-accent text-accent"
+                      : "border-transparent text-ink/65 hover:text-ink hover:border-line",
+                  )}
+                >
+                  Instructions
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailTab("history")}
+                  className={cn(
+                    "border-b-2 px-4 py-2 text-sm font-medium transition-all duration-200 focus:outline-none",
+                    detailTab === "history"
+                      ? "border-accent text-accent"
+                      : "border-transparent text-ink/65 hover:text-ink hover:border-line",
+                  )}
+                >
+                  Version History
+                </button>
+              </div>
 
-                {skillContentQuery.isError ? (
-                  <InlineError message="Failed to load the selected agent skill content." />
-                ) : null}
+              <div className="thin-scrollbar flex-1 overflow-y-auto p-6" style={{ maxHeight: "680px" }}>
+                {detailTab === "history" ? (
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-ink">Version history</h3>
+                      <span className="text-xs text-ink/55 text-accent-strong font-mono">Current: v{selectedSkillMeta?.version || 1}</span>
+                    </div>
 
-                {!skillContentQuery.isLoading && skillContentQuery.data ? (
-                  <div className="markdown-body select-text">
-                    <MarkdownRenderer content={skillContentQuery.data.content} />
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink/55">
+                      {comparisonVersions.length === 0 ? (
+                        <span>Select up to two versions to compare.</span>
+                      ) : (
+                        <span>
+                          Comparing queue: {comparisonVersions.map((v) => `v${v}`).join(" vs ")}
+                        </span>
+                      )}
+                      {comparisonVersions.length > 0 ? (
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setComparisonVersions([])}>
+                          Clear compare
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    {versionsQuery.isLoading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-10 w-full" />
+                        <Skeleton className="h-10 w-full" />
+                      </div>
+                    ) : null}
+
+                    {versionsQuery.isError ? (
+                      <InlineError message="Failed to load version history." />
+                    ) : null}
+
+                    {rollbackMutation.isError ? (
+                      <InlineError title="Rollback failed" message={errorMessage(rollbackMutation.error)} />
+                    ) : null}
+
+                    {versionsQuery.data && versionsQuery.data.length > 0 ? (
+                      <div className="overflow-hidden rounded-md border border-line bg-white">
+                        <table className="w-full border-collapse text-left text-sm">
+                          <thead className="border-b border-line bg-soft/60 text-xs font-semibold uppercase text-ink/55">
+                            <tr>
+                              <th className="px-3 py-2">Version</th>
+                              <th className="px-3 py-2">When</th>
+                              <th className="px-3 py-2">By</th>
+                              <th className="px-3 py-2">Change note</th>
+                              <th className="px-3 py-2 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {versionsQuery.data.map((v) => {
+                              const isCurrent = v.version === selectedSkillMeta?.version;
+                              return (
+                                <tr key={v.id} className="border-b border-line/70 last:border-b-0 align-top hover:bg-soft/20">
+                                  <td className="px-3 py-2 font-mono text-xs text-ink">
+                                    v{v.version}
+                                    {isCurrent ? <span className="ml-1 text-[10px] uppercase font-bold text-accent-strong">current</span> : null}
+                                  </td>
+                                  <td className="px-3 py-2 text-xs text-ink/70">{new Date(v.created_at).toLocaleString()}</td>
+                                  <td className="px-3 py-2 font-mono text-xs text-ink/60">{v.created_by ?? "—"}</td>
+                                  <td className="px-3 py-2 text-xs text-ink/70">{v.change_note ?? <span className="text-ink/40">—</span>}</td>
+                                  <td className="px-3 py-2 text-right">
+                                    <div className="inline-flex flex-wrap justify-end gap-1.5">
+                                      <Button
+                                        type="button"
+                                        variant={comparisonVersions.includes(v.version) ? "secondary" : "ghost"}
+                                        size="sm"
+                                        onClick={() => {
+                                          setComparisonVersions((curr) => {
+                                            if (curr.includes(v.version)) {
+                                              return curr.filter((val) => val !== v.version);
+                                            }
+                                            if (curr.length >= 2) {
+                                              return [curr[1] as number, v.version];
+                                            }
+                                            return [...curr, v.version];
+                                          });
+                                        }}
+                                      >
+                                        {comparisonVersions.includes(v.version) ? "Selected" : "Compare"}
+                                      </Button>
+                                      {!isCurrent ? (
+                                        confirmingRollback === v.version ? (
+                                          <div className="inline-grid gap-2 rounded-md border border-line bg-white p-2 text-left shadow-sm">
+                                            <Input
+                                              placeholder="Change note (optional)"
+                                              value={rollbackNote}
+                                              onChange={(e) => setRollbackNote(e.target.value)}
+                                              className="h-8 text-xs"
+                                            />
+                                            <div className="flex justify-end gap-1.5">
+                                              <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => {
+                                                  setConfirmingRollback(null);
+                                                  setRollbackNote("");
+                                                }}
+                                              >
+                                                Cancel
+                                              </Button>
+                                              <Button
+                                                type="button"
+                                                size="sm"
+                                                disabled={rollbackMutation.isPending}
+                                                onClick={() =>
+                                                  rollbackMutation.mutate({
+                                                    assistant: selectedSkill.assistant,
+                                                    name: selectedSkill.name,
+                                                    version: v.version,
+                                                    changeNote: rollbackNote.trim() || undefined,
+                                                  })
+                                                }
+                                              >
+                                                {rollbackMutation.isPending ? (
+                                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                                ) : (
+                                                  <RotateCcw className="h-3 w-3" />
+                                                )}
+                                                Confirm
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                              setConfirmingRollback(v.version);
+                                              setRollbackNote("");
+                                            }}
+                                          >
+                                            <RotateCcw className="h-3 w-3 mr-1" />
+                                            Roll back
+                                          </Button>
+                                        )
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
+
+                    {versionsQuery.data && versionsQuery.data.length === 0 ? (
+                      <p className="text-sm text-ink/60">No version history recorded yet.</p>
+                    ) : null}
+
+                    {leftComparedVersion && rightComparedVersion ? (
+                      <div className="grid gap-3 rounded-md border border-line bg-white p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-3">
+                          <div>
+                            <h4 className="text-sm font-semibold text-ink">Version diff</h4>
+                            <p className="text-xs text-ink/55">
+                              Comparing v{leftComparedVersion.version} to v{rightComparedVersion.version}
+                            </p>
+                          </div>
+                          <Badge variant="accent">
+                            {comparisonDiffEntries.filter((entry) => entry.changed).length} fields changed
+                          </Badge>
+                        </div>
+                        <div className="grid gap-4 mt-2">
+                          {comparisonDiffEntries.map((entry) => (
+                            <section key={entry.key} className="rounded-md border border-line bg-soft/10 p-3">
+                              <div className="mb-2 flex items-center justify-between gap-2">
+                                <h5 className="text-xs font-semibold text-ink uppercase tracking-wider">{entry.label}</h5>
+                                <Badge variant={entry.changed ? "purple" : "gray"}>
+                                  {entry.changed ? "Changed" : "Same"}
+                                </Badge>
+                              </div>
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <DiffValueCard
+                                  label={`v${leftComparedVersion.version}`}
+                                  value={entry.before}
+                                  code={entry.code}
+                                />
+                                <DiffValueCard
+                                  label={`v${rightComparedVersion.version}`}
+                                  value={entry.after}
+                                  code={entry.code}
+                                />
+                              </div>
+                            </section>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
+                ) : (
+                  <>
+                    {skillContentQuery.isLoading ? (
+                      <div className="space-y-4">
+                        <Skeleton className="h-8 w-3/4" />
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-5/6" />
+                        <Skeleton className="h-40 w-full" />
+                      </div>
+                    ) : null}
+
+                    {skillContentQuery.isError ? (
+                      <InlineError message="Failed to load the selected agent skill content." />
+                    ) : null}
+
+                    {!skillContentQuery.isLoading && skillContentQuery.data ? (
+                      <div className="markdown-body select-text">
+                        <MarkdownRenderer content={skillContentQuery.data.content} />
+                      </div>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -463,6 +744,18 @@ export function AgentSkillsView() {
                   onChange={(event) => updateDraft("instructions", event.target.value)}
                   rows={18}
                   className="min-h-[340px] rounded-md border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                />
+              </Field>
+
+              <Field
+                label="Change note"
+                helpText="Optional message summarizing the changes in this version snapshot."
+                error={undefined}
+              >
+                <Input
+                  value={changeNote}
+                  onChange={(event) => setChangeNote(event.target.value)}
+                  placeholder={editingSkill ? "e.g., Updated execution safety checklist" : "e.g., Initial version setup"}
                 />
               </Field>
 
@@ -590,6 +883,45 @@ function agentSkillsKey() {
 
 function agentSkillContentKey(assistant?: SkillAssistant, name?: string) {
   return ["agent-skills", assistant ?? "", name ?? ""] as const;
+}
+
+function agentSkillVersionsKey(assistant?: SkillAssistant, name?: string) {
+  return ["agent-skills", assistant ?? "", name ?? "", "versions"] as const;
+}
+
+function DiffValueCard({ label, value, code }: { label: string; value: string; code: boolean }) {
+  return (
+    <div className="grid gap-1 text-left">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-ink/45">{label}</span>
+      {code ? (
+        <pre className="thin-scrollbar max-h-60 overflow-auto rounded-md bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-100/90 whitespace-pre-wrap break-words">{value}</pre>
+      ) : (
+        <div className="rounded-md border border-line bg-white px-3 py-2 text-xs text-ink/75 whitespace-pre-wrap break-words">{value}</div>
+      )}
+    </div>
+  );
+}
+
+interface AgentSkillVersionDiffEntry {
+  key: string;
+  label: string;
+  before: string;
+  after: string;
+  changed: boolean;
+  code: boolean;
+}
+
+function buildAgentSkillVersionDiffEntries(left: AgentSkillVersion, right: AgentSkillVersion): AgentSkillVersionDiffEntry[] {
+  const entries: Array<Omit<AgentSkillVersionDiffEntry, "changed">> = [
+    { key: "title", label: "Title", before: left.title, after: right.title, code: false },
+    { key: "description", label: "Description", before: left.description, after: right.description, code: false },
+    { key: "instructions", label: "Instructions", before: left.instructions, after: right.instructions, code: true },
+  ];
+
+  return entries.map((entry) => ({
+    ...entry,
+    changed: entry.before !== entry.after,
+  }));
 }
 
 function errorMessage(error: unknown): string {
