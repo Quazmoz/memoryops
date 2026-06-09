@@ -601,9 +601,8 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "vscode:uninstall": "node ./out/lifecycle.js",
     "compile": "tsc -p ./",
-    "test": "npm run compile && node --test out/test/client.test.js out/test/markdown.test.js out/test/cleanup.test.js out/test/webviewProvider.test.js",
+    "test": "npm run compile && node --test out/test/client.test.js out/test/markdown.test.js out/test/webviewProvider.test.js",
     "watch": "tsc -watch -p ./",
     "package": "vsce package"
   },

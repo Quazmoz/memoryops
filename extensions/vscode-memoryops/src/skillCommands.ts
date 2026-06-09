@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
-import * as fs from "fs";
-import * as path from "path";
+
 
 import { MemoryOpsClient, Skill, SkillVersion, AgentSkill, AgentSkillVersion } from "./client";
 import {
@@ -548,11 +547,12 @@ async function rollbackAgentSkillCommand(deps: SkillCommandDeps, item?: unknown,
     // Update local file
     const folders = vscode.workspace.workspaceFolders;
     if (folders && folders.length > 0) {
-      const workspaceRoot = folders[0].uri.fsPath;
-      const dir = path.join(workspaceRoot, `.${skill.assistant}`, "skills");
-      const localPath = path.join(dir, `${skill.name}.md`);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(localPath, updated.content, "utf8");
+      const folder = folders[0];
+      const dirUri = vscode.Uri.joinPath(folder.uri, `.${skill.assistant}`, "skills");
+      const localPathUri = vscode.Uri.joinPath(dirUri, `${skill.name}.md`);
+      await vscode.workspace.fs.createDirectory(dirUri);
+      const data = Buffer.from(updated.content, "utf8");
+      await vscode.workspace.fs.writeFile(localPathUri, data);
     }
 
     void vscode.window.showInformationMessage(`Rolled back agent skill '${updated.name}' to snapshot of v${version} (now v${updated.version}).`);

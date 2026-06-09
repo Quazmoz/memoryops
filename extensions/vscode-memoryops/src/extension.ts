@@ -1,10 +1,8 @@
 import * as vscode from "vscode";
-import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 
 import { MemoryOpsClient, MemorySearchResult } from "./client";
-import { collectCandidateUserSettingsFiles, updateCleanupManifest } from "./cleanup";
+
 import { getConfig, openMemoryOpsSettings, setCachedApiKeySecret, validateConfig } from "./config";
 import { registerChatParticipant } from "./chatParticipant";
 import { MemoryCodeLensProvider } from "./codeLensProvider";
@@ -26,6 +24,7 @@ import { registerSkillCommands } from "./skillCommands";
 import { SkillTreeProvider } from "./skillTree";
 import { syncAgentSkills } from "./agentSkillsSync";
 
+let extensionContext: vscode.ExtensionContext;
 let statusBarItem: vscode.StatusBarItem;
 let memoryTreeProvider: MemoryWebviewViewProvider;
 let skillTreeProvider: SkillTreeProvider;
@@ -48,9 +47,9 @@ interface LoadRecentMemoriesOptions {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  extensionContext = context;
   outputChannel = vscode.window.createOutputChannel("MemoryOps");
   context.subscriptions.push(outputChannel);
-  trackCleanupTargets(context);
 
   memoryTreeProvider = new MemoryWebviewViewProvider(context.extensionUri);
   context.subscriptions.push(
@@ -122,14 +121,10 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage("MemoryOps API key removed from secure storage.");
       }
     }),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      trackCleanupTargets(context);
-    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (!event.affectsConfiguration("memoryops")) {
         return;
       }
-      trackCleanupTargets(context);
       cachedClient = undefined;
       codeLensProvider?.refresh();
       skillTreeProvider?.refresh();
@@ -180,7 +175,6 @@ export function activate(context: vscode.ExtensionContext): void {
             await clearLegacyApiKeySetting();
           }
           cachedClient = undefined;
-          trackCleanupTargets(context);
           skillTreeProvider?.refresh();
           void initializeSidebar();
         });
@@ -970,23 +964,25 @@ async function executeMemoryEditWorkflow(memory: MemorySearchResult, option: str
 
   if (option === "📝 Edit Content" || option === "content") {
     const memoryId = memory.id!;
-    const tmpPath = path.join(os.tmpdir(), `memoryops-edit-${memoryId}.md`);
+    const tempDirUri = extensionContext.globalStorageUri;
+    const tmpUri = vscode.Uri.joinPath(tempDirUri, `memoryops-edit-${memoryId}.md`);
 
     // Dispose any previous edit listeners for this memory
     disposeEditListeners(memoryId);
 
     try {
-      fs.writeFileSync(tmpPath, memory.content ?? "");
+      await vscode.workspace.fs.createDirectory(tempDirUri);
+      await vscode.workspace.fs.writeFile(tmpUri, Buffer.from(memory.content ?? "", "utf8"));
     } catch (err) {
       void vscode.window.showErrorMessage(`Failed to create temp file: ${errorMessage(err)}`);
       return;
     }
 
-    const document = await vscode.workspace.openTextDocument(tmpPath);
+    const document = await vscode.workspace.openTextDocument(tmpUri);
     await vscode.window.showTextDocument(document);
 
     const saveDisposable = vscode.workspace.onDidSaveTextDocument(async (doc) => {
-      if (doc.fileName === tmpPath) {
+      if (doc.uri.toString() === tmpUri.toString()) {
         const updatedContent = doc.getText();
         try {
           await vscode.window.withProgress(
@@ -1008,11 +1004,9 @@ async function executeMemoryEditWorkflow(memory: MemorySearchResult, option: str
     });
 
     const closeDisposable = vscode.workspace.onDidCloseTextDocument((doc) => {
-      if (doc.fileName === tmpPath) {
+      if (doc.uri.toString() === tmpUri.toString()) {
         disposeEditListeners(memoryId);
-        try {
-          fs.unlinkSync(tmpPath);
-        } catch {}
+        void vscode.workspace.fs.delete(tmpUri, { useTrash: false }).then(undefined, () => {});
       }
     });
 
@@ -1581,18 +1575,21 @@ async function submitFeedbackInline(
 }
 
 async function configureFromLocalCommand(context: vscode.ExtensionContext): Promise<void> {
-  let localConfigPath: string | undefined;
+  let localConfigUri: vscode.Uri | undefined;
   if (vscode.workspace.workspaceFolders) {
     for (const folder of vscode.workspace.workspaceFolders) {
-      const p = path.join(folder.uri.fsPath, ".memoryops.local.json");
-      if (fs.existsSync(p)) {
-        localConfigPath = p;
+      const fileUri = vscode.Uri.joinPath(folder.uri, ".memoryops.local.json");
+      try {
+        await vscode.workspace.fs.stat(fileUri);
+        localConfigUri = fileUri;
         break;
+      } catch {
+        // file doesn't exist in this folder
       }
     }
   }
 
-  if (!localConfigPath) {
+  if (!localConfigUri) {
     void vscode.window.showErrorMessage(
       "Could not find .memoryops.local.json in the workspace root directory."
     );
@@ -1600,7 +1597,9 @@ async function configureFromLocalCommand(context: vscode.ExtensionContext): Prom
   }
 
   try {
-    const data = JSON.parse(fs.readFileSync(localConfigPath, "utf8"));
+    const raw = await vscode.workspace.fs.readFile(localConfigUri);
+    const content = Buffer.from(raw).toString("utf8");
+    const data = JSON.parse(content);
     const workspaceId = data.workspace_id || data.workspaceId;
     const apiKey = data.api_key || data.apiKey;
     const apiUrl = data.api_url || data.apiUrl || "http://localhost:8080";
@@ -1622,7 +1621,7 @@ async function configureFromLocalCommand(context: vscode.ExtensionContext): Prom
     cachedClient = undefined;
 
     void vscode.window.showInformationMessage(
-      `MemoryOps extension configured successfully using ${path.basename(localConfigPath)}.`
+      "MemoryOps extension configured successfully using .memoryops.local.json."
     );
   } catch (err: any) {
     void vscode.window.showErrorMessage(`Failed to configure MemoryOps from local file: ${err.message}`);
@@ -1636,23 +1635,28 @@ async function autoConfigureFromLocal(context: vscode.ExtensionContext): Promise
     return;
   }
 
-  let localConfigPath: string | undefined;
+  let localConfigUri: vscode.Uri | undefined;
   if (vscode.workspace.workspaceFolders) {
     for (const folder of vscode.workspace.workspaceFolders) {
-      const p = path.join(folder.uri.fsPath, ".memoryops.local.json");
-      if (fs.existsSync(p)) {
-        localConfigPath = p;
+      const fileUri = vscode.Uri.joinPath(folder.uri, ".memoryops.local.json");
+      try {
+        await vscode.workspace.fs.stat(fileUri);
+        localConfigUri = fileUri;
         break;
+      } catch {
+        // doesn't exist
       }
     }
   }
 
-  if (!localConfigPath) {
+  if (!localConfigUri) {
     return;
   }
 
   try {
-    const data = JSON.parse(fs.readFileSync(localConfigPath, "utf8"));
+    const raw = await vscode.workspace.fs.readFile(localConfigUri);
+    const content = Buffer.from(raw).toString("utf8");
+    const data = JSON.parse(content);
     const workspaceId = data.workspace_id || data.workspaceId;
     const apiKey = data.api_key || data.apiKey;
     const apiUrl = data.api_url || data.apiUrl || "http://localhost:8080";
@@ -1670,7 +1674,7 @@ async function autoConfigureFromLocal(context: vscode.ExtensionContext): Promise
       cachedClient = undefined;
 
       void vscode.window.showInformationMessage(
-        `MemoryOps extension auto-configured using ${path.basename(localConfigPath)}.`
+        "MemoryOps extension auto-configured using .memoryops.local.json."
       );
     }
   } catch (err: any) {
@@ -1693,7 +1697,6 @@ async function storeSecureApiKey(
   setCachedApiKeySecret(normalizedValue);
   await clearLegacyApiKeySetting();
   cachedClient = undefined;
-  trackCleanupTargets(context);
 }
 
 async function clearLegacyApiKeySetting(): Promise<void> {
@@ -1721,43 +1724,4 @@ async function clearLegacyApiKeySetting(): Promise<void> {
   }
 
   await Promise.all(updates);
-}
-
-function trackCleanupTargets(context: vscode.ExtensionContext): void {
-  const settingsFiles = [
-    ...collectCandidateUserSettingsFiles(),
-    ...getWorkspaceSettingsFiles(),
-  ];
-  const storageDirectories = [
-    context.globalStorageUri.fsPath,
-    ...(context.storageUri?.fsPath ? [context.storageUri.fsPath] : []),
-  ];
-
-  try {
-    updateCleanupManifest({
-      settingsFiles,
-      storageDirectories,
-    });
-  } catch (error) {
-    outputChannel.appendLine(`Failed to update uninstall cleanup manifest: ${errorMessage(error)}`);
-  }
-}
-
-function getWorkspaceSettingsFiles(): string[] {
-  const paths: string[] = [];
-
-  const workspaceFile = vscode.workspace.workspaceFile;
-  if (workspaceFile?.scheme === "file" && workspaceFile.fsPath.endsWith(".code-workspace")) {
-    paths.push(workspaceFile.fsPath);
-  }
-
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    if (folder.uri.scheme !== "file") {
-      continue;
-    }
-
-    paths.push(path.join(folder.uri.fsPath, ".vscode", "settings.json"));
-  }
-
-  return paths;
 }

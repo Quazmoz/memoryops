@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
-import * as fs from "fs";
-import * as path from "path";
+
 import { MemoryOpsClient, Skill, AgentSkill } from "./client";
 
 export type SkillTreeNode = CategoryItem | SkillItem | AgentSkillItem | MessageItem;
@@ -71,21 +70,24 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<SkillTreeNode>
     }
 
     const folders = vscode.workspace.workspaceFolders;
-    const workspaceRoot = folders && folders.length > 0 ? folders[0].uri.fsPath : undefined;
+    const folder = folders && folders.length > 0 ? folders[0] : undefined;
 
     const httpToolItems = this.skills.map((skill) => new SkillItem(skill));
     const geminiSkillItems: (AgentSkillItem | MessageItem)[] = [];
     const claudeSkillItems: (AgentSkillItem | MessageItem)[] = [];
 
     for (const skill of this.agentSkills) {
-      let localPath: string | undefined;
-      if (workspaceRoot) {
-        const pathCandidate = path.join(workspaceRoot, `.${skill.assistant}`, "skills", `${skill.name}.md`);
-        if (fs.existsSync(pathCandidate)) {
-          localPath = pathCandidate;
+      let localUri: vscode.Uri | undefined;
+      if (folder) {
+        const candidateUri = vscode.Uri.joinPath(folder.uri, `.${skill.assistant}`, "skills", `${skill.name}.md`);
+        try {
+          await vscode.workspace.fs.stat(candidateUri);
+          localUri = candidateUri;
+        } catch {
+          // file doesn't exist
         }
       }
-      const item = new AgentSkillItem(skill, localPath);
+      const item = new AgentSkillItem(skill, localUri);
       if (skill.assistant === "gemini") {
         geminiSkillItems.push(item);
       } else if (skill.assistant === "claude") {
@@ -162,7 +164,7 @@ export class SkillItem extends vscode.TreeItem {
 }
 
 export class AgentSkillItem extends vscode.TreeItem {
-  constructor(readonly agentSkill: AgentSkill, readonly localPath?: string) {
+  constructor(readonly agentSkill: AgentSkill, readonly localUri?: vscode.Uri) {
     super(`${agentSkill.assistant}/${agentSkill.name}`, vscode.TreeItemCollapsibleState.None);
 
     this.id = `memoryops.agentSkill.${agentSkill.assistant}.${agentSkill.name}`;
@@ -172,17 +174,17 @@ export class AgentSkillItem extends vscode.TreeItem {
       `Assistant: ${agentSkill.assistant}`,
       `Title: ${agentSkill.title}`,
       `Description: ${agentSkill.description}`,
-      localPath ? `Local Path: ${localPath}` : "Not found locally",
+      localUri ? `Local Uri: ${localUri.toString()}` : "Not found locally",
     ].join("\n");
 
     this.contextValue = "memoryops.agentSkill";
     this.iconPath = new vscode.ThemeIcon("symbol-class");
 
-    if (localPath) {
+    if (localUri) {
       this.command = {
         command: "vscode.open",
         title: "Open Local File",
-        arguments: [vscode.Uri.file(localPath)],
+        arguments: [localUri],
       };
     }
   }
