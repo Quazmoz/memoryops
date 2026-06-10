@@ -300,6 +300,10 @@ async fn hydrate_candidates(
     workspace_pool: &WorkspacePoolAccess,
     mode: SearchMode,
 ) -> AppResult<Vec<CandidateMemory>> {
+    if search_results.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let ids = search_results
         .iter()
         .map(|result| result.memory.id)
