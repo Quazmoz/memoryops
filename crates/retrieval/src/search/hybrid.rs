@@ -250,8 +250,6 @@ mod tests {
                 corroboration_count: 0,
                 relevance_score: 0.5,
                 promoted_at: None,
-                deleted_at: None,
-                last_accessed_at: None,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             },
