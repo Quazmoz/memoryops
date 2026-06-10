@@ -18,10 +18,15 @@ import type {
 } from "./types";
 
 export async function createWorkspace(name: string, adminToken: string): Promise<WorkspaceSummary> {
+  const trimmedName = name.trim();
+  if (trimmedName.length === 0) {
+    throw new Error("Workspace name is required");
+  }
+
   const response = await apiContractRequest<CreateWorkspaceResponse>("createWorkspace", {
     auth: false,
-    headers: { "x-admin-token": adminToken },
-    body: { name },
+    headers: { "x-admin-token": adminToken.trim() },
+    body: { name: trimmedName },
   });
   const id = response.id ?? response.workspace_id;
 
@@ -31,7 +36,7 @@ export async function createWorkspace(name: string, adminToken: string): Promise
 
   const result: WorkspaceSummary = {
     id,
-    name: response.name ?? name,
+    name: response.name ?? trimmedName,
   };
 
   if (response.api_key) {
@@ -42,10 +47,15 @@ export async function createWorkspace(name: string, adminToken: string): Promise
 }
 
 export async function createApiKey(workspaceId: string, name: string): Promise<CreatedApiKey> {
+  const trimmedName = name.trim();
+  if (trimmedName.length === 0) {
+    throw new Error("API key name is required");
+  }
+
   const response = await apiContractRequest<CreateApiKeyResponse>("createApiKey", {
     path: resolveOperationPath("createApiKey", { id: workspaceId }),
     auth: false,
-    body: { name },
+    body: { name: trimmedName },
   });
   const plaintextKey = response.plaintext_key ?? response.key;
 
@@ -159,8 +169,13 @@ export interface WorkspaceListResponse {
  * before the store is populated (first-run flow).
  */
 export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[]> {
+  const trimmedApiKey = apiKey.trim();
+  if (trimmedApiKey.length === 0) {
+    return [];
+  }
+
   const headers = requestHeaders({}, false);
-  headers.set("x-api-key", apiKey);
+  headers.set("x-api-key", trimmedApiKey);
   const response = await fetch(apiUrl(resolveOperationPath("getCurrentWorkspace", {})), {
     method: operationMethod("getCurrentWorkspace").toUpperCase(),
     headers,
