@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::ToolDefinition;
+use super::{retrieve, ToolDefinition};
 
 const DEFAULT_AGENT_ID: &str = "mcp-agent";
 const DEFAULT_IMPORTANCE: f32 = 0.5;
@@ -33,17 +33,17 @@ pub struct StoreOutput {
 pub fn definition() -> ToolDefinition {
     ToolDefinition {
         name: "memory_store",
-        description: "Store an episodic MemoryOps memory for the authenticated workspace.",
+        description: "Store an episodic MemoryOps memory for the authenticated workspace. Supply user_id, agent_id, and/or repo to make the memory retrievable only for that scope plus master workspace context.",
         input_schema: json!({
             "type": "object",
             "required": ["content"],
             "properties": {
                 "content": { "type": "string", "minLength": 1, "maxLength": 8000 },
-                "agent_id": { "type": "string", "default": DEFAULT_AGENT_ID },
+                "agent_id": { "type": "string", "default": DEFAULT_AGENT_ID, "description": "Agent scope for this memory. Defaults to mcp-agent." },
                 "tags": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
                 "importance": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": DEFAULT_IMPORTANCE },
-                "user_id": { "type": "string" },
-                "repo": { "type": "string" },
+                "user_id": { "type": "string", "description": "Optional user scope for this memory." },
+                "repo": { "type": "string", "description": "Optional repository/project scope such as owner/name." },
                 "source_ref": { "type": "string" }
             }
         }),
@@ -63,11 +63,11 @@ pub async fn run(
     let observation_input = ObservationInput {
         content: input.content,
         agent_id,
-        user_id: input.user_id,
-        repo: input.repo,
+        user_id: retrieve::normalize_scope_value(input.user_id),
+        repo: retrieve::normalize_scope_value(input.repo),
         tags: Some(input.tags),
         importance: Some(input.importance),
-        source_ref: input.source_ref,
+        source_ref: retrieve::normalize_scope_value(input.source_ref),
         scope_id: None,
     };
 
@@ -93,4 +93,15 @@ fn default_agent_id() -> String {
 
 fn default_importance() -> f32 {
     DEFAULT_IMPORTANCE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_agent_id_uses_default_for_blank_values() {
+        assert_eq!(normalize_agent_id("   "), DEFAULT_AGENT_ID);
+        assert_eq!(normalize_agent_id(" agent-1 "), "agent-1");
+    }
 }
