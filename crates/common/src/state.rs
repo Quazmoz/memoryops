@@ -70,7 +70,12 @@ pub fn build_llm_provider_for_workspace(
     {
         effective.llm.provider = provider;
     }
-    if let Some(model) = workspace_config.llm_model.as_deref() {
+    if let Some(model) = workspace_config
+        .llm_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
         effective.llm.model = model.to_owned();
         effective.llm.openai = Some(OpenAiLlmConfig {
             model: model.to_owned(),
@@ -268,6 +273,7 @@ pub fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
             let configured_base_url = config.llm.base_url.as_deref().unwrap_or("");
             let base_url = if configured_base_url.trim().is_empty() {
                 match config.llm.provider {
+                    LlmProviderKind::OpenaiCompatible => "https://api.openai.com/v1".to_owned(),
                     LlmProviderKind::Openrouter => "https://openrouter.ai/api/v1".to_owned(),
                     LlmProviderKind::Huggingface => "https://router.huggingface.co/v1".to_owned(),
                     _ => configured_base_url.to_owned(),
