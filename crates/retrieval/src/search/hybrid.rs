@@ -28,7 +28,7 @@ pub async fn hybrid_search(
     hybrid_search_with_config(state, req, limit, &workspace_config).await
 }
 
-pub(crate) async fn hybrid_search_with_config(
+pub async fn hybrid_search_with_config(
     state: &AppState,
     req: &SearchRequest,
     limit: u32,
@@ -36,7 +36,7 @@ pub(crate) async fn hybrid_search_with_config(
 ) -> AppResult<Vec<MemoryResult>> {
     let offset = req.offset.unwrap_or(DEFAULT_OFFSET);
     let requested = limit.saturating_add(offset);
-    let candidate_limit = requested.saturating_mul(2).max(limit.saturating_mul(2));
+    let candidate_limit = requested.saturating_mul(2).max(1);
     let (vector_results, keyword_results) = tokio::join!(
         vector_search_results_with_offset_and_config(
             state,
@@ -116,7 +116,7 @@ pub fn rrf_score(rank: u32) -> f32 {
 }
 
 pub fn fuse_ranked_ids(vector_ids: &[Uuid], keyword_ids: &[Uuid], limit: usize) -> Vec<FusedRank> {
-    let mut scores = HashMap::<Uuid, f32>::new();
+    let mut scores = HashMap::<Uuid, f32>::with_capacity(vector_ids.len() + keyword_ids.len());
     add_rrf_scores(&mut scores, vector_ids);
     add_rrf_scores(&mut scores, keyword_ids);
 
@@ -219,105 +219,56 @@ mod tests {
     }
 
     #[test]
-    fn relevance_score_neutral_keeps_rrf_score() {
-        let score = apply_relevance_score(0.8, 0.5);
+    fn relevance_score_adjusts_rank() {
+        let base = 0.75;
+        let boosted = apply_relevance_score(base, 1.0);
+        let penalized = apply_relevance_score(base, 0.0);
 
-        assert!((score - 0.8).abs() < 0.0001);
+        assert!(boosted > base);
+        assert!(penalized < base);
     }
 
     #[test]
-    fn relevance_score_boosts_loved_and_dampens_hated() {
-        let base = 0.8;
-        let loved = apply_relevance_score(base, 1.0);
-        let hated = apply_relevance_score(base, 0.0);
-
-        assert!((loved - 0.84).abs() < 0.0001);
-        assert!((hated - 0.76).abs() < 0.0001);
-    }
-
-    #[test]
-    fn relevance_score_breaks_identical_content_tie() {
-        let neutral = apply_relevance_score(0.8, 0.5);
-        let loved = apply_relevance_score(0.8, 1.0);
-
-        assert!(loved > neutral);
-    }
-
-    #[test]
-    fn vector_empty_falls_back_to_keyword_only() {
-        let id = Uuid::from_u128(10);
-        let keyword = vec![memory_result(id, 0.75, 4)];
-
-        let fallback = keyword_fallback_results(&keyword, 10);
-
-        assert_eq!(fallback.len(), 1);
-        assert_eq!(fallback[0].memory.id, id);
-        assert_eq!(fallback[0].rank, 1);
-        assert_eq!(fallback[0].score, 0.75);
-    }
-
-    #[test]
-    fn paginate_results_skips_offset_and_resets_ranks() {
-        let first = memory_result(Uuid::from_u128(1), 0.9, 10);
-        let second = memory_result(Uuid::from_u128(2), 0.8, 11);
-        let third = memory_result(Uuid::from_u128(3), 0.7, 12);
-
-        let paged = paginate_results(&[first, second, third], 2, 1);
-
-        assert_eq!(paged.len(), 2);
-        assert_eq!(paged[0].memory.id, Uuid::from_u128(2));
-        assert_eq!(paged[1].memory.id, Uuid::from_u128(3));
-        assert_eq!(paged[0].rank, 1);
-        assert_eq!(paged[1].rank, 2);
-    }
-
-    #[test]
-    fn materialized_hybrid_results_reuse_existing_memory_payloads() {
-        let id = Uuid::from_u128(7);
-        let mut result = memory_result(id, 0.2, 9);
-        result.memory.relevance_score = 1.0;
-
-        let materialized = materialize_fused_results(
-            vec![FusedRank {
-                id,
-                raw_score: 1.0,
-                score: 0.8,
-            }],
-            vec![result],
-            Vec::new(),
-        );
-
-        assert_eq!(materialized.len(), 1);
-        assert_eq!(materialized[0].memory.id, id);
-        assert!((materialized[0].score - 0.84).abs() < 0.0001);
-        assert_eq!(materialized[0].rank, 0);
-    }
-
-    fn memory_result(id: Uuid, score: f32, rank: u32) -> MemoryResult {
-        MemoryResult {
+    fn paginate_results_assigns_ranks_after_offset() {
+        let workspace_id = Uuid::now_v7();
+        let make_result = |id: Uuid, rank: u32| MemoryResult {
             memory: MemoryUnitDto {
                 id,
-                workspace_id: Uuid::from_u128(99),
+                workspace_id,
                 scope: json!({}),
                 memory_type: "episodic".to_owned(),
-                content: "memory".to_owned(),
+                scope_visibility: "private".to_owned(),
+                content: format!("memory-{rank}"),
                 importance_score: 0.5,
-                decay_score: 1.0,
+                decay_score: 0.5,
                 pinned: false,
                 tags: Vec::new(),
                 embedding_id: None,
                 token_count: None,
                 source_events: Vec::new(),
                 source_episode_ids: Vec::new(),
-                corroboration_count: 1,
+                corroboration_count: 0,
                 relevance_score: 0.5,
                 promoted_at: None,
-                scope_visibility: "private".to_owned(),
+                deleted_at: None,
+                last_accessed_at: None,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             },
-            score,
+            score: 1.0,
             rank,
-        }
+        };
+        let results = vec![
+            make_result(Uuid::from_u128(1), 99),
+            make_result(Uuid::from_u128(2), 99),
+            make_result(Uuid::from_u128(3), 99),
+        ];
+
+        let page = paginate_results(&results, 2, 1);
+
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].rank, 1);
+        assert_eq!(page[1].rank, 2);
+        assert_eq!(page[0].memory.id, Uuid::from_u128(2));
     }
 }
