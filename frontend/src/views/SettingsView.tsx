@@ -34,6 +34,8 @@ export function SettingsView() {
   const [embeddingModel, setEmbeddingModel] = useState("BAAI/bge-small-en-v1.5");
   const [llmProvider, setLlmProvider] = useState("ollama");
   const [llmModel, setLlmModel] = useState("llama3");
+  const [llmBaseUrl, setLlmBaseUrl] = useState("");
+  const [llmApiKeyEnv, setLlmApiKeyEnv] = useState("");
   const [subAgentPools, setSubAgentPools] = useState("");
   const [contradictionMode, setContradictionMode] = useState<"quarantine" | "auto_resolve">("quarantine");
   const [retentionMaxAgeDays, setRetentionMaxAgeDays] = useState<number | undefined>(undefined);
@@ -48,7 +50,6 @@ export function SettingsView() {
   const [reindexError, setReindexError] = useState<string | null>(null);
   const [confirmReindex, setConfirmReindex] = useState(false);
   const embeddingModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const llmModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const hasApiKey = apiKey.trim().length > 0;
   const canAct = hasApiKey && workspaceId.trim().length > 0;
@@ -173,6 +174,8 @@ export function SettingsView() {
       setEmbeddingModel(workspace.embedding_model ?? "BAAI/bge-small-en-v1.5");
       setLlmProvider(workspace.llm_provider ?? "ollama");
       setLlmModel(workspace.llm_model ?? "llama3");
+      setLlmBaseUrl(workspace.llm_base_url ?? "");
+      setLlmApiKeyEnv(workspace.llm_api_key_env ?? "");
       setSubAgentPools((workspace.sub_agent_pools ?? []).join(", "));
       setRetentionMaxAgeDays(workspace.retention_max_age_days ?? undefined);
       setSkillVersionRetentionDays(workspace.skill_version_retention_days ?? undefined);
@@ -225,6 +228,8 @@ export function SettingsView() {
       setEmbeddingModel(workspaceQuery.data.embedding_model ?? "BAAI/bge-small-en-v1.5");
       setLlmProvider(workspaceQuery.data.llm_provider ?? "ollama");
       setLlmModel(workspaceQuery.data.llm_model ?? "llama3");
+      setLlmBaseUrl(workspaceQuery.data.llm_base_url ?? "");
+      setLlmApiKeyEnv(workspaceQuery.data.llm_api_key_env ?? "");
       setSubAgentPools((workspaceQuery.data.sub_agent_pools ?? []).join(", "));
       setRetentionMaxAgeDays(workspaceQuery.data.retention_max_age_days ?? undefined);
       setSkillVersionRetentionDays(workspaceQuery.data.skill_version_retention_days ?? undefined);
@@ -241,9 +246,6 @@ export function SettingsView() {
     return () => {
       if (embeddingModelTimeoutRef.current) {
         clearTimeout(embeddingModelTimeoutRef.current);
-      }
-      if (llmModelTimeoutRef.current) {
-        clearTimeout(llmModelTimeoutRef.current);
       }
     };
   }, []);
@@ -273,11 +275,6 @@ export function SettingsView() {
     configMutation.mutate({ embedding_provider: value });
   }
 
-  function saveLlmProvider(value: string) {
-    setLlmProvider(value);
-    configMutation.mutate({ llm_provider: value });
-  }
-
   function saveEmbeddingModel(value: string) {
     setEmbeddingModel(value);
     if (embeddingModelTimeoutRef.current) {
@@ -288,14 +285,15 @@ export function SettingsView() {
     }, 600);
   }
 
-  function saveLlmModel(value: string) {
-    setLlmModel(value);
-    if (llmModelTimeoutRef.current) {
-      clearTimeout(llmModelTimeoutRef.current);
-    }
-    llmModelTimeoutRef.current = setTimeout(() => {
-      configMutation.mutate({ llm_model: value });
-    }, 600);
+  function saveLlmSettings() {
+    const trimmedBaseUrl = llmBaseUrl.trim();
+    const trimmedApiKeyEnv = llmApiKeyEnv.trim();
+    configMutation.mutate({
+      llm_provider: llmProvider,
+      llm_model: llmModel.trim(),
+      llm_base_url: llmProviderSupportsBaseUrl(llmProvider) && trimmedBaseUrl.length > 0 ? trimmedBaseUrl : null,
+      llm_api_key_env: llmProviderSupportsApiKeyEnv(llmProvider) && trimmedApiKeyEnv.length > 0 ? trimmedApiKeyEnv : null,
+    });
   }
 
   function saveSubAgentPools() {
@@ -823,19 +821,55 @@ export function SettingsView() {
                 id="llm-provider"
                 data-testid="llm-provider-select"
                 value={llmProvider}
-                onChange={(event) => saveLlmProvider(event.target.value)}
+                onChange={(event) => setLlmProvider(event.target.value)}
                 className="h-10 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
               >
-                <option value="ollama">ollama</option>
-                <option value="openai">openai</option>
-                <option value="anthropic">anthropic</option>
+                {LLM_PROVIDER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="grid gap-2">
               <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-model">
                 <InfoLabel label="LLM model" tooltip="Specific language model used for model-assisted MemoryOps workflows." />
               </label>
-              <Input id="llm-model" data-testid="llm-model-input" value={llmModel} onChange={(event) => saveLlmModel(event.target.value)} />
+              <Input id="llm-model" data-testid="llm-model-input" value={llmModel} onChange={(event) => setLlmModel(event.target.value)} />
+            </div>
+            {llmProviderSupportsBaseUrl(llmProvider) ? (
+              <div className="grid gap-2">
+                <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-base-url">
+                  <InfoLabel label="LLM base URL" tooltip="Base URL for the LLM API endpoint. Must start with http:// or https://. Leave blank to use the provider default." />
+                </label>
+                <Input
+                  id="llm-base-url"
+                  data-testid="llm-base-url-input"
+                  value={llmBaseUrl}
+                  onChange={(event) => setLlmBaseUrl(event.target.value)}
+                  placeholder="https://api.example.com/v1"
+                />
+              </div>
+            ) : null}
+            {llmProviderSupportsApiKeyEnv(llmProvider) ? (
+              <div className="grid gap-2">
+                <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-api-key-env">
+                  <InfoLabel label="Credential env var" tooltip="Name of the server-side environment variable holding the API key for this provider. Leave blank if no credential is required." />
+                </label>
+                <Input
+                  id="llm-api-key-env"
+                  data-testid="llm-api-key-env-input"
+                  value={llmApiKeyEnv}
+                  onChange={(event) => setLlmApiKeyEnv(event.target.value)}
+                  placeholder="CUSTOM_LLM_API_KEY"
+                />
+              </div>
+            ) : null}
+            <div className="flex justify-end">
+              <Button type="button" variant="secondary" data-testid="llm-settings-save" onClick={saveLlmSettings} disabled={configMutation.isPending}>
+                {configMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+                Save LLM settings
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -1262,6 +1296,27 @@ function downloadBlob(blob: Blob, filename: string) {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+const LLM_PROVIDER_OPTIONS: { value: string; label: string }[] = [
+  { value: "ollama", label: "Ollama" },
+  { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
+  { value: "openai_compatible", label: "OpenAI-compatible / custom" },
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "huggingface", label: "Hugging Face Router" },
+  { value: "gemini", label: "Gemini" },
+];
+
+const LLM_BASE_URL_PROVIDERS = new Set(["ollama", "openai_compatible", "openrouter", "huggingface"]);
+const LLM_API_KEY_ENV_PROVIDERS = new Set(["ollama", "openai_compatible", "openrouter", "huggingface", "gemini"]);
+
+function llmProviderSupportsBaseUrl(provider: string): boolean {
+  return LLM_BASE_URL_PROVIDERS.has(provider);
+}
+
+function llmProviderSupportsApiKeyEnv(provider: string): boolean {
+  return LLM_API_KEY_ENV_PROVIDERS.has(provider);
 }
 
 function commaSeparatedValues(value: string): string[] {

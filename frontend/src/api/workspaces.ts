@@ -220,6 +220,8 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   const pruningThreshold = numberConfig(config.pruning_threshold);
   const llmProvider = stringConfig(config.llm_provider);
   const llmModel = stringConfig(config.llm_model);
+  const llmBaseUrl = stringConfig(config.llm_base_url);
+  const llmApiKeyEnv = stringConfig(config.llm_api_key_env);
   const embeddingProvider = stringConfig(config.embedding_provider);
   const embeddingModel = stringConfig(config.embedding_model);
   const subAgentPools = stringArrayConfig(config.sub_agent_pools);
@@ -239,6 +241,12 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   }
   if (llmModel !== undefined) {
     normalized.llm_model = llmModel;
+  }
+  if (llmBaseUrl !== undefined) {
+    normalized.llm_base_url = llmBaseUrl;
+  }
+  if (llmApiKeyEnv !== undefined) {
+    normalized.llm_api_key_env = llmApiKeyEnv;
   }
   if (embeddingProvider !== undefined) {
     normalized.embedding_provider = embeddingProvider;

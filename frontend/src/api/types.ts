@@ -311,6 +311,8 @@ export type WorkspaceConfig = {
   sub_agent_pools?: string[];
   llm_provider?: string;
   llm_model?: string;
+  llm_base_url?: string | null;
+  llm_api_key_env?: string | null;
   embedding_provider?: string;
   embedding_model?: string;
   [key: string]: JsonValue | undefined;

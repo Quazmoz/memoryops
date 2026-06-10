@@ -51,6 +51,8 @@ const KNOWN_CONFIG_KEYS: &[&str] = &[
     "llm_provider",
     "embedding_provider",
     "llm_model",
+    "llm_base_url",
+    "llm_api_key_env",
     "embedding_model",
     "decay_half_life_days",
     "pruning_threshold",
@@ -82,6 +84,10 @@ pub struct UpdateWorkspaceConfigRequest {
     pub dedup_cosine_threshold: Option<f32>,
     pub llm_provider: Option<String>,
     pub llm_model: Option<String>,
+    #[serde(default)]
+    pub llm_base_url: Option<Option<String>>,
+    #[serde(default)]
+    pub llm_api_key_env: Option<Option<String>>,
     pub embedding_provider: Option<String>,
     pub embedding_model: Option<String>,
     pub decay_half_life_days: Option<u32>,
@@ -372,6 +378,7 @@ pub async fn update_workspace_config(
     validate_compliance_config(&config)?;
     validate_contradiction_config(&config)?;
     validate_sub_agent_pools(&config)?;
+    validate_llm_provider_config(&config)?;
 
     let before = get_workspace_by_id(&state, id)
         .await?
@@ -655,6 +662,24 @@ fn merge_workspace_config(
     if let Some(value) = &patch.llm_model {
         object.insert("llm_model".to_owned(), json!(value));
     }
+    match &patch.llm_base_url {
+        Some(Some(value)) => {
+            object.insert("llm_base_url".to_owned(), json!(value.trim()));
+        }
+        Some(None) => {
+            object.remove("llm_base_url");
+        }
+        None => {}
+    }
+    match &patch.llm_api_key_env {
+        Some(Some(value)) => {
+            object.insert("llm_api_key_env".to_owned(), json!(value.trim()));
+        }
+        Some(None) => {
+            object.remove("llm_api_key_env");
+        }
+        None => {}
+    }
     if let Some(value) = &patch.embedding_provider {
         object.insert("embedding_provider".to_owned(), json!(value));
     }
@@ -926,6 +951,67 @@ fn normalized_sub_agent_pools(agent_ids: &[String]) -> Vec<String> {
         normalized.push(trimmed.to_owned());
     }
     normalized
+}
+
+const VALID_LLM_PROVIDERS: &[&str] = &[
+    "ollama",
+    "openai",
+    "anthropic",
+    "openai_compatible",
+    "openai-compatible",
+    "openrouter",
+    "huggingface",
+    "hugging_face",
+    "gemini",
+];
+
+fn validate_llm_provider_config(config: &UpdateWorkspaceConfigRequest) -> AppResult<()> {
+    if let Some(provider) = &config.llm_provider {
+        let normalized = provider.trim().to_ascii_lowercase();
+        if !VALID_LLM_PROVIDERS.contains(&normalized.as_str()) {
+            return Err(AppError::Validation(format!(
+                "llm_provider must be one of: {}",
+                VALID_LLM_PROVIDERS.join(", ")
+            )));
+        }
+    }
+
+    if let Some(Some(base_url)) = &config.llm_base_url {
+        let trimmed = base_url.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::Validation(
+                "llm_base_url must not be empty".to_owned(),
+            ));
+        }
+        if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+            return Err(AppError::Validation(
+                "llm_base_url must start with http:// or https://".to_owned(),
+            ));
+        }
+    }
+
+    if let Some(Some(api_key_env)) = &config.llm_api_key_env {
+        let trimmed = api_key_env.trim();
+        if !is_valid_env_var_name(trimmed) {
+            return Err(AppError::Validation(
+                "llm_api_key_env must be a valid environment variable name".to_owned(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn is_valid_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn validate_contradiction_config(config: &UpdateWorkspaceConfigRequest) -> AppResult<()> {
@@ -1449,6 +1535,8 @@ mod tests {
             dedup_cosine_threshold: None,
             llm_provider: None,
             llm_model: None,
+            llm_base_url: None,
+            llm_api_key_env: None,
             embedding_provider: None,
             embedding_model: None,
             decay_half_life_days,
@@ -1624,6 +1712,138 @@ mod tests {
         assert_eq!(
             target["embedding_model"],
             serde_json::json!("text-embedding-3-large")
+        );
+    }
+
+    #[test]
+    fn merge_workspace_config_applies_and_trims_llm_base_url_and_api_key_env() {
+        let mut target = serde_json::json!({});
+        let mut patch = update_request(None, None);
+        patch.llm_base_url = Some(Some("  https://llm.internal/v1  ".to_owned()));
+        patch.llm_api_key_env = Some(Some("  CUSTOM_LLM_API_KEY  ".to_owned()));
+
+        if let Err(error) = merge_workspace_config(&mut target, &patch) {
+            panic!("llm base url / api key env should merge: {error}");
+        }
+
+        assert_eq!(
+            target["llm_base_url"],
+            serde_json::json!("https://llm.internal/v1")
+        );
+        assert_eq!(
+            target["llm_api_key_env"],
+            serde_json::json!("CUSTOM_LLM_API_KEY")
+        );
+    }
+
+    #[test]
+    fn merge_workspace_config_clears_llm_base_url_and_api_key_env() {
+        let mut target = serde_json::json!({
+            "llm_base_url": "https://llm.internal/v1",
+            "llm_api_key_env": "CUSTOM_LLM_API_KEY",
+        });
+        let mut patch = update_request(None, None);
+        patch.llm_base_url = Some(None);
+        patch.llm_api_key_env = Some(None);
+
+        if let Err(error) = merge_workspace_config(&mut target, &patch) {
+            panic!("llm base url / api key env should clear: {error}");
+        }
+
+        let object = target.as_object().expect("config should be an object");
+        assert!(!object.contains_key("llm_base_url"));
+        assert!(!object.contains_key("llm_api_key_env"));
+    }
+
+    #[test]
+    fn merge_workspace_config_leaves_llm_overrides_unchanged_when_absent() {
+        let mut target = serde_json::json!({
+            "llm_base_url": "https://llm.internal/v1",
+            "llm_api_key_env": "CUSTOM_LLM_API_KEY",
+        });
+        let patch = update_request(None, None);
+
+        if let Err(error) = merge_workspace_config(&mut target, &patch) {
+            panic!("absent overrides should not change config: {error}");
+        }
+
+        assert_eq!(
+            target["llm_base_url"],
+            serde_json::json!("https://llm.internal/v1")
+        );
+        assert_eq!(
+            target["llm_api_key_env"],
+            serde_json::json!("CUSTOM_LLM_API_KEY")
+        );
+    }
+
+    #[test]
+    fn validate_llm_provider_config_accepts_known_providers() {
+        let mut patch = update_request(None, None);
+        patch.llm_provider = Some("openai_compatible".to_owned());
+        patch.llm_base_url = Some(Some("https://router.example/v1".to_owned()));
+        patch.llm_api_key_env = Some(Some("ROUTER_API_KEY".to_owned()));
+
+        assert!(validate_llm_provider_config(&patch).is_ok());
+    }
+
+    #[test]
+    fn validate_llm_provider_config_rejects_unknown_provider() {
+        let mut patch = update_request(None, None);
+        patch.llm_provider = Some("not-a-provider".to_owned());
+
+        let error = match validate_llm_provider_config(&patch) {
+            Ok(()) => panic!("unknown provider should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            matches!(error, AppError::Validation(message) if message.starts_with("llm_provider must be one of"))
+        );
+    }
+
+    #[test]
+    fn validate_llm_provider_config_rejects_non_http_base_url() {
+        let mut patch = update_request(None, None);
+        patch.llm_base_url = Some(Some("ftp://example.com".to_owned()));
+
+        let error = match validate_llm_provider_config(&patch) {
+            Ok(()) => panic!("non-http base url should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            matches!(error, AppError::Validation(message) if message == "llm_base_url must start with http:// or https://")
+        );
+    }
+
+    #[test]
+    fn validate_llm_provider_config_rejects_empty_base_url() {
+        let mut patch = update_request(None, None);
+        patch.llm_base_url = Some(Some("   ".to_owned()));
+
+        let error = match validate_llm_provider_config(&patch) {
+            Ok(()) => panic!("empty base url should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            matches!(error, AppError::Validation(message) if message == "llm_base_url must not be empty")
+        );
+    }
+
+    #[test]
+    fn validate_llm_provider_config_rejects_invalid_env_var_name() {
+        let mut patch = update_request(None, None);
+        patch.llm_api_key_env = Some(Some("1BAD-NAME".to_owned()));
+
+        let error = match validate_llm_provider_config(&patch) {
+            Ok(()) => panic!("invalid env var name should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            matches!(error, AppError::Validation(message) if message == "llm_api_key_env must be a valid environment variable name")
         );
     }
 
