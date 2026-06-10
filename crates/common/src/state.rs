@@ -9,7 +9,7 @@ use zeroize::Zeroizing;
 use crate::{
     config::{
         AnthropicConfig, AppConfig, EmbeddingProviderKind, GeminiConfig, LlmProviderKind,
-        OpenAiEmbeddingConfig, OpenAiLlmConfig,
+        OllamaConfig, OpenAiCompatibleConfig, OpenAiEmbeddingConfig, OpenAiLlmConfig,
     },
     models::WorkspaceConfig,
     providers::{
@@ -82,8 +82,70 @@ pub fn build_llm_provider_for_workspace(
             effective.llm.gemini = Some(GeminiConfig { api_key_env: None });
         }
     }
+    if let Some(base_url) = workspace_config
+        .llm_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|base_url| !base_url.is_empty())
+    {
+        effective.llm.base_url = Some(base_url.to_owned());
+    }
+    ensure_workspace_compatible_llm_config(&mut effective);
+    if let Some(api_key_env) = workspace_config
+        .llm_api_key_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|api_key_env| !api_key_env.is_empty())
+    {
+        apply_workspace_llm_api_key_env(&mut effective, api_key_env);
+    }
 
     build_llm_provider(&effective)
+}
+
+fn ensure_workspace_compatible_llm_config(config: &mut AppConfig) {
+    if matches!(
+        config.llm.provider,
+        LlmProviderKind::OpenaiCompatible | LlmProviderKind::Openrouter | LlmProviderKind::Huggingface
+    ) && config.llm.openai_compatible.is_none()
+    {
+        config.llm.openai_compatible = Some(OpenAiCompatibleConfig {
+            api_key_env: None,
+            headers: Default::default(),
+        });
+    }
+}
+
+fn apply_workspace_llm_api_key_env(config: &mut AppConfig, api_key_env: &str) {
+    let api_key_env = Some(api_key_env.to_owned());
+    match config.llm.provider {
+        LlmProviderKind::Ollama => {
+            config.llm.ollama = Some(OllamaConfig { api_key_env });
+        }
+        LlmProviderKind::OpenaiCompatible
+        | LlmProviderKind::Openrouter
+        | LlmProviderKind::Huggingface => {
+            let headers = config
+                .llm
+                .openai_compatible
+                .as_ref()
+                .map(|cfg| cfg.headers.clone())
+                .unwrap_or_default();
+            config.llm.openai_compatible = Some(OpenAiCompatibleConfig {
+                api_key_env,
+                headers,
+            });
+        }
+        LlmProviderKind::Gemini => {
+            config.llm.gemini = Some(GeminiConfig { api_key_env });
+        }
+        LlmProviderKind::Openai | LlmProviderKind::Anthropic => {
+            tracing::warn!(
+                provider = ?config.llm.provider,
+                "workspace llm_api_key_env override is ignored for providers with fixed env vars"
+            );
+        }
+    }
 }
 
 fn parse_embedding_provider_kind(value: &str) -> Option<EmbeddingProviderKind> {
