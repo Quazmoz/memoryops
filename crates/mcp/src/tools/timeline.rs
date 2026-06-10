@@ -37,7 +37,7 @@ pub struct TimelineOutput {
 pub fn definition() -> ToolDefinition {
     ToolDefinition {
         name: "memory_timeline",
-        description: "Retrieve memories as they existed at a past timestamp, optionally scoped by user, agent, or repo. Useful for incident post-mortems or understanding what the agent knew at a specific moment.",
+        description: "Retrieve memories as they existed at a past timestamp, optionally scoped by user, agent, or repo.",
         input_schema: json!({
             "type": "object",
             "required": ["query", "as_of"],
@@ -89,7 +89,7 @@ pub async fn run(
         .load(workspace_id)
         .await?;
     request.apply_workspace_config(&workspace_config);
-    let results = hybrid::hybrid_search_with_config(state, &request, limit, &workspace_config).await?;
+    let results = hybrid::hybrid_search(state, &request, limit).await?;
     let memories = retrieve::pack_results(
         results,
         0.0,
