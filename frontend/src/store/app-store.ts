@@ -9,15 +9,18 @@ type AppStore = {
   clearApiKey: () => void;
 };
 
+const initialWorkspaceId = (import.meta.env.VITE_MEMORYOPS_WORKSPACE_ID ?? "").trim();
+
 export const useAppStore = create<AppStore>((set) => ({
   // Dev fallback: use VITE_MEMORYOPS_WORKSPACE_ID when available (local `npm run dev`).
   // In containerised deployments the runtime /config.json (loaded in main.tsx)
   // will override this value before the app renders.
-  workspaceId: import.meta.env.VITE_MEMORYOPS_WORKSPACE_ID ?? "",
+  workspaceId: initialWorkspaceId,
   apiKey: "",
-  setWorkspace: (workspaceId, apiKey) => set({ workspaceId, apiKey }),
-  setWorkspaceId: (workspaceId) => set({ workspaceId }),
-  setApiKey: (apiKey) => set({ apiKey }),
+  setWorkspace: (workspaceId, apiKey) =>
+    set({ workspaceId: workspaceId.trim(), apiKey: apiKey.trim() }),
+  setWorkspaceId: (workspaceId) => set({ workspaceId: workspaceId.trim() }),
+  setApiKey: (apiKey) => set({ apiKey: apiKey.trim() }),
   clearApiKey: () => set({ apiKey: "" }),
 }));
 
@@ -34,7 +37,7 @@ export async function loadRuntimeConfig(): Promise<void> {
     if (!response.ok) return;
     const cfg = (await response.json()) as { workspaceId?: string };
     if (cfg.workspaceId && cfg.workspaceId.trim().length > 0) {
-      useAppStore.getState().setWorkspaceId(cfg.workspaceId.trim());
+      useAppStore.getState().setWorkspaceId(cfg.workspaceId);
     }
   } catch {
     // Silently ignore — /config.json may not be present in local dev mode.
