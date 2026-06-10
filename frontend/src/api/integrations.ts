@@ -33,16 +33,16 @@ export type IntegrationSource = (typeof INTEGRATION_SOURCES)[number];
 
 export type CreateIntegrationRequest = {
   source: IntegrationSource;
-  webhook_secret?: string;
-  api_token?: string;
-  api_sync_enabled?: boolean;
-  sync_config?: JsonValue;
+  webhook_secret?: string | undefined;
+  api_token?: string | undefined;
+  api_sync_enabled?: boolean | undefined;
+  sync_config?: JsonValue | undefined;
 };
 
 export type ConnectorSyncRequest = {
-  repo?: string;
-  since?: string;
-  limit?: number;
+  repo?: string | undefined;
+  since?: string | undefined;
+  limit?: number | undefined;
 };
 
 export type ConnectorSyncResponse = {
