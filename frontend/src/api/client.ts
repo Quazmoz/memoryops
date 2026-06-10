@@ -1,7 +1,7 @@
 import { useAppStore } from "../store/app-store";
 import type { JsonValue } from "./types";
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "/api";
 const SLOW_PATHS = ["/v1/retrieve", "/v1/memory/search"];
 const DEFAULT_TIMEOUT_MS = 15_000;
 const SLOW_TIMEOUT_MS = 30_000;
@@ -72,8 +72,9 @@ export function queryString(params: Record<string, string | number | boolean | n
   const searchParams = new URLSearchParams();
 
   Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
-      searchParams.set(key, String(value));
+    const normalized = typeof value === "string" ? value.trim() : value;
+    if (normalized !== undefined && normalized !== null && normalized !== "") {
+      searchParams.set(key, String(normalized));
     }
   });
 
