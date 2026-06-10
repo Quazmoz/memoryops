@@ -285,12 +285,14 @@ mod tests {
 
     #[test]
     fn scope_filter_keeps_user_agent_and_repo() {
-        let scope = scope_filter(
+        let scope = match scope_filter(
             Some("agent-1".to_owned()),
             Some("user-1".to_owned()),
             Some("Quazmoz/memoryops".to_owned()),
-        )
-        .expect("scope should exist");
+        ) {
+            Some(scope) => scope,
+            None => panic!("scope should exist"),
+        };
 
         assert_eq!(scope.agent_id.as_deref(), Some("agent-1"));
         assert_eq!(scope.user_id.as_deref(), Some("user-1"));
