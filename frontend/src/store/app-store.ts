@@ -35,9 +35,10 @@ export async function loadRuntimeConfig(): Promise<void> {
   try {
     const response = await fetch("/config.json", { cache: "no-store" });
     if (!response.ok) return;
-    const cfg = (await response.json()) as { workspaceId?: string };
-    if (cfg.workspaceId && cfg.workspaceId.trim().length > 0) {
-      useAppStore.getState().setWorkspaceId(cfg.workspaceId);
+    const cfg = (await response.json()) as { workspaceId?: unknown };
+    const workspaceId = typeof cfg.workspaceId === "string" ? cfg.workspaceId.trim() : "";
+    if (workspaceId.length > 0) {
+      useAppStore.getState().setWorkspaceId(workspaceId);
     }
   } catch {
     // Silently ignore — /config.json may not be present in local dev mode.
