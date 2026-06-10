@@ -73,6 +73,7 @@ pub async fn run(
         memory_types: None,
         as_of: Some(input.as_of),
         include_workspace_pool: false,
+        include_master_memory: true,
         inherited_workspace_pool_agent_ids: Vec::new(),
     };
     let workspace_config = WorkspaceConfigService::new(state.db.clone())
