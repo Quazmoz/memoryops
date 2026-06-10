@@ -142,6 +142,10 @@ pub fn protected_router() -> Router<AppState> {
                 .get(integrations::list_integrations),
         )
         .route(
+            "/v1/workspaces/{id}/integrations/{source}/sync",
+            axum::routing::post(integrations::start_connector_sync),
+        )
+        .route(
             "/v1/workspaces/{id}/integrations/{source}",
             axum::routing::delete(integrations::delete_integration),
         )
