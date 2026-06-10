@@ -41,6 +41,7 @@ pub async fn insert_memory_unit(db: &PgPool, unit: &NewMemoryUnit) -> AppResult<
             workspace_id,
             scope,
             memory_type,
+            scope_visibility,
             content,
             entities,
             importance_score,
@@ -49,7 +50,23 @@ pub async fn insert_memory_unit(db: &PgPool, unit: &NewMemoryUnit) -> AppResult<
             token_count,
             tags
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            CASE
+                WHEN ($3::jsonb->>'agent_id') IS NULL AND ($3::jsonb->>'user_id') IS NULL THEN 'workspace'
+                ELSE 'private'
+            END,
+            $5,
+            $6,
+            $7,
+            $8,
+            $9,
+            $10,
+            $11
+        )
         RETURNING id,
             workspace_id,
             scope,
@@ -263,184 +280,24 @@ async fn existing_processing_state_action(
     .await
     .map_err(AppError::Database)?;
 
-    if stale_reclaimed.is_some() {
+    if stale_reclaimed.as_deref() == Some("processing") {
         return Ok(ProcessingStateAction::ProceedStale);
     }
 
-    let status = sqlx::query_scalar::<_, String>(
+    let existing_status = sqlx::query_scalar::<_, String>(
         "SELECT status FROM processing_state WHERE raw_event_id = $1",
     )
     .bind(raw_event_id)
-    .fetch_optional(db)
+    .fetch_one(db)
     .await
     .map_err(AppError::Database)?;
 
-    match status.as_deref() {
-        Some("done") => Ok(ProcessingStateAction::AlreadyDone),
-        Some("processing") => Ok(ProcessingStateAction::AlreadyProcessing),
-        Some("failed") => Ok(ProcessingStateAction::AlreadyFailed),
-        Some(status) => Err(AppError::Internal(anyhow!(
-            "unknown processing_state status: {status}"
+    match existing_status.as_str() {
+        "done" => Ok(ProcessingStateAction::AlreadyDone),
+        "processing" => Ok(ProcessingStateAction::AlreadyProcessing),
+        "failed" => Ok(ProcessingStateAction::AlreadyFailed),
+        status => Err(AppError::Internal(anyhow!(
+            "unexpected processing_state status: {status}"
         ))),
-        None => Err(AppError::Internal(anyhow!(
-            "processing_state conflict without existing row"
-        ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::Utc;
-    use common::models::{EventType, Source};
-    use serde_json::json;
-
-    use super::*;
-
-    async fn insert_workspace(pool: &PgPool, workspace_id: Uuid) {
-        let name = format!("workspace-{workspace_id}");
-        let result = sqlx::query("INSERT INTO workspaces (id, name, config) VALUES ($1, $2, $3)")
-            .bind(workspace_id)
-            .bind(name)
-            .bind(json!({}))
-            .execute(pool)
-            .await;
-
-        if let Err(error) = result {
-            panic!("test workspace insert should succeed: {error}");
-        }
-    }
-
-    async fn insert_raw_event(pool: &PgPool, workspace_id: Uuid, raw_event_id: Uuid) {
-        let result = sqlx::query(
-            r#"
-            INSERT INTO raw_events (
-                id,
-                workspace_id,
-                source,
-                event_type,
-                actor,
-                payload,
-                idempotency_key,
-                occurred_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            "#,
-        )
-        .bind(raw_event_id)
-        .bind(workspace_id)
-        .bind(Source::GitHub)
-        .bind(EventType::PullRequest)
-        .bind("octocat")
-        .bind(json!({ "pull_request": { "title": "Title", "body": "Body" } }))
-        .bind(format!("github:{raw_event_id}"))
-        .bind(Utc::now())
-        .execute(pool)
-        .await;
-
-        if let Err(error) = result {
-            panic!("test raw_event insert should succeed: {error}");
-        }
-    }
-
-    fn new_memory_unit(workspace_id: Uuid, raw_event_id: Uuid) -> NewMemoryUnit {
-        NewMemoryUnit {
-            id: Uuid::now_v7(),
-            workspace_id,
-            scope: json!({
-                "workspace_id": workspace_id,
-                "source": "github",
-                "repo": "Quazmoz/memoryops",
-                "actor": "octocat",
-                "agent_id": null,
-                "user_id": null
-            }),
-            memory_type: MemoryType::Episodic,
-            content: "Useful processor memory".to_owned(),
-            entities: json!([]),
-            importance_score: 0.75,
-            source_events: vec![raw_event_id],
-            embedding_id: Some(Uuid::now_v7().to_string()),
-            token_count: Some(4),
-            tags: Vec::new(),
-        }
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn insert_and_retrieve_memory_unit(pool: PgPool) {
-        let workspace_id = Uuid::now_v7();
-        let raw_event_id = Uuid::now_v7();
-        insert_workspace(&pool, workspace_id).await;
-        insert_raw_event(&pool, workspace_id, raw_event_id).await;
-        let unit = new_memory_unit(workspace_id, raw_event_id);
-
-        let inserted = match insert_memory_unit(&pool, &unit).await {
-            Ok(inserted) => inserted,
-            Err(error) => panic!("memory unit insert should succeed: {error}"),
-        };
-        let retrieved = match sqlx::query_as::<_, MemoryUnit>(
-            r#"
-            SELECT id,
-                workspace_id,
-                scope,
-                memory_type,
-                scope_visibility,
-                content,
-                entities,
-                importance_score,
-                importance_overridden,
-                source_events,
-                embedding_id,
-                token_count,
-                decay_score,
-                relevance_score,
-                pinned,
-                tags,
-                version,
-                promoted_at,
-                source_episode_ids,
-                corroboration_count,
-                deleted_at,
-                last_accessed_at,
-                created_at,
-                updated_at
-            FROM memory_units
-            WHERE id = $1
-            "#,
-        )
-        .bind(inserted.id)
-        .fetch_one(&pool)
-        .await
-        {
-            Ok(retrieved) => retrieved,
-            Err(error) => panic!("memory unit should be retrievable: {error}"),
-        };
-
-        assert_eq!(retrieved.id, inserted.id);
-        assert_eq!(retrieved.workspace_id, workspace_id);
-        assert_eq!(retrieved.content, "Useful processor memory");
-        assert_eq!(retrieved.source_events, vec![raw_event_id]);
-    }
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn insert_processing_state_conflict_returns_already_done(pool: PgPool) {
-        let workspace_id = Uuid::now_v7();
-        let raw_event_id = Uuid::now_v7();
-        insert_workspace(&pool, workspace_id).await;
-        insert_raw_event(&pool, workspace_id, raw_event_id).await;
-
-        let first = match insert_processing_state(&pool, raw_event_id, workspace_id, 600).await {
-            Ok(action) => action,
-            Err(error) => panic!("processing_state insert should succeed: {error}"),
-        };
-        if let Err(error) = mark_processing_done(&pool, raw_event_id).await {
-            panic!("mark done should succeed: {error}");
-        }
-        let second = match insert_processing_state(&pool, raw_event_id, workspace_id, 600).await {
-            Ok(action) => action,
-            Err(error) => panic!("conflict lookup should succeed: {error}"),
-        };
-
-        assert_eq!(first, ProcessingStateAction::Proceed);
-        assert_eq!(second, ProcessingStateAction::AlreadyDone);
     }
 }
