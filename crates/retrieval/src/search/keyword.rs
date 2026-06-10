@@ -159,9 +159,10 @@ mod tests {
         );
         let sql = builder.sql();
 
-        assert!(sql.contains("AND (agent_id ="));
-        assert!(sql.contains("AND (user_id ="));
-        assert!(sql.contains("AND (repo ="));
+        assert!(sql.contains("agent_id"));
+        assert!(sql.contains("user_id"));
+        assert!(sql.contains("repo"));
+        assert!(sql.contains(" IS NULL"));
         assert!(!sql.contains("scope_visibility"));
     }
 
@@ -181,6 +182,58 @@ mod tests {
         );
 
         assert_eq!(builder.sql(), before);
+    }
+
+    #[test]
+    fn scope_filter_includes_master_memory_when_enabled() {
+        let mut builder = QueryBuilder::<Postgres>::new(
+            "SELECT id, 1.0 AS rank_score FROM memory_units WHERE workspace_id = ",
+        );
+        builder.push_bind(Uuid::now_v7());
+        let scope = ScopeFilter {
+            agent_id: Some("agent-1".to_owned()),
+            user_id: Some("user-1".to_owned()),
+            repo: Some("Quazmoz/memoryops".to_owned()),
+        };
+
+        store::push_scope_filter(
+            &mut builder,
+            &scope,
+            &crate::dto::WorkspacePoolAccess {
+                include_all_workspace: false,
+                include_master_memory: true,
+                inherited_agent_ids: Vec::new(),
+            },
+            None,
+        );
+        let sql = builder.sql();
+
+        assert!(sql.contains("scope_visibility = 'workspace'"));
+        assert!(sql.contains("agent_id IS NULL"));
+        assert!(sql.contains("user_id IS NULL"));
+        assert!(sql.contains("repo IS NULL OR repo ="));
+    }
+
+    #[test]
+    fn scope_filter_excludes_master_memory_when_disabled() {
+        let mut builder = QueryBuilder::<Postgres>::new(
+            "SELECT id, 1.0 AS rank_score FROM memory_units WHERE workspace_id = ",
+        );
+        builder.push_bind(Uuid::now_v7());
+        let scope = ScopeFilter {
+            agent_id: Some("agent-1".to_owned()),
+            user_id: Some("user-1".to_owned()),
+            repo: Some("Quazmoz/memoryops".to_owned()),
+        };
+
+        store::push_scope_filter(
+            &mut builder,
+            &scope,
+            &crate::dto::WorkspacePoolAccess::default(),
+            None,
+        );
+
+        assert!(!builder.sql().contains("scope_visibility = 'workspace'"));
     }
 
     #[test]

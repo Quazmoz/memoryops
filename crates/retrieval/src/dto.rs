@@ -108,7 +108,9 @@ pub struct WorkspacePoolAccess {
 
 impl WorkspacePoolAccess {
     pub fn includes_any_workspace_pool(&self) -> bool {
-        self.include_all_workspace || self.include_master_memory || !self.inherited_agent_ids.is_empty()
+        self.include_all_workspace
+            || self.include_master_memory
+            || !self.inherited_agent_ids.is_empty()
     }
 }
 

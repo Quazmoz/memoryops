@@ -65,7 +65,10 @@ async fn sync_github_issues(
     request: ConnectorSyncRequest,
 ) -> AppResult<ConnectorSyncResponse> {
     let repo = normalize_github_repo(request.repo.as_deref())?;
-    let limit = request.limit.unwrap_or(DEFAULT_SYNC_LIMIT).clamp(1, MAX_SYNC_LIMIT);
+    let limit = request
+        .limit
+        .unwrap_or(DEFAULT_SYNC_LIMIT)
+        .clamp(1, MAX_SYNC_LIMIT);
     let credential = integration_api_credential(state, workspace_id, Source::GitHub).await?;
     let issues = fetch_github_issues(&credential, &repo, request.since, limit).await?;
     let mut redis = state
@@ -100,7 +103,11 @@ async fn sync_github_issues(
         let payload = github_item_payload(&repo, &item, is_pull_request);
         let idempotency_key = format!(
             "github:api-sync:{workspace_id}:{repo}:{}:{number}:{updated_marker}",
-            if is_pull_request { "pull_request" } else { "issue" }
+            if is_pull_request {
+                "pull_request"
+            } else {
+                "issue"
+            }
         );
 
         let event = insert_raw_event(
@@ -196,9 +203,12 @@ async fn integration_api_credential(
     .await
     .map_err(AppError::Database)?
     .flatten()
-    .ok_or_else(|| AppError::Validation("API credential is required before running API sync".to_owned()))?;
+    .ok_or_else(|| {
+        AppError::Validation("API credential is required before running API sync".to_owned())
+    })?;
 
-    let decrypted = decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), &encrypted)?;
+    let decrypted =
+        decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), &encrypted)?;
     if let Some(migrated) = decrypted.migrated_ciphertext.as_deref() {
         sqlx::query(
             r#"

@@ -188,7 +188,7 @@ export function GuideView() {
               items={[
                 ["Workspace", "Isolation boundary for memories, API keys, integrations, provider settings, lifecycle rules, and audit events."],
                 ["Memory unit", "The canonical stored item. It has content, type, scope, importance, tags, timestamps, source references, and retrieval metadata."],
-                ["Scope", "Optional agent_id, user_id, and repo values that narrow when a memory should be retrieved."],
+                ["Scope", "Optional agent_id, user_id, and repo values that control which private or shared memory layers are eligible during retrieval."],
                 ["Source event", "A raw incoming webhook or observation before processing. Source events provide provenance for later debugging."],
                 ["Embedding", "Vector representation used for semantic search in Qdrant. If embeddings are missing, retrieval quality drops."],
                 ["Retrieval trace", "A persisted explanation of which candidates were considered, scored, included, or excluded for a query."],
@@ -329,7 +329,7 @@ export function GuideView() {
                 ["List mode", "Fetches paginated memory units with filters such as type, pinned, importance, source, agent, user, repo, and time."],
                 ["Search mode", "Sends the query to /v1/memory/search and returns ranked memory candidates."],
                 ["Type filter", "Separates transient episodic evidence from durable semantic facts."],
-                ["Scope filters", "Narrow results to a specific agent, user, or repository when a workspace has mixed tenants or projects."],
+                ["Scope filters", "Use agent_id or user_id to open that private layer, then add repo to include repo-specific variants without pulling unrelated repositories."],
                 ["Importance filter", "Helps find high-value memories or low-value noise that may need cleanup."],
                 ["Deleted/recoverable state", "Soft-deleted memories can remain visible to operators and may be restorable depending on policy."],
               ]}
@@ -386,6 +386,7 @@ curl -X POST "{{API_URL}}/v1/memory/<memory_id>/promote?workspace_id={{WORKSPACE
             <DefinitionGrid
               items={[
                 ["Mode", "Search strategy, usually hybrid, that can combine semantic similarity and keyword signals."],
+                ["Scope behavior", "When agent_id or user_id is supplied, retrieval returns matching scoped memories plus master workspace memory by default."],
                 ["Candidate count", "How many memories were considered before final packing."],
                 ["Included/excluded", "Whether a memory made it into the final context pack and why excluded memories were left out."],
                 ["Score breakdown", "Semantic similarity, keyword rank, importance, recency, and source authority components."],
@@ -410,6 +411,9 @@ curl -X POST {{API_URL}}/v1/retrieve \
 # Fetch a persisted trace later
 curl "{{API_URL}}/v1/retrieve/trace/<query_id>?workspace_id={{WORKSPACE_ID}}" \
   -H "x-api-key: {{API_KEY}}"`} />
+            <p>
+              Pass <code className="inline-code">agent_id</code> for agent-private memory, <code className="inline-code">user_id</code> for user-private memory, and <code className="inline-code">repo</code> when the memory should be limited to one repository. If you provide both <code className="inline-code">agent_id</code> and <code className="inline-code">user_id</code>, MemoryOps combines agent-only, user-only, shared agent+user, and matching repo-scoped variants. Set <code className="inline-code">include_master_memory</code> to <code className="inline-code">false</code> only when you need to suppress the default master workspace layer.
+            </p>
           </Section>
 
           <Section id="ingest" title="Ingest Memories">
@@ -724,7 +728,7 @@ curl {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}} \
               items={[
                 ["memory_retrieve", "Agent asks MemoryOps for relevant context before answering or changing code."],
                 ["memory_store", "Agent stores durable observations with optional tags, importance, and scope."],
-                ["Scope", "Pass agent_id, user_id, and repo when the memory should not apply globally."],
+                ["Scope", "Pass agent_id for agent-private memory, user_id for user-private memory, and repo only when the memory should apply to one repository. Retrieval combines those scoped layers with master workspace memory unless include_master_memory is false."],
                 ["Safety", "Do not store secrets, transient scratchpad content, or one-off task state as durable memory."],
               ]}
             />

@@ -9,7 +9,7 @@ use chrono::{DateTime, Duration, Utc};
 use common::{
     auth::AuthContext,
     error::AppResult,
-    models::{Entity, MemoryUnit, ScopeVisibility, Source},
+    models::{Entity, MemoryUnit, Source},
     telemetry::{RETRIEVAL_REQUESTS, TOKEN_PACK_BUDGET_USED},
     tokens::estimate_tokens,
     AppError, AppState,
@@ -184,7 +184,7 @@ pub(crate) async fn execute_retrieve(
         limit: Some(MAX_LIMIT),
         offset: None,
         filters: None,
-        scope: if request.include_master_memory { None } else { scope_filter.clone() },
+        scope: scope_filter.clone(),
         agent_id: None,
         user_id: None,
         repo: None,
@@ -343,18 +343,7 @@ fn retrieve_scope_matches(
     requested_scope: &ScopeFilter,
     workspace_pool: &WorkspacePoolAccess,
 ) -> bool {
-    if workspace_pool.include_master_memory && is_master_workspace_memory(unit) {
-        return true;
-    }
-
     store::scope_matches_workspace_pool(unit, requested_scope, workspace_pool)
-}
-
-fn is_master_workspace_memory(unit: &MemoryUnit) -> bool {
-    unit.scope_visibility == ScopeVisibility::Workspace
-        && unit.scope.agent_id.is_none()
-        && unit.scope.user_id.is_none()
-        && unit.scope.repo.is_none()
 }
 
 struct PackedResult {
