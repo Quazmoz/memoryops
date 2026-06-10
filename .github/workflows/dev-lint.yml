@@ -2,18 +2,10 @@ name: Dev Lint
 
 # Lightweight validation for development and staging branches.
 # Runs only format + frontend build – no integration tests or coverage.
-# Full CI (Rust tests, coverage, audit) is reserved for the main branch via ci.yml.
+# Manually trigger from the GitHub Actions tab when needed.
 
 on:
-  push:
-    branches:
-      - development
-      - staging
-      - "dev/**"
-      - "feat/**"
-  pull_request:
-    branches-ignore:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
