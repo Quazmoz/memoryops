@@ -109,9 +109,9 @@ pub async fn run(
     request.apply_workspace_config(&workspace_config);
 
     let results = match mode {
-        SearchMode::Vector => vector::vector_search_results_with_config(state, &request, limit, &workspace_config).await?,
+        SearchMode::Vector => vector::vector_search_results(state, &request, limit).await?,
         SearchMode::Keyword => keyword::keyword_search(state, &request, limit).await?,
-        SearchMode::Hybrid => hybrid::hybrid_search_with_config(state, &request, limit, &workspace_config).await?,
+        SearchMode::Hybrid => hybrid::hybrid_search(state, &request, limit).await?,
     };
 
     Ok(results
