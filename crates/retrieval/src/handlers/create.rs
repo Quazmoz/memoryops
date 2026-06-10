@@ -4,7 +4,12 @@ use axum::{
     extract::{Query, State},
     Extension, Json,
 };
-use common::{auth::AuthContext, error::AppResult, models::MemoryType, AppError, AppState};
+use common::{
+    auth::AuthContext,
+    error::AppResult,
+    models::{MemoryType, ScopeVisibility},
+    AppError, AppState,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -24,6 +29,7 @@ pub struct CreateMemoryRequest {
     pub agent_id: Option<String>,
     pub user_id: Option<String>,
     pub repo: Option<String>,
+    pub scope_visibility: Option<ScopeVisibility>,
     // Accepted but not stored — kept for seed script compatibility
     pub metadata: Option<serde_json::Value>,
 }
@@ -40,6 +46,7 @@ fn default_importance() -> f32 {
 pub struct CreateMemoryResponse {
     pub memory_id: Uuid,
     pub id: Uuid,
+    pub scope_visibility: ScopeVisibility,
 }
 
 #[axum::debug_handler]
@@ -65,21 +72,27 @@ pub async fn handle_create(
     let workspace_id = resolve_workspace_id(auth_context, supplied)?;
 
     let id = Uuid::now_v7();
+    let agent_id = normalize_scope_value(req.agent_id);
+    let user_id = normalize_scope_value(req.user_id);
+    let repo = normalize_scope_value(req.repo);
+    let scope_visibility = req
+        .scope_visibility
+        .unwrap_or_else(|| default_scope_visibility(agent_id.as_ref(), user_id.as_ref(), repo.as_ref()));
     let scope = json!({
         "workspace_id": workspace_id,
-        "agent_id": req.agent_id,
-        "user_id": req.user_id,
-        "repo": req.repo,
+        "agent_id": agent_id,
+        "user_id": user_id,
+        "repo": repo,
     });
 
     sqlx::query_scalar::<_, Uuid>(
         r#"
         INSERT INTO memory_units (
-            id, workspace_id, scope, memory_type,
+            id, workspace_id, scope, memory_type, scope_visibility,
             content, entities, importance_score,
             source_events, embedding_id, token_count, tags
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, NULL, $10)
         RETURNING id
         "#,
     )
@@ -87,6 +100,7 @@ pub async fn handle_create(
     .bind(workspace_id)
     .bind(scope)
     .bind(req.memory_type)
+    .bind(scope_visibility)
     .bind(&req.content)
     .bind(json!([]))
     .bind(req.importance_score)
@@ -109,5 +123,27 @@ pub async fn handle_create(
         }
     }
 
-    Ok(Json(CreateMemoryResponse { memory_id: id, id }))
+    Ok(Json(CreateMemoryResponse {
+        memory_id: id,
+        id,
+        scope_visibility,
+    }))
+}
+
+fn normalize_scope_value(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn default_scope_visibility(
+    agent_id: Option<&String>,
+    user_id: Option<&String>,
+    repo: Option<&String>,
+) -> ScopeVisibility {
+    if agent_id.is_none() && user_id.is_none() && repo.is_none() {
+        ScopeVisibility::Workspace
+    } else {
+        ScopeVisibility::Private
+    }
 }
