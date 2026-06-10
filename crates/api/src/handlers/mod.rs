@@ -7,6 +7,8 @@ pub mod audit;
 pub mod compliance;
 pub mod contradictions;
 pub mod export;
+pub mod integration_dlq;
+pub mod integration_sync;
 pub mod integrations;
 pub mod keys;
 pub mod metrics;
