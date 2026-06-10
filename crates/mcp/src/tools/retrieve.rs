@@ -123,7 +123,7 @@ pub async fn run(
         .load(workspace_id)
         .await?;
     request.apply_workspace_config(&workspace_config);
-    let results = hybrid::hybrid_search_with_config(state, &request, limit, &workspace_config).await?;
+    let results = hybrid::hybrid_search(state, &request, limit).await?;
     let min_score = input.min_score.max(0.0);
     let token_budget = state.config.retrieval.default_token_budget;
 
