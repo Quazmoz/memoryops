@@ -331,8 +331,10 @@ mod tests {
 
     #[test]
     fn normalize_github_repo_accepts_owner_name() {
-        let repo = normalize_github_repo(Some("Quazmoz/memoryops"));
-        assert_eq!(repo.as_deref(), Ok("Quazmoz/memoryops"));
+        match normalize_github_repo(Some("Quazmoz/memoryops")) {
+            Ok(repo) => assert_eq!(repo, "Quazmoz/memoryops"),
+            Err(error) => panic!("repo should normalize: {error}"),
+        }
     }
 
     #[test]
