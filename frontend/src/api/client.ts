@@ -83,18 +83,25 @@ export function queryString(params: Record<string, string | number | boolean | n
 }
 
 export function extractDetail(payload: unknown, fallback: string): string {
-  if (typeof payload === "string" && payload.trim().length > 0) {
-    return payload;
-  }
-
-  if (isRecord(payload)) {
-    const detail = payload.detail ?? payload.error ?? payload.message;
-    if (typeof detail === "string" && detail.trim().length > 0) {
+  if (typeof payload === "string") {
+    const detail = payload.trim();
+    if (detail.length > 0) {
       return detail;
     }
   }
 
-  return fallback || "Request failed";
+  if (isRecord(payload)) {
+    const detail = payload.detail ?? payload.error ?? payload.message;
+    if (typeof detail === "string") {
+      const trimmedDetail = detail.trim();
+      if (trimmedDetail.length > 0) {
+        return trimmedDetail;
+      }
+    }
+  }
+
+  const trimmedFallback = fallback.trim();
+  return trimmedFallback || "Request failed";
 }
 
 export async function parseResponse(response: Response): Promise<unknown> {
