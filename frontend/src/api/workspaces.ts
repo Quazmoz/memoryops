@@ -286,7 +286,12 @@ function numberConfig(value: JsonValue | undefined): number | undefined {
 }
 
 function stringConfig(value: JsonValue | undefined): string | undefined {
-  return typeof value === "string" ? value : undefined;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function booleanConfig(value: JsonValue | undefined): boolean | undefined {
@@ -298,5 +303,6 @@ function stringArrayConfig(value: JsonValue | undefined): string[] | undefined {
     return undefined;
   }
 
-  return value as string[];
+  const normalized = value.map((item) => item.trim()).filter((item) => item.length > 0);
+  return Array.from(new Set(normalized));
 }
