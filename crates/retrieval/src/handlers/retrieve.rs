@@ -29,6 +29,10 @@ use super::{resolve_workspace_id, workspace_id_param};
 
 const DEFAULT_TRACE_TTL_DAYS: i64 = 30;
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RetrieveRequest {
     pub query: String,
@@ -43,6 +47,8 @@ pub struct RetrieveRequest {
     pub as_of: Option<DateTime<Utc>>,
     #[serde(default)]
     pub include_workspace_pool: bool,
+    #[serde(default = "default_true")]
+    pub include_master_memory: bool,
 }
 
 impl RetrieveRequest {
@@ -185,6 +191,7 @@ pub(crate) async fn execute_retrieve(
         memory_types: None,
         as_of: request.as_of,
         include_workspace_pool: request.include_workspace_pool,
+        include_master_memory: request.include_master_memory,
         inherited_workspace_pool_agent_ids: Vec::new(),
     };
     search_request.apply_workspace_config(&config);
