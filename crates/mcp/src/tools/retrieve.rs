@@ -104,6 +104,7 @@ pub async fn run(
         memory_types: None,
         as_of: None,
         include_workspace_pool: input.include_workspace_pool,
+        include_master_memory: true,
         inherited_workspace_pool_agent_ids: Vec::new(),
     };
     let workspace_config = WorkspaceConfigService::new(state.db.clone())
@@ -178,7 +179,7 @@ struct ToolRow {
     endpoint_url: String,
     http_method: String,
     input_schema: serde_json::Value,
-    output_schema: serde_json::Value,
+    output_schema: Option<serde_json::Value>,
     version: i32,
 }
 
@@ -196,44 +197,29 @@ impl From<ToolRow> for ToolToolResult {
     }
 }
 
-pub fn pack_results(
-    results: Vec<retrieval::MemoryResult>,
+pub(crate) fn pack_results(
+    results: Vec<retrieval::dto::MemoryResult>,
     min_score: f32,
     token_budget: usize,
-    limit: usize,
+    max_items: usize,
 ) -> Vec<MemoryToolResult> {
+    let mut memories = Vec::new();
     let mut total_tokens = 0_usize;
-    let mut packed = Vec::new();
-
     for result in results {
         if result.score < min_score {
             continue;
         }
-
-        let estimated_tokens = result
-            .memory
-            .token_count
-            .and_then(|tokens| usize::try_from(tokens).ok())
-            .unwrap_or_else(|| estimate_tokens_lossy(&result.memory.content));
-        if total_tokens.saturating_add(estimated_tokens) > token_budget {
+        let tokens = result.memory.token_count.unwrap_or(0).max(0) as usize;
+        if token_budget > 0 && total_tokens.saturating_add(tokens) > token_budget {
             continue;
         }
-
-        total_tokens += estimated_tokens;
-        packed.push(MemoryToolResult::from_memory_result(result));
-        if packed.len() >= limit {
+        total_tokens = total_tokens.saturating_add(tokens);
+        memories.push(MemoryToolResult::from_memory_result(result));
+        if memories.len() >= max_items {
             break;
         }
     }
-
-    packed
-}
-
-fn estimate_tokens_lossy(content: &str) -> usize {
-    common::tokens::estimate_tokens(content).unwrap_or_else(|error| {
-        tracing::warn!(error = ?error, "failed to estimate tokens with shared tokenizer; using byte heuristic");
-        (content.len() / 4).max(1)
-    })
+    memories
 }
 
 fn default_limit() -> u32 {
