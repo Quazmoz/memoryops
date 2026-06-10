@@ -45,12 +45,16 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
 
   // Fix #1 — collapsible "Already have a workspace?" section
   const [connectOpen, setConnectOpen] = useState(false);
+  const normalizedConnectApiKey = connectApiKey.trim();
+  const normalizedConnectWorkspaceId = connectWorkspaceId.trim();
 
   // Workspace discovery query — fires only when key looks valid
   const workspacesQuery = useQuery({
-    queryKey: ["workspaces", connectApiKey],
-    queryFn: () => listWorkspaces(connectApiKey),
-    enabled: connectApiKey.startsWith("mops_") && connectApiKey.length > 20,
+    queryKey: ["workspaces", normalizedConnectApiKey],
+    queryFn: () => listWorkspaces(normalizedConnectApiKey),
+    enabled:
+      normalizedConnectApiKey.startsWith("mops_") &&
+      normalizedConnectApiKey.length > 20,
     staleTime: 30_000,
     retry: false,
   });
@@ -122,7 +126,7 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
 
   function finishSetup() {
     if (workspaceId.trim().length > 0 && plaintextKey.trim().length > 0) {
-      setWorkspace(workspaceId, plaintextKey);
+      setWorkspace(workspaceId, plaintextKey.trim());
     }
   }
 
@@ -266,6 +270,7 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
                         type="button"
                         variant="secondary"
                         data-testid="existing-key-submit"
+                        disabled={existingKey.trim().length === 0}
                         onClick={() => {
                           const val = existingKey.trim();
                           if (val) setWorkspace(workspaceId, val);
@@ -422,11 +427,14 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
                   type="button"
                   data-testid="connect-button"
                   variant="secondary"
-                  disabled={!connectWorkspaceId || !connectApiKey}
+                  disabled={
+                    normalizedConnectWorkspaceId.length === 0 ||
+                    normalizedConnectApiKey.length === 0
+                  }
                   onClick={() => {
-                    const wsId = connectWorkspaceId.trim();
-                    const key = connectApiKey.trim();
-                    if (wsId && key) setWorkspace(wsId, key);
+                    if (normalizedConnectWorkspaceId && normalizedConnectApiKey) {
+                      setWorkspace(normalizedConnectWorkspaceId, normalizedConnectApiKey);
+                    }
                   }}
                 >
                   Connect
