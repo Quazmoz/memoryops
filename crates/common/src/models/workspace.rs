@@ -38,6 +38,10 @@ pub struct WorkspaceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_api_key_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decay_half_life_days: Option<u32>,
@@ -81,6 +85,8 @@ impl Default for WorkspaceConfig {
             llm_provider: None,
             embedding_provider: None,
             llm_model: None,
+            llm_base_url: None,
+            llm_api_key_env: None,
             embedding_model: None,
             decay_half_life_days: None,
             pruning_threshold: None,
@@ -187,6 +193,8 @@ mod tests {
             decay_half_life_days: Some(14),
             pruning_threshold: Some(0.05),
             llm_model: Some("llama3".to_owned()),
+            llm_base_url: Some("https://llm.internal/v1".to_owned()),
+            llm_api_key_env: Some("CUSTOM_LLM_API_KEY".to_owned()),
             embedding_model: Some("BAAI/bge-small-en-v1.5".to_owned()),
             ..WorkspaceConfig::default()
         };
@@ -213,6 +221,14 @@ mod tests {
         assert_eq!(decoded.pruning_threshold, Some(0.05));
         assert_eq!(decoded.llm_model, Some("llama3".to_owned()));
         assert_eq!(
+            decoded.llm_base_url,
+            Some("https://llm.internal/v1".to_owned())
+        );
+        assert_eq!(
+            decoded.llm_api_key_env,
+            Some("CUSTOM_LLM_API_KEY".to_owned())
+        );
+        assert_eq!(
             decoded.embedding_model,
             Some("BAAI/bge-small-en-v1.5".to_owned())
         );
@@ -227,6 +243,8 @@ mod tests {
 
         assert_eq!(decoded.decay_half_life_days, None);
         assert_eq!(decoded.pruning_threshold, None);
+        assert_eq!(decoded.llm_base_url, None);
+        assert_eq!(decoded.llm_api_key_env, None);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import { Activity, BookOpen, Bot, Database, GitBranch, Home, KeyRound, PlugZap, ScrollText, Settings, ShieldAlert, Send, Wrench } from "lucide-react";
 import type { ComponentType, ReactNode, SVGProps } from "react";
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 
 import { cn } from "../../lib/utils";
 
@@ -27,7 +27,12 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <div className="min-h-screen bg-soft text-ink lg:grid lg:grid-cols-[260px_1fr]">
       <aside className="border-b border-line bg-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col lg:border-b-0 lg:border-r">
-        <div className="flex items-center gap-3 border-b border-line px-5 py-4">
+        <Link
+          to="/"
+          data-testid="nav-brand-home"
+          aria-label="Go to dashboard"
+          className="flex items-center gap-3 border-b border-line px-5 py-4 transition hover:bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+        >
           <div className="grid h-10 w-10 place-items-center rounded-lg bg-accent text-white">
             <KeyRound className="h-5 w-5" aria-hidden="true" />
           </div>
@@ -35,7 +40,7 @@ export function AppShell({ children }: AppShellProps) {
             <p className="text-sm font-semibold">MemoryOps</p>
             <p className="text-xs text-ink/55">Control Center</p>
           </div>
-        </div>
+        </Link>
 
         <nav className="flex gap-2 overflow-x-auto px-3 py-3 lg:flex-1 lg:flex-col lg:gap-1 lg:overflow-visible" aria-label="Primary">
           {primaryLinks.map((link) => (
