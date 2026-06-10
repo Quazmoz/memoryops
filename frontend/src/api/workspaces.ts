@@ -303,6 +303,7 @@ function stringArrayConfig(value: JsonValue | undefined): string[] | undefined {
     return undefined;
   }
 
-  const normalized = value.map((item) => item.trim()).filter((item) => item.length > 0);
+  const strings = value as string[];
+  const normalized = strings.map((item) => item.trim()).filter((item) => item.length > 0);
   return Array.from(new Set(normalized));
 }
