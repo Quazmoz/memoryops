@@ -106,7 +106,9 @@ pub fn build_llm_provider_for_workspace(
 fn ensure_workspace_compatible_llm_config(config: &mut AppConfig) {
     if matches!(
         config.llm.provider,
-        LlmProviderKind::OpenaiCompatible | LlmProviderKind::Openrouter | LlmProviderKind::Huggingface
+        LlmProviderKind::OpenaiCompatible
+            | LlmProviderKind::Openrouter
+            | LlmProviderKind::Huggingface
     ) && config.llm.openai_compatible.is_none()
     {
         config.llm.openai_compatible = Some(OpenAiCompatibleConfig {
