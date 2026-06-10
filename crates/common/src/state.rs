@@ -280,11 +280,11 @@ pub fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
             let api_key = compat.and_then(|cfg| cfg.resolve_api_key());
             let headers = compat.map(|cfg| cfg.headers.clone()).unwrap_or_default();
             let configured_base_url = config.llm.base_url.as_deref().unwrap_or("");
-            let base_url = configured_base_url
-                .trim()
-                .is_empty()
-                .then(|| default_openai_compatible_base_url(config.llm.provider).to_owned())
-                .unwrap_or_else(|| configured_base_url.to_owned());
+            let base_url = if configured_base_url.trim().is_empty() {
+                default_openai_compatible_base_url(&config.llm.provider).to_owned()
+            } else {
+                configured_base_url.to_owned()
+            };
             Arc::new(OpenAiCompatibleProvider::new(
                 base_url,
                 &config.llm.model,
@@ -321,7 +321,7 @@ pub fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
     }
 }
 
-fn default_openai_compatible_base_url(provider: LlmProviderKind) -> &'static str {
+fn default_openai_compatible_base_url(provider: &LlmProviderKind) -> &'static str {
     match provider {
         LlmProviderKind::OpenaiCompatible => DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
         LlmProviderKind::Openrouter => DEFAULT_OPENROUTER_BASE_URL,

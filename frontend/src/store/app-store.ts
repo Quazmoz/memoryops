@@ -7,6 +7,7 @@ type AppStore = {
   setWorkspaceId: (workspaceId: string) => void;
   setApiKey: (apiKey: string) => void;
   clearApiKey: () => void;
+  clearWorkspace: () => void;
 };
 
 const initialWorkspaceId = (import.meta.env.VITE_MEMORYOPS_WORKSPACE_ID ?? "").trim();
@@ -22,6 +23,7 @@ export const useAppStore = create<AppStore>((set) => ({
   setWorkspaceId: (workspaceId) => set({ workspaceId: workspaceId.trim() }),
   setApiKey: (apiKey) => set({ apiKey: apiKey.trim() }),
   clearApiKey: () => set({ apiKey: "" }),
+  clearWorkspace: () => set({ workspaceId: "", apiKey: "" }),
 }));
 
 /**

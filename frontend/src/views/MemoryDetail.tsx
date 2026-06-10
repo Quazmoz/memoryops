@@ -2,18 +2,19 @@ import { ArrowLeft, Check, Clock3, Database, GitCommit, GitMerge, Plus, Save, Sh
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
-import type { MemoryScope, MemoryUnit, ProvenanceGraph, ProvenanceNode } from "../api/types";
+import type { MemoryScope, MemoryUnit, MemoryVersion, ProvenanceGraph, ProvenanceNode } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EntityChip } from "../components/EntityChip";
 import { FeedbackPanel } from "../components/FeedbackPanel";
 import { InlineError } from "../components/InlineError";
+import { MemoryLifecycleActions } from "../components/MemoryLifecycleActions";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
 import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
-import { useMemoryDetail, useMemoryProvenance, usePublishMemory, useUpdateMemory } from "../hooks/use-memory";
+import { useMemoryDetail, useMemoryHistory, useMemoryProvenance, usePublishMemory, useUpdateMemory } from "../hooks/use-memory";
 import { formatCount, formatDateTime, formatRelativeTime, formatScore } from "../lib/format";
 import { validateImportanceScore } from "../lib/validation";
 import { useAppStore } from "../store/app-store";
@@ -26,6 +27,7 @@ export function MemoryDetail() {
   const provenanceQuery = useMemoryProvenance(workspaceId, id);
   const updateMemory = useUpdateMemory(workspaceId);
   const publishMemory = usePublishMemory(workspaceId);
+  const historyQuery = useMemoryHistory(workspaceId, id);
   const memory = memoryQuery.data;
   const scope = useMemo(() => normalizeScope(memory, workspaceId), [memory, workspaceId]);
   const [draftTags, setDraftTags] = useState<string[]>([]);
@@ -142,7 +144,8 @@ export function MemoryDetail() {
               </div>
               <h1 className="mt-3 text-2xl font-semibold tracking-normal text-ink">Memory Detail</h1>
             </div>
-            <div className="flex flex-wrap justify-end gap-2">
+            <div className="grid gap-2 justify-items-end">
+              <div className="flex flex-wrap justify-end gap-2">
               {memory.memory_type === "semantic" && memory.scope_visibility === "private" ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -163,6 +166,8 @@ export function MemoryDetail() {
                 </TooltipTrigger>
                 <TooltipContent>{memory.pinned ? "Pinned memories stay protected from normal decay and pruning." : "Protect this memory from normal decay and pruning."}</TooltipContent>
               </Tooltip>
+              </div>
+              <MemoryLifecycleActions workspaceId={workspaceId} memory={memory} />
             </div>
           </header>
 
@@ -332,15 +337,27 @@ export function MemoryDetail() {
           </section>
 
           <section className="grid gap-4 xl:grid-cols-2">
-            <Card>
+            <Card data-testid="version-history-panel">
               <CardHeader>
                 <CardTitle className="flex items-center gap-1.5">
                   <span>Version History</span>
-                  <HelpTooltip label="Version History">Future operator view for how this memory changed across edits, merges, and overrides.</HelpTooltip>
+                  <HelpTooltip label="Version History">How this memory changed across edits, merges, and overrides. Versions are recorded for semantic memories.</HelpTooltip>
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <EmptyState title="Version History" message="Available in M6" />
+                {historyQuery.isLoading ? <Skeleton className="h-32 w-full" /> : null}
+                {historyQuery.isError ? <InlineError title="Version history unavailable" message={errorMessage(historyQuery.error)} /> : null}
+                {historyQuery.data && historyQuery.data.length > 0 ? (
+                  <VersionTimeline versions={historyQuery.data} />
+                ) : null}
+                {historyQuery.data && historyQuery.data.length === 0 ? (
+                  <EmptyState
+                    title="No versions recorded"
+                    message={memory.memory_type === "semantic"
+                      ? "Version snapshots will appear here when this semantic memory is edited or merged."
+                      : "Episodic memories are immutable; version history starts after promotion to semantic memory."}
+                  />
+                ) : null}
               </CardContent>
             </Card>
             <Card>
@@ -358,6 +375,33 @@ export function MemoryDetail() {
         </>
       ) : null}
     </div>
+  );
+}
+
+function VersionTimeline({ versions }: { versions: MemoryVersion[] }) {
+  const ordered = [...versions].sort((left, right) => right.version - left.version);
+
+  return (
+    <ol className="grid gap-2" data-testid="version-timeline">
+      {ordered.map((version) => (
+        <li key={version.id} className="grid gap-1 rounded-md border border-line bg-soft p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="accent">v{version.version}</Badge>
+            <span className="text-xs text-ink/55">{formatDateTime(version.created_at)}</span>
+            <span className="text-xs text-ink/55">by {version.edited_by}</span>
+            <span className="ml-auto font-mono text-xs text-ink/65">importance {formatScore(version.importance_score)}</span>
+          </div>
+          <p className="text-sm leading-5 text-ink/80">{version.content}</p>
+          {version.tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {version.tags.map((tag) => (
+                <Badge key={tag} variant="gray">{tag}</Badge>
+              ))}
+            </div>
+          ) : null}
+        </li>
+      ))}
+    </ol>
   );
 }
 

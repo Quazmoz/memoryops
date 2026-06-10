@@ -1474,6 +1474,7 @@ fn nonnegative_i64_to_u64(value: i64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use serde_json::json;
 
     use super::*;

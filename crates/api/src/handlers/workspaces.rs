@@ -239,13 +239,48 @@ pub async fn get_current_workspace(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> AppResult<Json<Workspace>> {
-    // TODO: if/when multi-workspace accounts are introduced, add a dedicated list endpoint.
     let workspace = get_workspace_by_id(&state, auth.workspace_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             resource: format!("workspace:{}", auth.workspace_id),
         })?;
     Ok(Json(workspace))
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceListResponse {
+    pub workspaces: Vec<WorkspaceListItem>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct WorkspaceListItem {
+    pub id: Uuid,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// API keys are scoped to a single workspace today, so the list contains
+/// exactly the caller's workspace; the response shape is forward-compatible
+/// with future multi-workspace accounts.
+#[axum::debug_handler]
+pub async fn list_workspaces(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+) -> AppResult<Json<WorkspaceListResponse>> {
+    let workspaces = sqlx::query_as::<_, WorkspaceListItem>(
+        r#"
+        SELECT id, name, created_at
+        FROM workspaces
+        WHERE id = $1 AND deleted_at IS NULL
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(auth.workspace_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(Json(WorkspaceListResponse { workspaces }))
 }
 
 pub async fn get_workspace(

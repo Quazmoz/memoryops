@@ -11,7 +11,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
-import { useMemoryList, useMemorySearch, useUpdateMemory, useBulkMemory } from "../hooks/use-memory";
+import { useMemoryList, useMemorySearch, useMergeMemories, useUpdateMemory, useBulkMemory } from "../hooks/use-memory";
 import { useTags } from "../hooks/useTags";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
@@ -61,6 +61,8 @@ export function MemoryExplorer() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [isMergeDialogOpen, setIsMergeDialogOpen] = useState(false);
+  const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedIds([]);
@@ -126,6 +128,7 @@ export function MemoryExplorer() {
   const tagsQuery = useTags(workspaceId);
   const updateMemory = useUpdateMemory(workspaceId);
   const bulkMemoryMutation = useBulkMemory(workspaceId);
+  const mergeMutation = useMergeMemories(workspaceId);
   const searchActive = searchText.trim().length > 0;
   const rows = useMemo(
     () => buildRows(searchActive, searchQuery.data?.results, listQuery.data?.items, sortField, sortDirection),
@@ -274,6 +277,29 @@ export function MemoryExplorer() {
           setSelectedIds([]);
         },
       }
+    );
+  }
+
+  function openMergeDialog() {
+    if (selectedIds.length !== 2) return;
+    setMergeTargetId(selectedIds[0] ?? null);
+    setIsMergeDialogOpen(true);
+  }
+
+  function confirmMerge() {
+    if (selectedIds.length !== 2 || !mergeTargetId) return;
+    const sourceId = selectedIds.find((id) => id !== mergeTargetId);
+    if (!sourceId) return;
+
+    mergeMutation.mutate(
+      { source_id: sourceId, target_id: mergeTargetId },
+      {
+        onSuccess: () => {
+          setSelectedIds([]);
+          setIsMergeDialogOpen(false);
+          setMergeTargetId(null);
+        },
+      },
     );
   }
 
@@ -566,6 +592,25 @@ export function MemoryExplorer() {
             >
               Unpin
             </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="bulk-merge-button"
+                  disabled={selectedIds.length !== 2 || bulkMemoryMutation.isPending || mergeMutation.isPending}
+                  onClick={openMergeDialog}
+                >
+                  Merge
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {selectedIds.length === 2
+                  ? "Merge the two selected memories into one."
+                  : "Select exactly two memories to merge them."}
+              </TooltipContent>
+            </Tooltip>
             <Button
               type="button"
               variant="destructive"
@@ -602,6 +647,78 @@ export function MemoryExplorer() {
           onToggleSelectAllVisible={handleToggleSelectAllVisible}
         />
       ) : null}
+
+      {isMergeDialogOpen && selectedIds.length === 2 && (
+        <div
+          data-testid="merge-dialog"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+        >
+          <div className="w-full max-w-lg rounded-lg border border-line bg-white p-6 shadow-xl animate-in fade-in-50 zoom-in-95 duration-200">
+            <h2 className="text-lg font-semibold text-ink">Merge memories</h2>
+            <p className="mt-2 text-sm text-ink/75">
+              Choose which memory survives. The other memory's content, sources, and tags are folded into it and the
+              source memory is soft-deleted.
+            </p>
+            <div className="mt-4 grid gap-2">
+              {selectedIds.map((id) => {
+                const row = rows.find((candidate) => candidate.id === id);
+                return (
+                  <label
+                    key={id}
+                    className={cn(
+                      "flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition",
+                      mergeTargetId === id ? "border-accent bg-accent/10" : "border-line bg-white hover:bg-soft",
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="merge-target"
+                      data-testid={`merge-target-${id}`}
+                      className="mt-0.5 accent-accent"
+                      checked={mergeTargetId === id}
+                      onChange={() => setMergeTargetId(id)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block font-medium text-ink">
+                        {mergeTargetId === id ? "Keep (target)" : "Merge in (source)"}
+                      </span>
+                      <span className="mt-0.5 block truncate text-ink/70">{row?.content ?? id}</span>
+                      <span className="mt-0.5 block font-mono text-xs text-ink/45">{id}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            {mergeMutation.isError ? (
+              <div className="mt-3">
+                <InlineError title="Merge failed" message={errorMessage(mergeMutation.error)} />
+              </div>
+            ) : null}
+            <div className="mt-6 flex justify-end gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                data-testid="cancel-merge-button"
+                disabled={mergeMutation.isPending}
+                onClick={() => {
+                  setIsMergeDialogOpen(false);
+                  setMergeTargetId(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                data-testid="confirm-merge-button"
+                disabled={!mergeTargetId || mergeMutation.isPending}
+                onClick={confirmMerge}
+              >
+                {mergeMutation.isPending ? "Merging..." : "Merge"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isDeleteConfirmOpen && (
         <div

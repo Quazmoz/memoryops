@@ -176,8 +176,8 @@ export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[
 
   const headers = requestHeaders({}, false);
   headers.set("x-api-key", trimmedApiKey);
-  const response = await fetch(apiUrl(resolveOperationPath("getCurrentWorkspace", {})), {
-    method: operationMethod("getCurrentWorkspace").toUpperCase(),
+  const response = await fetch(apiUrl(resolveOperationPath("listWorkspaces", {})), {
+    method: operationMethod("listWorkspaces").toUpperCase(),
     headers,
   });
   const payload = await parseResponse(response);
@@ -186,13 +186,24 @@ export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[
     throw new ApiError(response.status, extractDetail(payload, response.statusText));
   }
 
-  const listed = (payload as WorkspaceListResponse).workspaces;
+  return normalizeWorkspaceList(payload);
+}
+
+/**
+ * Normalizes both the `{ workspaces: [...] }` list shape and the legacy
+ * single-workspace object shape returned by older backends.
+ */
+export function normalizeWorkspaceList(payload: unknown): WorkspaceListItem[] {
+  const listed = (payload as WorkspaceListResponse | null)?.workspaces;
   if (Array.isArray(listed)) {
-    return listed;
+    return listed.filter(
+      (workspace): workspace is WorkspaceListItem =>
+        typeof workspace?.id === "string" && typeof workspace?.name === "string",
+    );
   }
 
-  const single = payload as Partial<WorkspaceListItem>;
-  if (typeof single.id === "string" && typeof single.name === "string") {
+  const single = payload as Partial<WorkspaceListItem> | null;
+  if (single && typeof single.id === "string" && typeof single.name === "string") {
     return [
       {
         id: single.id,
@@ -203,6 +214,20 @@ export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[
   }
 
   return [];
+}
+
+export type DeleteWorkspaceResponse = {
+  deleted: boolean;
+};
+
+export async function deleteWorkspace(workspaceId: string): Promise<DeleteWorkspaceResponse> {
+  const response = await apiContractRequest<DeleteWorkspaceResponse | null>("deleteWorkspace", {
+    path: resolveOperationPath("deleteWorkspace", { id: workspaceId }),
+  });
+
+  // The backend currently returns `{ "deleted": true }`; tolerate an empty
+  // 204-style body as well since the OpenAPI contract documents 204.
+  return { deleted: response?.deleted ?? true };
 }
 
 export interface ReindexResponse {

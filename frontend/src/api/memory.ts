@@ -6,6 +6,8 @@ import type {
   MemoryType,
   MemoryTypeFilter,
   MemoryUnit,
+  MemoryVersion,
+  MergeMemoryRequest,
   ProvenanceGraph,
   ReadinessResponse,
   RetrieveRequest,
@@ -143,9 +145,40 @@ export function patchMemory(workspaceId: string, id: string, patch: UpdateMemory
 }
 
 export function publishMemory(workspaceId: string, id: string): Promise<MemoryUnit> {
-  return apiRequest<MemoryUnit>(`/v1/memory/${id}/publish${queryString({ workspace_id: workspaceId })}`, {
+  return apiRequest<MemoryUnit>(`/v1/memory/${encodeURIComponent(id)}/publish${queryString({ workspace_id: workspaceId })}`, {
     method: "POST",
   });
+}
+
+export function deleteMemory(workspaceId: string, id: string): Promise<MemoryUnit> {
+  return apiRequest<MemoryUnit>(`/v1/memory/${encodeURIComponent(id)}${queryString({ workspace_id: workspaceId })}`, {
+    method: "DELETE",
+  });
+}
+
+export function restoreMemory(workspaceId: string, id: string): Promise<MemoryUnit> {
+  return apiRequest<MemoryUnit>(`/v1/memory/${encodeURIComponent(id)}/restore${queryString({ workspace_id: workspaceId })}`, {
+    method: "POST",
+  });
+}
+
+export function promoteMemory(workspaceId: string, id: string): Promise<MemoryUnit> {
+  return apiRequest<MemoryUnit>(`/v1/memory/${encodeURIComponent(id)}/promote${queryString({ workspace_id: workspaceId })}`, {
+    method: "POST",
+  });
+}
+
+export function mergeMemories(workspaceId: string, request: MergeMemoryRequest): Promise<MemoryUnit> {
+  return apiRequest<MemoryUnit>(`/v1/memory/merge${queryString({ workspace_id: workspaceId })}`, {
+    method: "POST",
+    body: request,
+  });
+}
+
+export function getMemoryHistory(workspaceId: string, id: string): Promise<MemoryVersion[]> {
+  return apiRequest<MemoryVersion[]>(
+    `/v1/memory/${encodeURIComponent(id)}/history${queryString({ workspace_id: workspaceId })}`,
+  );
 }
 
 export function searchMemory(request: SearchRequest): Promise<SearchResponse> {

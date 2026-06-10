@@ -23,6 +23,9 @@ pub fn bootstrap_router() -> Router<AppState> {
 
 pub fn protected_router() -> Router<AppState> {
     Router::new()
+        // GET only: POST /v1/workspaces stays in bootstrap_router (admin-token
+        // auth). Axum merges the two method routers for the shared path.
+        .route("/v1/workspaces", get(workspaces::list_workspaces))
         .route("/v1/workspaces/me", get(workspaces::get_current_workspace))
         .route(
             "/v1/workspaces/{id}",

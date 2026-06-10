@@ -407,6 +407,23 @@ export type IntegrationResponse = {
   status: IntegrationStatus;
 };
 
+export type MemoryVersion = {
+  id: string;
+  memory_id: string;
+  workspace_id: string;
+  version: number;
+  content: string;
+  importance_score: number;
+  tags: string[];
+  edited_by: string;
+  created_at: string;
+};
+
+export type MergeMemoryRequest = {
+  source_id: string;
+  target_id: string;
+};
+
 export type BulkMemoryAction = "pin" | "unpin" | "delete";
 export type BulkMemoryRequest = { ids: string[]; action: BulkMemoryAction };
 export type BulkMemoryResponse = {

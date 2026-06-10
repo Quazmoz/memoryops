@@ -301,7 +301,10 @@ impl ProcessorConfig {
             "processor.maintenance_window_hour_utc",
             self.maintenance_window_hour_utc,
         )?;
-        validate_utc_hour("processor.decay_window_hour_utc", self.decay_window_hour_utc)?;
+        validate_utc_hour(
+            "processor.decay_window_hour_utc",
+            self.decay_window_hour_utc,
+        )?;
         Ok(())
     }
 }
@@ -406,7 +409,10 @@ pub struct ScoringWeights {
 
 impl ScoringWeights {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        validate_ratio("retrieval.weights.semantic_similarity", self.semantic_similarity)?;
+        validate_ratio(
+            "retrieval.weights.semantic_similarity",
+            self.semantic_similarity,
+        )?;
         validate_ratio("retrieval.weights.importance", self.importance)?;
         validate_ratio("retrieval.weights.recency", self.recency)?;
         validate_ratio("retrieval.weights.source_authority", self.source_authority)?;

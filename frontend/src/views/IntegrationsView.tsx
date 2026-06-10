@@ -1,8 +1,19 @@
-import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Loader2, PlugZap, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Loader2, Plus, PlugZap, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useState } from "react";
+import { Fragment, useState, type FormEvent } from "react";
 
-import { discardDlqJob, listDlqJobs, listIntegrations, retryDlqJob, type DlqJob } from "../api/integrations";
+import { apiUrl } from "../api/client";
+import {
+  createIntegration,
+  deleteIntegration,
+  discardDlqJob,
+  INTEGRATION_SOURCES,
+  listDlqJobs,
+  listIntegrations,
+  retryDlqJob,
+  type DlqJob,
+  type IntegrationSource,
+} from "../api/integrations";
 import { listMemory } from "../api/memory";
 import { EmptyState } from "../components/EmptyState";
 import { InlineError } from "../components/InlineError";
@@ -14,6 +25,7 @@ import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from 
 import { formatCount, formatDateTime, formatRelativeTime, previewText } from "../lib/format";
 import { cn } from "../lib/utils";
 import { useAppStore } from "../store/app-store";
+import { Input } from "../components/ui/input";
 import type { MemoryUnit } from "../api/types";
 
 type DlqMutationContext = { previous: DlqJob[] | undefined };
@@ -84,6 +96,46 @@ export function IntegrationsView() {
   const pendingJobIds = new Set(pendingRows.map(({ job }) => job.id));
   const dlqJobs = [...pendingRows.map(({ job }) => job), ...(dlq.data ?? []).filter((job) => !pendingJobIds.has(job.id))];
   const dlqCount = dlqJobs.length;
+
+  // Add-integration form state. The secret is kept only while the form is
+  // open and never re-displayed after creation.
+  const [addSource, setAddSource] = useState<IntegrationSource>("github");
+  const [addSecret, setAddSecret] = useState("");
+  const [createdSource, setCreatedSource] = useState<IntegrationSource | null>(null);
+  const [integrationToDelete, setIntegrationToDelete] = useState<string | null>(null);
+
+  const createIntegrationMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "integrations", "create"],
+    mutationFn: (request: { source: IntegrationSource; webhook_secret: string }) =>
+      createIntegration(workspaceId, request),
+    onSuccess: (_integration, request) => {
+      setAddSecret("");
+      setCreatedSource(request.source);
+      void queryClient.invalidateQueries({ queryKey: integrationsQueryKey });
+    },
+  });
+
+  const deleteIntegrationMutation = useMutation({
+    mutationKey: ["workspace", workspaceId, "integrations", "delete"],
+    mutationFn: (source: string) => deleteIntegration(workspaceId, source),
+    onSuccess: (_data, source) => {
+      setIntegrationToDelete(null);
+      if (createdSource === source) {
+        setCreatedSource(null);
+      }
+      void queryClient.invalidateQueries({ queryKey: integrationsQueryKey });
+    },
+  });
+
+  function submitAddIntegration(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const secret = addSecret.trim();
+    if (secret.length === 0 || createIntegrationMutation.isPending) {
+      return;
+    }
+    setCreatedSource(null);
+    createIntegrationMutation.mutate({ source: addSource, webhook_secret: secret });
+  }
 
   async function removeDlqJob(jobId: string, action: PendingDlqJob["action"]): Promise<DlqMutationContext> {
     await queryClient.cancelQueries({ queryKey: dlqQueryKey });
@@ -191,6 +243,60 @@ export function IntegrationsView() {
       {activeTab === "integrations" ? (
         <>
           {integrations.isError ? <InlineError title="Integrations unavailable" message={integrations.error.message} /> : null}
+          <Card data-testid="add-integration-card">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="flex items-center gap-1.5">
+                <span>Add Integration</span>
+                <HelpTooltip label="Add Integration">Registers an ingestion source for this workspace. The webhook secret must match the secret you configure on the provider side.</HelpTooltip>
+              </CardTitle>
+              <Plus className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <form className="grid gap-3 sm:grid-cols-[10rem_1fr_auto] sm:items-end" onSubmit={submitAddIntegration}>
+                <label className="grid gap-1 text-xs font-medium uppercase text-ink/45">
+                  <InfoLabel label="Source" tooltip="External system that will send events into this workspace." />
+                  <select
+                    data-testid="add-integration-source"
+                    value={addSource}
+                    onChange={(event) => setAddSource(event.target.value as IntegrationSource)}
+                    className="h-10 rounded-md border border-line bg-white px-3 text-sm capitalize normal-case text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  >
+                    {INTEGRATION_SOURCES.map((source) => (
+                      <option key={source} value={source} className="capitalize">
+                        {source}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs font-medium uppercase text-ink/45">
+                  <InfoLabel label="Webhook secret" tooltip="Shared secret used to verify webhook signatures. Required. It is stored encrypted and never shown again." />
+                  <Input
+                    data-testid="add-integration-secret"
+                    type="password"
+                    autoComplete="off"
+                    value={addSecret}
+                    onChange={(event) => setAddSecret(event.target.value)}
+                    placeholder="Shared webhook secret"
+                    className="normal-case"
+                  />
+                </label>
+                <Button
+                  type="submit"
+                  data-testid="add-integration-submit"
+                  disabled={!authReady || addSecret.trim().length === 0 || createIntegrationMutation.isPending}
+                >
+                  {createIntegrationMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />}
+                  Add integration
+                </Button>
+              </form>
+              {createIntegrationMutation.isError ? (
+                <InlineError title="Integration could not be added" message={createIntegrationMutation.error.message} />
+              ) : null}
+              {createdSource ? (
+                <IntegrationSetupInstructions source={createdSource} workspaceId={workspaceId} onDismiss={() => setCreatedSource(null)} />
+              ) : null}
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <CardTitle className="flex items-center gap-1.5">
@@ -214,6 +320,7 @@ export function IntegrationsView() {
                         <th className="px-3 py-2 font-medium"><InfoLabel label="Last Event" tooltip="Most recent event MemoryOps saw from this integration." /></th>
                         <th className="px-3 py-2 font-medium"><InfoLabel label="Events 24h" tooltip="Events processed from this source over the last 24 hours." /></th>
                         <th className="px-3 py-2 font-medium"><InfoLabel label="Errors 24h" tooltip="Events from this source that failed processing during the last 24 hours." /></th>
+                        <th className="px-3 py-2 text-right font-medium">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -231,14 +338,70 @@ export function IntegrationsView() {
                           <td className="px-3 py-3 text-ink/70">{formatDateTime(integration.last_event_at)}</td>
                           <td className="px-3 py-3">{formatCount(integration.events_24h)}</td>
                           <td className="px-3 py-3">{formatCount(integration.errors_24h)}</td>
+                          <td className="px-3 py-3 text-right">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-ink/65 hover:bg-orange-50 hover:text-rust"
+                                  data-testid={`remove-integration-${integration.source}`}
+                                  aria-label={`Remove ${integration.source} integration`}
+                                  disabled={deleteIntegrationMutation.isPending}
+                                  onClick={() => setIntegrationToDelete(integration.source)}
+                                >
+                                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Removes this integration. The provider webhook will stop being accepted.</TooltipContent>
+                            </Tooltip>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               ) : null}
+              {deleteIntegrationMutation.isError ? (
+                <InlineError title="Integration could not be removed" message={deleteIntegrationMutation.error.message} />
+              ) : null}
             </CardContent>
           </Card>
+
+          {integrationToDelete ? (
+            <div
+              data-testid="remove-integration-dialog"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+            >
+              <div className="w-full max-w-md rounded-lg border border-line bg-white p-6 shadow-xl animate-in fade-in-50 zoom-in-95 duration-200">
+                <h2 className="text-lg font-semibold text-ink">Remove integration</h2>
+                <p className="mt-2 text-sm text-ink/75">
+                  Remove the <strong className="capitalize">{integrationToDelete}</strong> integration? Webhook deliveries from this source will be rejected until it is added again.
+                </p>
+                <div className="mt-6 flex justify-end gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    data-testid="cancel-remove-integration"
+                    disabled={deleteIntegrationMutation.isPending}
+                    onClick={() => setIntegrationToDelete(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    data-testid="confirm-remove-integration"
+                    disabled={deleteIntegrationMutation.isPending}
+                    onClick={() => deleteIntegrationMutation.mutate(integrationToDelete)}
+                  >
+                    {deleteIntegrationMutation.isPending ? "Removing..." : "Remove"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </>
       ) : null}
 
@@ -398,6 +561,73 @@ export function IntegrationsView() {
       ) : null}
     </div>
   );
+}
+
+function IntegrationSetupInstructions({
+  source,
+  workspaceId,
+  onDismiss,
+}: {
+  source: IntegrationSource;
+  workspaceId: string;
+  onDismiss: () => void;
+}) {
+  const webhookEndpoint = integrationWebhookEndpoint(source, workspaceId);
+
+  return (
+    <div
+      data-testid="integration-setup-instructions"
+      role="status"
+      className="grid gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-900"
+    >
+      <div className="flex items-center gap-2 font-semibold">
+        <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span className="capitalize">{source}</span>
+        <span className="font-normal">integration added — finish setup on the provider side:</span>
+      </div>
+      {source === "observation" ? (
+        <ol className="grid list-decimal gap-1.5 pl-5">
+          <li>
+            Agents submit observations directly to <code className="rounded bg-white px-1 py-0.5 font-mono text-xs">{webhookEndpoint}</code> using a workspace API key in the <code className="rounded bg-white px-1 py-0.5 font-mono text-xs">x-api-key</code> header.
+          </li>
+          <li>MCP clients can use the built-in <code className="rounded bg-white px-1 py-0.5 font-mono text-xs">memory_store</code> tool instead.</li>
+        </ol>
+      ) : (
+        <ol className="grid list-decimal gap-1.5 pl-5">
+          <li>
+            In your <span className="capitalize">{source}</span> webhook settings, point the webhook at
+            {" "}
+            <code className="break-all rounded bg-white px-1 py-0.5 font-mono text-xs">{webhookEndpoint}</code>
+          </li>
+          <li>Set the provider's webhook signing secret to the exact secret you entered above. Signatures are rejected when the secrets do not match.</li>
+          <li>Send a test event from the provider, then check the Last Event column below.</li>
+        </ol>
+      )}
+      <p className="text-xs text-green-800/80">
+        For security, the saved secret is not displayed again. Re-adding the integration replaces the stored secret.
+      </p>
+      <div>
+        <Button type="button" variant="secondary" size="sm" onClick={onDismiss}>
+          Dismiss
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function integrationWebhookEndpoint(source: IntegrationSource, workspaceId: string): string {
+  const path =
+    source === "observation"
+      ? "/v1/ingest/observation"
+      : `/v1/ingest/${encodeURIComponent(source)}/${encodeURIComponent(workspaceId)}`;
+  const resolved = apiUrl(path);
+  if (/^https?:\/\//i.test(resolved)) {
+    return resolved;
+  }
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return `${window.location.origin}${resolved}`;
+  }
+  return resolved;
 }
 
 type ObservationItem = MemoryUnit;

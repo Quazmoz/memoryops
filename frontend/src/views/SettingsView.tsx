@@ -6,6 +6,7 @@ import type { ApiKeySummary, ForgetUserDataResponse, ImportMemoriesResponse, Pro
 import type { HealthCheck } from "../api/health";
 import { createApiKey, exportMemories, forgetUserData, getWorkspace, importMemories, listApiKeys, revokeApiKey, triggerPromotion, triggerReindex, updateWorkspaceConfig } from "../api/workspaces";
 import { InlineError } from "../components/InlineError";
+import { WorkspaceDangerZone } from "../components/WorkspaceDangerZone";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -1159,6 +1160,12 @@ export function SettingsView() {
           </div>
         </CardContent>
       </Card>
+
+      <WorkspaceDangerZone
+        workspaceId={workspaceId}
+        workspaceName={workspaceQuery.data?.name}
+        disabled={!canAct}
+      />
 
       {/* API Key Plaintext One-Time Modal */}
       {createdPlaintextKey && (

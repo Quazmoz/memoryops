@@ -26,8 +26,37 @@ type DlqJobResponse = {
   created_at?: string | null;
 };
 
+/** Source values accepted by the backend `Source` enum (serde lowercase). */
+export const INTEGRATION_SOURCES = ["github", "slack", "jira", "linear", "observation"] as const;
+
+export type IntegrationSource = (typeof INTEGRATION_SOURCES)[number];
+
+export type CreateIntegrationRequest = {
+  source: IntegrationSource;
+  webhook_secret: string;
+};
+
 export function listIntegrations(workspaceId: string): Promise<IntegrationResponse[]> {
-  return apiRequest<IntegrationResponse[]>(`/v1/workspaces/${workspaceId}/integrations`);
+  return apiRequest<IntegrationResponse[]>(`/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations`);
+}
+
+export function createIntegration(workspaceId: string, request: CreateIntegrationRequest): Promise<IntegrationResponse> {
+  const webhookSecret = request.webhook_secret.trim();
+  if (webhookSecret.length === 0) {
+    return Promise.reject(new Error("Webhook secret is required"));
+  }
+
+  return apiRequest<IntegrationResponse>(`/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations`, {
+    method: "POST",
+    body: { source: request.source, webhook_secret: webhookSecret },
+  });
+}
+
+export function deleteIntegration(workspaceId: string, source: string): Promise<void> {
+  return apiRequest<void>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations/${encodeURIComponent(source)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function listDlqJobs(workspaceId: string): Promise<DlqJob[]> {

@@ -3,6 +3,7 @@ import type { ComponentType, ReactNode, SVGProps } from "react";
 import { Link, NavLink } from "react-router-dom";
 
 import { cn } from "../../lib/utils";
+import { WorkspaceSwitcher } from "../WorkspaceSwitcher";
 
 type AppShellProps = {
   children: ReactNode;
@@ -41,6 +42,8 @@ export function AppShell({ children }: AppShellProps) {
             <p className="text-xs text-ink/55">Control Center</p>
           </div>
         </Link>
+
+        <WorkspaceSwitcher />
 
         <nav className="flex gap-2 overflow-x-auto px-3 py-3 lg:flex-1 lg:flex-col lg:gap-1 lg:overflow-visible" aria-label="Primary">
           {primaryLinks.map((link) => (

@@ -190,7 +190,7 @@ pub enum IntegrationStatus {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use serde_json::json;
 
@@ -261,7 +261,9 @@ mod tests {
     #[test]
     fn default_config_omits_absent_provider_overrides() {
         let value = serde_json::to_value(WorkspaceConfig::default()).unwrap();
-        let object = value.as_object().expect("workspace config should serialize to an object");
+        let object = value
+            .as_object()
+            .expect("workspace config should serialize to an object");
 
         assert!(!object.contains_key("llm_provider"));
         assert!(!object.contains_key("embedding_provider"));

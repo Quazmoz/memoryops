@@ -1275,6 +1275,7 @@ fn map_tool_insert_error(error: sqlx::Error) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

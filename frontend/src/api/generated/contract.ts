@@ -24,6 +24,7 @@ export const apiOperations = {
   "mergeMemory": { method: "post", path: "/v1/memory/merge" },
   "retrieveMemory": { method: "post", path: "/v1/retrieve" },
   "getRetrievalTrace": { method: "get", path: "/v1/retrieve/trace/{query_id}" },
+  "listWorkspaces": { method: "get", path: "/v1/workspaces" },
   "createWorkspace": { method: "post", path: "/v1/workspaces" },
   "getCurrentWorkspace": { method: "get", path: "/v1/workspaces/me" },
   "getWorkspace": { method: "get", path: "/v1/workspaces/{id}" },
