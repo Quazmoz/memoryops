@@ -30,7 +30,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   const init: RequestInit = {
     ...requestOptions,
-    headers: requestHeaders(options, auth),
+    headers: requestHeaders(options, auth, body !== undefined),
     signal: controller.signal,
   };
 
@@ -117,11 +117,15 @@ export async function parseResponse(response: Response): Promise<unknown> {
   }
 }
 
-export function requestHeaders(options: Pick<RequestInit, "headers"> = {}, includeAuth = true): Headers {
+export function requestHeaders(
+  options: Pick<RequestInit, "headers"> = {},
+  includeAuth = true,
+  includeContentType = false,
+): Headers {
   const headers = new Headers(options.headers);
   const apiKey = includeAuth ? useAppStore.getState().apiKey.trim() : "";
 
-  if (!headers.has("content-type")) {
+  if (includeContentType && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
 
