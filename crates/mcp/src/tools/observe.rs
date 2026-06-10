@@ -165,10 +165,9 @@ mod tests {
     #[test]
     fn observe_definition_exposes_scope_properties() {
         let schema = observe_definition().input_schema;
-        let properties = schema
-            .get("properties")
-            .and_then(serde_json::Value::as_object)
-            .expect("properties should exist");
+        let Some(properties) = schema.get("properties").and_then(serde_json::Value::as_object) else {
+            panic!("properties should exist");
+        };
 
         assert!(properties.contains_key("agent_id"));
         assert!(properties.contains_key("user_id"));
