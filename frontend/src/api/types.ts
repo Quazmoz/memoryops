@@ -259,41 +259,32 @@ export type UpdateMemoryRequest = {
   pinned?: boolean;
   tags?: string[];
   importance_score?: number;
+  content?: string;
+  scope_visibility?: ScopeVisibility;
 };
 
-export type ReadinessResponse = {
-  status: "ok" | "unavailable" | string;
-  checks?: {
-    database?: string;
-    redis?: string;
-    qdrant?: string;
-  };
-  httpStatus: number;
+export type BulkMemoryRequest = {
+  ids: string[];
+  action: "delete" | "restore" | "promote" | "pin" | "unpin";
 };
 
-export type IngestAcceptedResponse = {
-  status: string;
-  event_id?: string | null;
+export type BulkMemoryResponse = {
+  updated: number;
+  skipped: number;
+  errors?: Array<{ id: string; error: string }>;
 };
 
-export type IngestResult = {
-  ok: boolean;
-  status: number;
-  data: IngestAcceptedResponse | JsonValue | null;
-  detail?: string;
-};
-
-export type CreateWorkspaceResponse = {
-  id?: string;
-  name?: string;
-  workspace_id?: string;
-  api_key?: string;
+export type MergeMemoryRequest = {
+  source_ids: string[];
+  content: string;
+  memory_type?: MemoryType;
+  importance_score?: number;
+  tags?: string[];
 };
 
 export type WorkspaceSummary = {
   id: string;
   name: string;
-  api_key?: string;
 };
 
 export type WorkspaceConfig = {
@@ -405,6 +396,11 @@ export type IntegrationResponse = {
   events_24h: number;
   errors_24h: number;
   status: IntegrationStatus;
+  has_webhook_secret?: boolean;
+  has_api_credential?: boolean;
+  api_sync_enabled?: boolean;
+  sync_config?: JsonValue;
+  last_sync_at?: string | null;
 };
 
 export type MemoryVersion = {
@@ -418,27 +414,3 @@ export type MemoryVersion = {
   edited_by: string;
   created_at: string;
 };
-
-export type MergeMemoryRequest = {
-  source_id: string;
-  target_id: string;
-};
-
-export type BulkMemoryAction = "pin" | "unpin" | "delete";
-export type BulkMemoryRequest = { ids: string[]; action: BulkMemoryAction };
-export type BulkMemoryResponse = {
-  affected: number;
-  affected_ids: string[];
-  requested: number;
-  action: BulkMemoryAction;
-};
-
-export type ApiKeySummary = {
-  id: string;
-  name: string;
-  prefix: string;
-  created_at: string;
-  last_used_at: string | null;
-  revoked: boolean;
-};
-
