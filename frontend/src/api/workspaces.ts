@@ -16,6 +16,17 @@ import type {
   WorkspaceStats,
 } from "./types";
 
+declare module "./types" {
+  export interface ApiKeySummary {
+    id: string;
+    name: string;
+    prefix: string;
+    created_at: string;
+    last_used_at: string | null;
+    revoked: boolean;
+  }
+}
+
 export interface ApiKeySummary {
   id: string;
   name: string;
@@ -170,11 +181,6 @@ export interface WorkspaceListResponse {
   workspaces: WorkspaceListItem[];
 }
 
-/**
- * List all workspaces accessible with the given API key.
- * Uses a direct fetch so the caller can supply the key explicitly
- * before the store is populated (first-run flow).
- */
 export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[]> {
   const trimmedApiKey = apiKey.trim();
   if (trimmedApiKey.length === 0) {
@@ -196,10 +202,6 @@ export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[
   return normalizeWorkspaceList(payload);
 }
 
-/**
- * Normalizes both the `{ workspaces: [...] }` list shape and the legacy
- * single-workspace object shape returned by older backends.
- */
 export function normalizeWorkspaceList(payload: unknown): WorkspaceListItem[] {
   const listed = (payload as WorkspaceListResponse | null)?.workspaces;
   if (Array.isArray(listed)) {
@@ -232,8 +234,6 @@ export async function deleteWorkspace(workspaceId: string): Promise<DeleteWorksp
     path: resolveOperationPath("deleteWorkspace", { id: workspaceId }),
   });
 
-  // The backend currently returns `{ "deleted": true }`; tolerate an empty
-  // 204-style body as well since the OpenAPI contract documents 204.
   return { deleted: response?.deleted ?? true };
 }
 
