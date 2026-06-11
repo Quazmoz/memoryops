@@ -24,12 +24,12 @@ export function CodeBlock({ code }: CodeBlockProps) {
   }
 
   return (
-    <div className="relative rounded-lg bg-ink" data-testid="code-block">
+    <div className="relative min-w-0 max-w-full overflow-hidden rounded-lg bg-ink" data-testid="code-block">
       <button
         type="button"
         onClick={copy}
         aria-label={copied ? "Copied!" : "Copy code"}
-        className="absolute right-2.5 top-2.5 flex items-center gap-1 rounded px-2 py-1 text-xs text-white/55 transition hover:bg-white/10 hover:text-white/80"
+        className="absolute right-2.5 top-2.5 z-10 flex items-center gap-1 rounded px-2 py-1 text-xs text-white/55 transition hover:bg-white/10 hover:text-white/80"
       >
         {copied ? (
           <>
@@ -43,7 +43,7 @@ export function CodeBlock({ code }: CodeBlockProps) {
           </>
         )}
       </button>
-      <pre className="overflow-x-auto px-4 pb-4 pt-4 pr-20 font-mono text-sm leading-relaxed text-white/85">
+      <pre className="max-w-full overflow-x-auto whitespace-pre px-4 pb-4 pt-4 pr-20 font-mono text-xs leading-relaxed text-white/85 sm:text-sm">
         <code>{resolved}</code>
       </pre>
     </div>
