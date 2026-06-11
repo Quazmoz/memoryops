@@ -39,23 +39,28 @@ function readCredentials() {
   return null;
 }
 
-function waitForApi() {
+async function waitForApi() {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    const result = spawnSync('node', ['-e', `
-      const res = await fetch('${API_BASE_URL}/health/ready').catch(() => null);
-      process.exit(res && res.ok ? 0 : 1);
-    `], { stdio: 'ignore', env });
-    if (result.status === 0) return;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
+    try {
+      const res = await fetch(`${API_BASE_URL}/health/ready`);
+      if (res.ok) return;
+    } catch {
+      // API is not ready yet.
+    }
+    await sleep(2000);
   }
   console.error(`API did not become ready at ${API_BASE_URL}/health/ready within 120 seconds.`);
   process.exit(1);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 console.log('Starting MemoryOps local stack...');
 run('docker', ['compose', 'up', '-d', '--build', 'postgres', 'redis', 'qdrant', 'api']);
-waitForApi();
+await waitForApi();
 
 let credentials = readCredentials();
 if (!credentials) {
