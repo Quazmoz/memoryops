@@ -34,6 +34,7 @@ export type MemoryListParams = {
   userId?: string;
   repo?: string;
   source?: string;
+  sourceRef?: string;
   sort?: SortField;
   direction?: SortDirection;
   asOf?: string;
@@ -48,8 +49,10 @@ export type SearchCriteria = {
   agentId?: string;
   userId?: string;
   repo?: string;
+  sourceRef?: string;
   asOf?: string;
   includeWorkspacePool?: boolean;
+  includeMasterMemory?: boolean;
   limit: number;
   offset: number;
 };
@@ -96,6 +99,7 @@ export function listMemory(workspaceId: string, params: MemoryListParams): Promi
     user_id: optionalText(params.userId),
     repo: optionalText(params.repo),
     source: optionalText(params.source),
+    source_ref: optionalText(params.sourceRef),
     sort: params.sort,
     direction: params.direction,
     as_of: params.asOf,
@@ -231,6 +235,10 @@ function retrieveRequestBody(workspaceId: string, request: RetrieveRequest): Rec
     body.include_workspace_pool = request.include_workspace_pool;
   }
 
+  if (request.include_master_memory !== undefined) {
+    body.include_master_memory = request.include_master_memory;
+  }
+
   if (request.scope !== undefined) {
     body.scope = request.scope as JsonValue;
   }
@@ -269,6 +277,11 @@ export function buildSearchRequest(workspaceId: string, criteria: SearchCriteria
     filters.tags = criteria.tags;
   }
 
+  const sourceRef = optionalText(criteria.sourceRef);
+  if (sourceRef !== undefined) {
+    filters.source_ref = sourceRef;
+  }
+
   const scope = scopeFilter(criteria.agentId, criteria.userId, criteria.repo);
   const request: SearchRequest = {
     query,
@@ -298,6 +311,10 @@ export function buildSearchRequest(workspaceId: string, criteria: SearchCriteria
 
   if (criteria.includeWorkspacePool) {
     request.include_workspace_pool = true;
+  }
+
+  if (criteria.includeMasterMemory !== undefined) {
+    request.include_master_memory = criteria.includeMasterMemory;
   }
 
   if (Object.keys(filters).length > 0) {

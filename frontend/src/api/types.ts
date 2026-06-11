@@ -162,6 +162,18 @@ export type ImportMemoriesResponse = {
   errors: number;
 };
 
+export type ReadinessResponse = {
+  status: string;
+  httpStatus: number;
+};
+
+export type IngestResult = {
+  ok: boolean;
+  status: number;
+  data: JsonValue | null;
+  detail?: string | null;
+};
+
 export type ScoreBreakdown = {
   semantic_similarity: number;
   keyword_rank: number;
@@ -266,28 +278,36 @@ export type UpdateMemoryRequest = {
   scope_visibility?: ScopeVisibility;
 };
 
+export type BulkMemoryAction = "pin" | "unpin" | "delete";
+
 export type BulkMemoryRequest = {
   ids: string[];
-  action: "delete" | "restore" | "promote" | "pin" | "unpin";
+  action: BulkMemoryAction;
 };
 
 export type BulkMemoryResponse = {
-  updated: number;
-  skipped: number;
-  errors?: Array<{ id: string; error: string }>;
+  affected: number;
+  affected_ids: string[];
+  requested: number;
+  action: BulkMemoryAction;
 };
 
 export type MergeMemoryRequest = {
-  source_ids: string[];
-  content: string;
-  memory_type?: MemoryType;
-  importance_score?: number;
-  tags?: string[];
+  source_id: string;
+  target_id: string;
 };
 
 export type WorkspaceSummary = {
   id: string;
   name: string;
+  api_key?: string;
+};
+
+export type CreateWorkspaceResponse = {
+  id?: string;
+  workspace_id?: string;
+  name?: string;
+  api_key?: string;
 };
 
 export type WorkspaceConfig = {
@@ -371,6 +391,15 @@ export type CreateApiKeyResponse = {
 
 export type CreatedApiKey = {
   plaintext_key: string;
+};
+
+export type ApiKeySummary = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked: boolean;
 };
 
 export type AuditEvent = {

@@ -1,6 +1,7 @@
 import { ApiError, apiUrl, extractDetail, parseResponse, queryString, requestHeaders } from "./client";
 import { apiContractRequest, operationMethod, resolveOperationPath } from "./generated/contract";
 import type {
+  ApiKeySummary,
   CreatedApiKey,
   CreateApiKeyResponse,
   CreateWorkspaceResponse,
@@ -16,25 +17,7 @@ import type {
   WorkspaceStats,
 } from "./types";
 
-declare module "./types" {
-  export interface ApiKeySummary {
-    id: string;
-    name: string;
-    prefix: string;
-    created_at: string;
-    last_used_at: string | null;
-    revoked: boolean;
-  }
-}
-
-export interface ApiKeySummary {
-  id: string;
-  name: string;
-  prefix: string;
-  created_at: string;
-  last_used_at: string | null;
-  revoked: boolean;
-}
+export type { ApiKeySummary } from "./types";
 
 export async function createWorkspace(name: string, adminToken: string): Promise<WorkspaceSummary> {
   const trimmedName = name.trim();
