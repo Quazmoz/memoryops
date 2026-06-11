@@ -1,0 +1,31 @@
+{
+  "name": "memoryops-http-smoke-tool-pack",
+  "version": "0.1.0",
+  "description": "A tiny example tool pack used to validate the MemoryOps tool-pack import/export workflow.",
+  "tools": [
+    {
+      "name": "httpbin_post_smoke",
+      "description": "Posts a small JSON payload to httpbin for validating outbound HTTP tool invocation plumbing.",
+      "endpoint_url": "https://httpbin.org/post",
+      "http_method": "POST",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Message to echo through the smoke endpoint."
+          }
+        },
+        "required": ["message"]
+      },
+      "output_schema": {
+        "type": "object"
+      },
+      "enabled": false,
+      "scope_visibility": "workspace",
+      "rate_limit_per_minute": 10,
+      "circuit_breaker_threshold": 3,
+      "circuit_breaker_cooldown_seconds": 60
+    }
+  ]
+}
