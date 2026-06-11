@@ -22,6 +22,10 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   min-width: 320px;
   min-height: 100vh;
@@ -46,6 +50,84 @@ textarea {
   padding: 0.1em 0.35em;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.8em;
+  overflow-wrap: anywhere;
+}
+
+/* Guide page document layout -------------------------------------------------
+   GuideView is intentionally content-heavy. These rules turn each guide section
+   into a normal documentation card instead of a long, unbounded text stream.
+*/
+section:has(> .prose-like) {
+  scroll-margin-top: 2rem;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: 1rem;
+  background: var(--color-panel);
+  padding: clamp(1rem, 2vw, 1.5rem);
+  box-shadow: 0 1px 2px rgb(23 33 28 / 0.04);
+}
+
+section:has(> .prose-like):target {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-line));
+  box-shadow: 0 0 0 3px rgb(25 115 106 / 0.12), 0 1px 2px rgb(23 33 28 / 0.04);
+}
+
+section:has(> .prose-like) > h2 {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--color-line);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+  line-height: 1.25;
+}
+
+.prose-like {
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.prose-like > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prose-like p,
+.prose-like li,
+.prose-like dd {
+  max-width: 82ch;
+  overflow-wrap: anywhere;
+}
+
+.prose-like ul,
+.prose-like ol {
+  max-width: 82ch;
+}
+
+.prose-like table {
+  width: 100%;
+  table-layout: auto;
+}
+
+.prose-like pre,
+.prose-like code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  section:has(> .prose-like) {
+    border-radius: 0.875rem;
+    padding: 1rem;
+  }
+
+  section:has(> .prose-like) > h2 {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 
 .thin-scrollbar {
