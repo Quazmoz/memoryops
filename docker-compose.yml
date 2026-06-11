@@ -64,7 +64,8 @@ services:
       # Runtime workspace ID injected via entrypoint.sh into /config.json
       MEMORYOPS_WORKSPACE_ID: ${MEMORYOPS_WORKSPACE_ID:-${VITE_MEMORYOPS_WORKSPACE_ID:-}}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/index.html | grep -q '<html' || exit 1"]
       interval: 10s
@@ -94,9 +95,18 @@ services:
       - ./.gemini:/app/.gemini
       - ./.claude:/app/.claude
     depends_on:
-      - postgres
-      - redis
-      - qdrant
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     restart: unless-stopped
 
   mcp:
@@ -116,8 +126,12 @@ services:
       - ./.gemini:/app/.gemini
       - ./.claude:/app/.claude
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
