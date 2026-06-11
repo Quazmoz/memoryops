@@ -165,12 +165,14 @@ export function IntegrationsView() {
     setNotice(null);
     createIntegrationMutation.mutate({
       source: addSource,
-      webhookSecret: webhookSecret || undefined,
-      apiToken: apiMode ? apiToken : undefined,
+      ...(webhookSecret ? { webhookSecret } : {}),
+      ...(apiMode && apiToken ? { apiToken } : {}),
       syncConfig: apiMode
         ? { mode: "api_sync_with_webhook", repo: repo || null, since: since || null, limit: syncLimitNumber }
         : { mode: "webhook_only" },
-      initialSync: apiMode && addSource === "github" && repo.length > 0 ? { repo, since: since || undefined, limit: syncLimitNumber } : undefined,
+      ...(apiMode && addSource === "github" && repo.length > 0
+        ? { initialSync: { repo, limit: syncLimitNumber, ...(since ? { since } : {}) } }
+        : {}),
     });
   }
 

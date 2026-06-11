@@ -30,12 +30,14 @@ type ScopeFilterDraft = {
   agentId: string;
   userId: string;
   repo: string;
+  sourceRef: string;
 };
 
 const emptyScopeFilter: ScopeFilterDraft = {
   agentId: "",
   userId: "",
   repo: "",
+  sourceRef: "",
 };
 
 export function MemoryExplorer() {
@@ -49,6 +51,7 @@ export function MemoryExplorer() {
     ["all", "episodic", "semantic"].includes(initialType) ? initialType : "all",
   );
   const [includeWorkspacePool, setIncludeWorkspacePool] = useState(false);
+  const [includeMasterMemory, setIncludeMasterMemory] = useState(true);
   const [pinned, setPinned] = useState(false);
   const [minImportance, setMinImportance] = useState(0);
   const [asOfDateTime, setAsOfDateTime] = useState("");
@@ -88,6 +91,7 @@ export function MemoryExplorer() {
         agentId: debouncedScope.agentId,
         userId: debouncedScope.userId,
         repo: debouncedScope.repo,
+        sourceRef: debouncedScope.sourceRef,
         sort: sortField,
         direction: sortDirection,
       };
@@ -112,9 +116,11 @@ export function MemoryExplorer() {
       pinned,
       minImportance,
       includeWorkspacePool,
+      includeMasterMemory,
       agentId: debouncedScope.agentId,
       userId: debouncedScope.userId,
       repo: debouncedScope.repo,
+      sourceRef: debouncedScope.sourceRef,
       tags: selectedTags,
       limit: 50,
       offset,
@@ -122,7 +128,7 @@ export function MemoryExplorer() {
     };
 
     return criteria;
-  }, [asOfIso, debouncedScope, includeWorkspacePool, memoryType, minImportance, offset, pinned, searchText, selectedTags]);
+  }, [asOfIso, debouncedScope, includeMasterMemory, includeWorkspacePool, memoryType, minImportance, offset, pinned, searchText, selectedTags]);
   const listQuery = useMemoryList(workspaceId, listParams);
   const searchQuery = useMemorySearch(workspaceId, searchCriteria);
   const tagsQuery = useTags(workspaceId);
@@ -182,6 +188,11 @@ export function MemoryExplorer() {
 
   function toggleWorkspacePool() {
     setIncludeWorkspacePool((value) => !value);
+    setOffset(0);
+  }
+
+  function toggleMasterMemory() {
+    setIncludeMasterMemory((value) => !value);
     setOffset(0);
   }
 
@@ -396,6 +407,16 @@ export function MemoryExplorer() {
               <TooltipContent>Workspace-visible memories are available across agents and users in this workspace, not just the original private scope.</TooltipContent>
             </Tooltip>
 
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" data-testid="filter-master-memory" onClick={toggleMasterMemory} className={filterButtonClass(includeMasterMemory)}>
+                  <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  Master Memory
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Master memory is the global, canonical workspace-level memory pool. It is included by default unless you turn it off here. Only affects search results.</TooltipContent>
+            </Tooltip>
+
             <label className="grid min-w-[16rem] gap-2 text-sm text-ink/70">
               <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
                 <InfoLabel label="Min importance" tooltip="Hide low-priority memories below this importance threshold." />
@@ -414,10 +435,11 @@ export function MemoryExplorer() {
             </label>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
             <ScopeFilterInput label="Agent ID" helpText="Filter to memories scoped to a specific agent, such as claude-code, deploy-bot, or review-agent." testId="filter-agent-id" value={scopeDraft.agentId} onChange={(value) => changeScopeFilter("agentId", value)} />
             <ScopeFilterInput label="User ID" helpText="Filter to memories attached to a specific end user or operator scope." testId="filter-user-id" value={scopeDraft.userId} onChange={(value) => changeScopeFilter("userId", value)} />
             <ScopeFilterInput label="Repo" helpText="Filter to memories tied to a specific repository, usually owner/repo." testId="filter-repo" value={scopeDraft.repo} onChange={(value) => changeScopeFilter("repo", value)} placeholder="owner/repo" />
+            <ScopeFilterInput label="Source ref" helpText="Filter to memories derived from a specific source file or path. Matches the original source_ref on linked events and ignores line anchors like #L10-L20, so src/foo.rs also matches src/foo.rs#L10-L20." testId="filter-source-ref" value={scopeDraft.sourceRef} onChange={(value) => changeScopeFilter("sourceRef", value)} placeholder="src/foo.rs" />
             <label className="grid gap-1 text-xs font-medium uppercase text-ink/45">
               <InfoLabel label="As Of" tooltip="Time-travel filter. Shows memories as they would have existed at the selected point in time." />
               <div className="flex gap-2">

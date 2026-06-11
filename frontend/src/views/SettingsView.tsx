@@ -39,6 +39,9 @@ export function SettingsView() {
   const [llmApiKeyEnv, setLlmApiKeyEnv] = useState("");
   const [subAgentPools, setSubAgentPools] = useState("");
   const [contradictionMode, setContradictionMode] = useState<"quarantine" | "auto_resolve">("quarantine");
+  const [contradictionThreshold, setContradictionThreshold] = useState(0.35);
+  const [contradictionCandidates, setContradictionCandidates] = useState(20);
+  const [contradictionCandidatesDraft, setContradictionCandidatesDraft] = useState("20");
   const [retentionMaxAgeDays, setRetentionMaxAgeDays] = useState<number | undefined>(undefined);
   const [skillVersionRetentionDays, setSkillVersionRetentionDays] = useState<number | undefined>(undefined);
   const [complianceHardPurge, setComplianceHardPurge] = useState(false);
@@ -186,6 +189,13 @@ export function SettingsView() {
       if (mode === "quarantine" || mode === "auto_resolve") {
         setContradictionMode(mode);
       }
+      if (typeof workspace.contradiction_threshold === "number") {
+        setContradictionThreshold(workspace.contradiction_threshold);
+      }
+      if (typeof workspace.contradiction_candidates === "number") {
+        setContradictionCandidates(workspace.contradiction_candidates);
+        setContradictionCandidatesDraft(String(workspace.contradiction_candidates));
+      }
     },
     onError: (error: Error) => setConfigError(error.message),
   });
@@ -239,6 +249,13 @@ export function SettingsView() {
       const mode = workspaceQuery.data.contradiction_mode;
       if (mode === "quarantine" || mode === "auto_resolve") {
         setContradictionMode(mode);
+      }
+      if (typeof workspaceQuery.data.contradiction_threshold === "number") {
+        setContradictionThreshold(workspaceQuery.data.contradiction_threshold);
+      }
+      if (typeof workspaceQuery.data.contradiction_candidates === "number") {
+        setContradictionCandidates(workspaceQuery.data.contradiction_candidates);
+        setContradictionCandidatesDraft(String(workspaceQuery.data.contradiction_candidates));
       }
     }
   }, [workspaceQuery.data]);
@@ -305,6 +322,32 @@ export function SettingsView() {
     const next = contradictionMode === "quarantine" ? "auto_resolve" : "quarantine";
     setContradictionMode(next);
     configMutation.mutate({ contradiction_mode: next });
+  }
+
+  function saveContradictionThreshold(value: number) {
+    setContradictionThreshold(value);
+    configMutation.mutate({ contradiction_threshold: value });
+  }
+
+  function saveContradictionCandidates(value: number) {
+    if (!Number.isInteger(value) || value < 1 || value > 100) {
+      setConfigError("contradiction_candidates must be an integer between 1 and 100");
+      setContradictionCandidatesDraft(String(contradictionCandidates));
+      return;
+    }
+
+    setConfigError(null);
+    setContradictionCandidates(value);
+    setContradictionCandidatesDraft(String(value));
+    configMutation.mutate({ contradiction_candidates: value });
+  }
+
+  function commitContradictionCandidates() {
+    const trimmed = contradictionCandidatesDraft.trim();
+    if (trimmed === String(contradictionCandidates)) {
+      return;
+    }
+    saveContradictionCandidates(Number(trimmed));
   }
 
   function saveRetentionMaxAgeDays(value: string) {
@@ -776,6 +819,48 @@ export function SettingsView() {
               Auto-resolve newer wins
             </span>
             <HelpTooltip label="Auto-resolve newer wins">When a contradiction is detected, MemoryOps keeps the newer memory and archives the older one automatically.</HelpTooltip>
+          </div>
+
+          <div className="grid gap-5 border-t border-line pt-4 lg:grid-cols-2">
+            <label className="grid gap-2 text-sm text-ink/70">
+              <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
+                <InfoLabel
+                  label={`Detection sensitivity: ${contradictionThreshold.toFixed(2)}`}
+                  tooltip="Tunes contradiction detection. Higher values widen the similarity net so more loosely-related memories are compared, but also require stronger textual evidence before a pair is flagged as contradictory. Lower values only compare very similar memories and flag them more readily. Backend default is 0.35."
+                />
+                {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
+              </span>
+              <input
+                data-testid="contradiction-threshold-slider"
+                type="range"
+                min="0.05"
+                max="0.95"
+                step="0.01"
+                value={contradictionThreshold}
+                onChange={(event) => saveContradictionThreshold(Number(event.target.value))}
+                disabled={!canAct || configMutation.isPending}
+                className="accent-accent"
+              />
+            </label>
+
+            <div className="grid gap-2">
+              <label className="text-xs font-medium uppercase text-ink/45" htmlFor="contradiction-candidates-input">
+                <InfoLabel label="Candidate neighbours" tooltip="How many of the nearest memories are checked for a possible conflict when a new memory is stored. Higher values catch more contradictions at the cost of more work per write. Backend default is 20." />
+              </label>
+              <Input
+                id="contradiction-candidates-input"
+                data-testid="contradiction-candidates-input"
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                value={contradictionCandidatesDraft}
+                onChange={(event) => setContradictionCandidatesDraft(event.target.value)}
+                onBlur={commitContradictionCandidates}
+                disabled={!canAct || configMutation.isPending}
+                className="w-full lg:w-48"
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
