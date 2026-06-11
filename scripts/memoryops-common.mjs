@@ -6,15 +6,32 @@ import path from 'node:path';
 export function parseArgs(argv = process.argv.slice(2)) {
   const options = {};
   const positional = [];
+  let positionalOnly = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+
+    if (positionalOnly) {
+      positional.push(arg);
+      continue;
+    }
+
+    if (arg === '--') {
+      positionalOnly = true;
+      continue;
+    }
+
     if (!arg.startsWith('--')) {
       positional.push(arg);
       continue;
     }
 
     const withoutPrefix = arg.slice(2);
+    if (withoutPrefix.startsWith('no-') && !withoutPrefix.includes('=')) {
+      options[toCamelCase(withoutPrefix.slice(3))] = false;
+      continue;
+    }
+
     const equalsIndex = withoutPrefix.indexOf('=');
     if (equalsIndex !== -1) {
       const key = toCamelCase(withoutPrefix.slice(0, equalsIndex));
@@ -83,6 +100,7 @@ export function resolveMemoryOpsConfig(options = {}, { requireAuth = true } = {}
 export async function apiRequest(config, method, endpoint, body = null) {
   const url = `${String(config.apiUrl).replace(/\/$/, '')}${endpoint}`;
   const headers = {
+    Accept: 'application/json, application/x-ndjson, text/plain, */*',
     'Content-Type': 'application/json',
   };
 
@@ -109,13 +127,18 @@ export async function apiRequest(config, method, endpoint, body = null) {
 
 export function readJsonFile(filePath) {
   const resolved = path.resolve(filePath);
-  return JSON.parse(fs.readFileSync(resolved, 'utf8'));
+  try {
+    return JSON.parse(fs.readFileSync(resolved, 'utf8'));
+  } catch (error) {
+    throw new Error(`Failed to read JSON file ${resolved}: ${error.message}`);
+  }
 }
 
 export function writeTextFile(filePath, content) {
   const resolved = path.resolve(filePath);
+  const text = String(content);
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  fs.writeFileSync(resolved, content.endsWith('\n') ? content : `${content}\n`, 'utf8');
+  fs.writeFileSync(resolved, text.endsWith('\n') ? text : `${text}\n`, 'utf8');
   return resolved;
 }
 
