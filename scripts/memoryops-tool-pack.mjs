@@ -55,7 +55,7 @@ Tool pack shape:
     ]
   }
 
-Secrets are intentionally not exported. Add auth_secret manually when creating private packs.
+Secrets are intentionally not exported. Add auth_secret manually only through a secure local workflow.
 `;
 
 const { options, positional } = parseArgs();
@@ -120,6 +120,7 @@ async function importCommand(options) {
     pack: pack.name || null,
     version: pack.version || null,
     requested: pack.tools.length,
+    warnings: validation.issues.filter((item) => item.severity === 'warning'),
     response,
   }, options);
 }
@@ -127,14 +128,15 @@ async function importCommand(options) {
 async function exportCommand(options) {
   const config = resolveMemoryOpsConfig(options);
   const out = options.out || `memoryops-tools-${config.workspaceId}.json`;
-  const tools = await apiRequest(config, 'GET', `/v1/workspaces/${encodeURIComponent(config.workspaceId)}/tools/export`);
+  const response = await apiRequest(config, 'GET', `/v1/workspaces/${encodeURIComponent(config.workspaceId)}/tools/export`);
+  const tools = normalizeToolArray(response);
   const pack = {
     name: `memoryops-workspace-${config.workspaceId}-tools`,
     version: new Date().toISOString(),
     exported_at: new Date().toISOString(),
     workspace_id: config.workspaceId,
     notes: 'Secrets are intentionally omitted from exported tool packs.',
-    tools: Array.isArray(tools) ? tools.map(toExportPayload) : [],
+    tools: tools.map(toExportPayload),
   };
   const written = writeTextFile(out, JSON.stringify(pack, null, 2));
   output({ action: 'export', written, tools: pack.tools.length }, options);
@@ -142,8 +144,8 @@ async function exportCommand(options) {
 
 async function listCommand(options) {
   const config = resolveMemoryOpsConfig(options);
-  const tools = await apiRequest(config, 'GET', `/v1/workspaces/${encodeURIComponent(config.workspaceId)}/tools`);
-  const normalized = Array.isArray(tools) ? tools.map((tool) => ({
+  const response = await apiRequest(config, 'GET', `/v1/workspaces/${encodeURIComponent(config.workspaceId)}/tools`);
+  const normalized = normalizeToolArray(response).map((tool) => ({
     name: tool.name,
     enabled: tool.enabled,
     version: tool.version,
@@ -151,7 +153,7 @@ async function listCommand(options) {
     endpoint_url: tool.endpoint_url,
     scope_visibility: tool.scope_visibility,
     rate_limit_per_minute: tool.rate_limit_per_minute,
-  })) : [];
+  }));
   output({ action: 'list', tools: normalized, count: normalized.length }, options);
 }
 
@@ -164,9 +166,9 @@ function loadPack(filePath) {
     throw new Error(`Tool pack file does not exist: ${resolved}`);
   }
   const payload = readJsonFile(resolved);
-  const tools = Array.isArray(payload) ? payload : payload.tools;
-  if (!Array.isArray(tools)) {
-    throw new Error('Tool pack must be an array or an object with a tools array.');
+  const tools = normalizeToolArray(payload);
+  if (tools.length === 0) {
+    throw new Error('Tool pack must be an array or an object with a non-empty tools array.');
   }
   return Array.isArray(payload) ? { name: path.basename(resolved), tools } : { ...payload, tools };
 }
@@ -183,18 +185,23 @@ function validatePack(pack) {
     validateTool(tool, index, issues, names);
   });
 
+  const errorCount = issues.filter((item) => item.severity === 'error').length;
+  const warningCount = issues.filter((item) => item.severity === 'warning').length;
+
   return {
-    valid: issues.length === 0,
+    valid: errorCount === 0,
     pack: pack.name || null,
     version: pack.version || null,
     tools: pack.tools.length,
+    error_count: errorCount,
+    warning_count: warningCount,
     issues,
   };
 }
 
 function validateTool(tool, index, issues, names) {
   const prefix = `tools[${index}]`;
-  if (!tool || typeof tool !== 'object') {
+  if (!tool || typeof tool !== 'object' || Array.isArray(tool)) {
     issues.push(issue(prefix, 'Tool must be an object.'));
     return;
   }
@@ -310,6 +317,15 @@ function toExportPayload(tool) {
   });
 }
 
+function normalizeToolArray(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== 'object') return [];
+  for (const key of ['tools', 'items', 'data', 'results']) {
+    if (Array.isArray(payload[key])) return payload[key];
+  }
+  return [];
+}
+
 function stripUndefined(value) {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
@@ -335,11 +351,17 @@ function output(payload, options) {
 
   if (payload.action === 'import') {
     console.log(`Imported tool pack ${payload.pack || '<unnamed>'}: ${payload.requested} requested`);
+    if (payload.warnings.length > 0) {
+      console.log('Warnings:');
+      for (const warning of payload.warnings) {
+        console.log(`  - ${warning.path}: ${warning.message}`);
+      }
+    }
     console.log(JSON.stringify(payload.response, null, 2));
     return;
   }
 
-  console.log(`Tool pack validation: ${payload.valid ? 'valid' : 'invalid'} (${payload.tools} tools)`);
+  console.log(`Tool pack validation: ${payload.valid ? 'valid' : 'invalid'} (${payload.tools} tools, ${payload.error_count} errors, ${payload.warning_count} warnings)`);
   if (payload.issues.length > 0) {
     for (const item of payload.issues) {
       console.log(`  - [${item.severity}] ${item.path}: ${item.message}`);
