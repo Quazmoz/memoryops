@@ -1,6 +1,6 @@
 # MemoryOps Operational Utilities
 
-MemoryOps includes dependency-free Node.js utilities for validating retrieval quality, auditing memory scope behavior, generating agent install profiles, importing memory, checking workspace health, and managing tool packs.
+MemoryOps includes dependency-free Node.js utilities for validating retrieval quality, auditing memory scope behavior, generating agent install profiles, importing memory, checking workspace health, managing tool packs, exporting workspace snapshots, and running release gates.
 
 These tools are intentionally lightweight:
 
@@ -354,6 +354,92 @@ Secrets are intentionally omitted from exported packs. If a private pack needs a
 
 ---
 
+## 7. Workspace snapshot exporter
+
+Use `scripts/memoryops-snapshot.mjs` to create a portable operator bundle for a workspace.
+
+```bash
+node scripts/memoryops-snapshot.mjs
+```
+
+Write to a specific directory:
+
+```bash
+node scripts/memoryops-snapshot.mjs \
+  --out-dir backups/memoryops-$(date +%Y%m%d)
+```
+
+Include audit log first page:
+
+```bash
+node scripts/memoryops-snapshot.mjs \
+  --include-audit
+```
+
+The snapshot can include:
+
+- workspace config
+- stats and stats history
+- readiness/system health
+- memory export
+- tools export
+- integrations
+- DLQ jobs
+- tags
+- contradiction count and first contradiction page
+- optional audit log first page
+- `manifest.json`
+
+Generated snapshots are written under `.memoryops/snapshots/...` by default, which is ignored by git.
+
+---
+
+## 8. Release gate runner
+
+Use `scripts/memoryops-release-gate.mjs` to run the common pre-release checks through one command.
+
+```bash
+node scripts/memoryops-release-gate.mjs
+```
+
+Run with scope and tool-pack checks:
+
+```bash
+node scripts/memoryops-release-gate.mjs \
+  --scope-query "tool secret handling" \
+  --agent-id vscode \
+  --repo Quazmoz/memoryops \
+  --tool-pack examples/tool-packs/http-smoke.toolpack.json
+```
+
+Machine-readable summary:
+
+```bash
+node scripts/memoryops-release-gate.mjs \
+  --json
+```
+
+Default gates:
+
+- health report with `--fail-under 80`
+- retrieval eval suite with `--fail-under 0.8`
+- workspace snapshot
+
+Optional gates:
+
+- scope audit when `--scope-query` is provided
+- tool-pack validation when `--tool-pack` is provided
+
+Skip flags:
+
+| Flag | Purpose |
+|---|---|
+| `--skip-health` | Skip workspace health report. |
+| `--skip-eval` | Skip retrieval eval suite. |
+| `--skip-snapshot` | Skip workspace snapshot. |
+
+---
+
 ## Practical release gate
 
 Before merging retrieval-related changes, run:
@@ -369,6 +455,16 @@ node scripts/memoryops-scope-audit.mjs \
   --repo Quazmoz/memoryops \
   --include-workspace-pool \
   --include-master-memory
+```
+
+Or run the full bundled gate:
+
+```bash
+node scripts/memoryops-release-gate.mjs \
+  --scope-query "How should tool secrets be handled?" \
+  --agent-id vscode \
+  --repo Quazmoz/memoryops \
+  --tool-pack examples/tool-packs/http-smoke.toolpack.json
 ```
 
 Before connecting a new coding agent, run:
