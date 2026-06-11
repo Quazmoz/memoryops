@@ -1,7 +1,6 @@
 import { ApiError, apiUrl, extractDetail, parseResponse, queryString, requestHeaders } from "./client";
 import { apiContractRequest, operationMethod, resolveOperationPath } from "./generated/contract";
 import type {
-  ApiKeySummary,
   CreatedApiKey,
   CreateApiKeyResponse,
   CreateWorkspaceResponse,
@@ -16,6 +15,15 @@ import type {
   WorkspaceSummary,
   WorkspaceStats,
 } from "./types";
+
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked: boolean;
+}
 
 export async function createWorkspace(name: string, adminToken: string): Promise<WorkspaceSummary> {
   const trimmedName = name.trim();
@@ -54,7 +62,6 @@ export async function createApiKey(workspaceId: string, name: string): Promise<C
 
   const response = await apiContractRequest<CreateApiKeyResponse>("createApiKey", {
     path: resolveOperationPath("createApiKey", { id: workspaceId }),
-    auth: false,
     body: { name: trimmedName },
   });
   const plaintextKey = response.plaintext_key ?? response.key;
@@ -269,6 +276,9 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   const skillVersionRetentionDays = numberConfig(config.skill_version_retention_days);
   const complianceHardPurge = booleanConfig(config.compliance_hard_purge);
   const complianceMode = booleanConfig(config.compliance_mode);
+  const contradictionMode = stringConfig(config.contradiction_mode);
+  const contradictionThreshold = numberConfig(config.contradiction_threshold);
+  const contradictionCandidates = numberConfig(config.contradiction_candidates);
 
   if (decayHalfLifeDays !== undefined) {
     normalized.decay_half_life_days = decayHalfLifeDays;
@@ -308,6 +318,15 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   }
   if (complianceMode !== undefined) {
     normalized.compliance_mode = complianceMode;
+  }
+  if (contradictionMode !== undefined) {
+    normalized.contradiction_mode = contradictionMode;
+  }
+  if (contradictionThreshold !== undefined) {
+    normalized.contradiction_threshold = contradictionThreshold;
+  }
+  if (contradictionCandidates !== undefined) {
+    normalized.contradiction_candidates = contradictionCandidates;
   }
 
   return normalized;
