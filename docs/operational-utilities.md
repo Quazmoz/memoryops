@@ -1,6 +1,6 @@
 # MemoryOps Operational Utilities
 
-MemoryOps now includes a small set of dependency-free Node.js utilities for validating retrieval quality, auditing memory scope behavior, and generating agent install profiles.
+MemoryOps includes dependency-free Node.js utilities for validating retrieval quality, auditing memory scope behavior, generating agent install profiles, importing memory, checking workspace health, and managing tool packs.
 
 These tools are intentionally lightweight:
 
@@ -198,6 +198,162 @@ API keys are not embedded. Store credentials in the VS Code SecretStorage comman
 
 ---
 
+## 4. Memory importer
+
+Use `scripts/memoryops-import.mjs` to bootstrap a workspace from Markdown, text, JSON, or JSONL.
+
+```bash
+node scripts/memoryops-import.mjs \
+  --path docs \
+  --tags docs,bootstrap
+```
+
+Dry-run before writing:
+
+```bash
+node scripts/memoryops-import.mjs \
+  --path README.md \
+  --dry-run \
+  --json
+```
+
+Import structured JSONL directly as memory units instead of observations:
+
+```bash
+node scripts/memoryops-import.mjs \
+  --path exports/memories.jsonl \
+  --format jsonl \
+  --mode memory \
+  --tags migrated
+```
+
+Supported input:
+
+| Format | Behavior |
+|---|---|
+| Markdown/text file | Imports the file as one or more chunks. |
+| Markdown/text directory | Recursively imports `.md`, `.mdx`, and `.txt` files. |
+| JSON array | Imports each object with a `content` field. |
+| JSONL/NDJSON | Imports one object per line with a `content` field. |
+
+Common fields for JSON/JSONL items:
+
+```json
+{
+  "content": "Durable memory text",
+  "tags": ["runbook", "imported"],
+  "source_ref": "docs/runbook.md",
+  "agent_id": "docs-importer",
+  "user_id": "optional-user",
+  "repo": "owner/repo",
+  "memory_type": "episodic",
+  "importance_score": 0.7,
+  "metadata": {
+    "source": "legacy-export"
+  }
+}
+```
+
+Default mode is `observation`, which sends content through `/v1/ingest/observation`. Use `--mode memory` only when you intentionally want direct memory creation through `/v1/memory`.
+
+---
+
+## 5. Workspace health report
+
+Use `scripts/memoryops-health-report.mjs` to generate an operational health score for a workspace.
+
+```bash
+node scripts/memoryops-health-report.mjs
+```
+
+Fail a release gate if the health score drops:
+
+```bash
+node scripts/memoryops-health-report.mjs \
+  --fail-under 80
+```
+
+Machine-readable output:
+
+```bash
+node scripts/memoryops-health-report.mjs \
+  --json
+```
+
+The report checks:
+
+- `/health/ready`
+- `/health/system`
+- workspace config
+- workspace stats
+- stats history
+- integrations
+- DLQ jobs
+- contradiction count
+- tags
+- retrieval smoke test
+
+The score is intentionally simple: critical findings carry the largest penalty, warnings carry medium penalty, and info findings carry small penalty. Treat it as an operator-facing readiness indicator, not a formal SLO calculation.
+
+---
+
+## 6. Tool-pack utility
+
+Use `scripts/memoryops-tool-pack.mjs` to validate, import, export, and list MemoryOps tools as installable packs.
+
+Validate a pack:
+
+```bash
+node scripts/memoryops-tool-pack.mjs validate \
+  --file examples/tool-packs/http-smoke.toolpack.json
+```
+
+Import a pack:
+
+```bash
+node scripts/memoryops-tool-pack.mjs import \
+  --file examples/tool-packs/http-smoke.toolpack.json \
+  --overwrite
+```
+
+Export workspace tools:
+
+```bash
+node scripts/memoryops-tool-pack.mjs export \
+  --out .memoryops/tool-packs/workspace-tools.json
+```
+
+List registered tools:
+
+```bash
+node scripts/memoryops-tool-pack.mjs list
+```
+
+Tool pack shape:
+
+```json
+{
+  "name": "memoryops-devops-pack",
+  "version": "0.1.0",
+  "tools": [
+    {
+      "name": "example_tool",
+      "description": "Short explanation of what this tool does.",
+      "endpoint_url": "https://example.com/api/tool",
+      "http_method": "POST",
+      "input_schema": { "type": "object", "properties": {} },
+      "output_schema": { "type": "object" },
+      "scope_visibility": "workspace",
+      "enabled": true
+    }
+  ]
+}
+```
+
+Secrets are intentionally omitted from exported packs. If a private pack needs an `auth_secret`, keep it out of version control and inject it through a secure workflow.
+
+---
+
 ## Practical release gate
 
 Before merging retrieval-related changes, run:
@@ -223,4 +379,19 @@ node scripts/memoryops-agent-profile.mjs \
   --agent-id <agent-id> \
   --repo <owner/name> \
   --write
+```
+
+Before importing external project knowledge, run:
+
+```bash
+node scripts/memoryops-import.mjs \
+  --path <docs-or-export> \
+  --dry-run
+```
+
+Before publishing a tool pack, run:
+
+```bash
+node scripts/memoryops-tool-pack.mjs validate \
+  --file <tool-pack.json>
 ```
