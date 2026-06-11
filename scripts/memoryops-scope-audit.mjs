@@ -75,6 +75,16 @@ try {
 }
 
 function buildRequest(workspaceId, query, options) {
+  const limit = asNumber(options.limit, 10);
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error('--limit must be a positive integer.');
+  }
+
+  const tokenBudget = asNumber(options.tokenBudget, 4096);
+  if (!Number.isInteger(tokenBudget) || tokenBudget < 1) {
+    throw new Error('--token-budget must be a positive integer.');
+  }
+
   const scope = cleanObject({
     agent_id: options.agentId,
     user_id: options.userId,
@@ -91,8 +101,8 @@ function buildRequest(workspaceId, query, options) {
   return cleanObject({
     workspace_id: workspaceId,
     query,
-    limit: asNumber(options.limit, 10),
-    token_budget: asNumber(options.tokenBudget, 4096),
+    limit,
+    token_budget: tokenBudget,
     search_mode: options.searchMode || 'hybrid',
     include_trace: true,
     include_workspace_pool: asBoolean(options.includeWorkspacePool, false),
@@ -135,7 +145,7 @@ function buildAudit(request, response) {
     query_id: response?.query_id || null,
     elapsed_ms: response?.elapsed_ms ?? null,
     total_tokens: response?.total_tokens ?? response?.token_count ?? null,
-    total_candidates: response?.total_candidates ?? response?.trace?.total_candidates ?? null,
+    total_candidates: response?.total_candidates ?? response?.trace?.total_candidates ?? response?.trace?.candidates_evaluated ?? null,
     included,
     excluded,
     warnings: buildWarnings(request, included, excluded, response),
@@ -144,25 +154,26 @@ function buildAudit(request, response) {
 
 function describeMemory(memory, rank) {
   const scope = normalizeScope(memory.scope);
+  const hasScopeData = Object.keys(scope).length > 0 || typeof memory.scope_visibility === 'string';
   return {
     rank,
     id: memory.id || memory.memory_id || null,
     memory_type: memory.memory_type || null,
     scope_visibility: memory.scope_visibility || null,
-    scope_class: classifyScope(memory, scope),
+    scope_class: hasScopeData ? classifyScope(memory, scope) : 'unknown',
     scope,
     tags: Array.isArray(memory.tags) ? memory.tags : [],
     importance_score: memory.importance_score ?? null,
     decay_score: memory.decay_score ?? null,
     relevance_score: memory.relevance_score ?? null,
-    rrf_score: memory.rrf_score ?? memory.score ?? null,
+    rrf_score: memory.rrf_score ?? memory.score ?? memory.score_breakdown?.semantic_similarity ?? null,
     token_count: memory.token_count ?? null,
     snippet: snippet(memory.content || ''),
   };
 }
 
 function classifyScope(memory, scope) {
-  if (memory.scope_visibility === 'workspace') return 'workspace-published';
+  if (memory.scope_visibility === 'workspace') return 'workspace-visible';
   if (memory.scope_visibility === 'private') {
     if (scope.user_id) return 'user-private';
     if (scope.agent_id) return 'agent-private';
@@ -175,13 +186,10 @@ function classifyScope(memory, scope) {
   return 'workspace-local';
 }
 
-function buildWarnings(request, included, excluded, response) {
+function buildWarnings(_request, included, excluded, response) {
   const warnings = [];
-  if (request.include_master_memory && included.every((item) => item.scope_class !== 'master')) {
-    warnings.push('include_master_memory was enabled, but no included result was classified as master memory. This may be expected if no master memory matched.');
-  }
-  if (!request.include_workspace_pool && included.some((item) => item.scope_class === 'workspace-published')) {
-    warnings.push('A workspace-published memory was included even though include_workspace_pool was false. Verify backend scope enforcement.');
+  if (included.length > 0 && included.every((item) => item.scope_class === 'unknown')) {
+    warnings.push('Retrieve response did not include scope fields for packed memories; included scope classes are reported as unknown. Use retrieval trace/backend scope details for definitive enforcement audits.');
   }
   if (excluded.length === 0 && !response?.trace) {
     warnings.push('No trace candidates were returned. Exclusion reasons require backend trace support.');
@@ -211,7 +219,8 @@ function normalizeScope(scope) {
 }
 
 function inferExclusionReason(candidate) {
-  if (candidate.token_count && candidate.token_count > 0) return 'not_included';
+  if (candidate.exclusion_reason) return candidate.exclusion_reason;
+  if (candidate.included === false) return 'not_included';
   return 'excluded_by_retrieval_pipeline';
 }
 
