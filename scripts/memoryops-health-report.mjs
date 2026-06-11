@@ -44,6 +44,10 @@ try {
 
 try {
   const days = asNumber(options.days, 30);
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    throw new Error('--days must be an integer between 1 and 365.');
+  }
+
   const report = await buildReport(config, days);
 
   if (asBoolean(options.json, false)) {
@@ -113,7 +117,7 @@ async function retrievalSmoke(config) {
       include_workspace_pool: true,
       include_master_memory: true,
     });
-    const count = Array.isArray(data?.memories) ? data.memories.length : Array.isArray(data?.items) ? data.items.length : 0;
+    const count = normalizeArrayPayload(data, ['memories', 'items', 'results']).length;
     return { ok: true, returned: count, query_id: data?.query_id || null, elapsed_ms: data?.elapsed_ms ?? null, token_count: data?.total_tokens ?? data?.token_count ?? null };
   } catch (error) {
     return { ok: false, error: error.message };
@@ -135,10 +139,10 @@ function evaluateFindings(checks, smoke) {
   if (!checks.stats.ok) {
     findings.push(critical('workspace_stats_failed', 'Workspace stats could not be loaded.', checks.stats.error));
   } else {
-    const total = Number(stats.total_memories || 0);
-    const semantic = Number(stats.semantic_count || 0);
-    const deleted = Number(stats.deleted_count || 0);
-    const pinned = Number(stats.pinned_count || 0);
+    const total = numberField(stats, ['total_memories', 'total', 'memory_count']);
+    const semantic = numberField(stats, ['semantic_count', 'semantic_memories']);
+    const deleted = numberField(stats, ['deleted_count', 'deleted_memories']);
+    const pinned = numberField(stats, ['pinned_count', 'pinned_memories']);
 
     if (total === 0) {
       findings.push(warning('no_memories', 'Workspace has no memories yet.', 'Seed or import memory before connecting agents.'));
@@ -157,18 +161,19 @@ function evaluateFindings(checks, smoke) {
     }
   }
 
-  const integrations = Array.isArray(checks.integrations.data) ? checks.integrations.data : [];
+  const integrations = normalizeArrayPayload(checks.integrations.data, ['integrations', 'items', 'data']);
   if (!checks.integrations.ok) {
     findings.push(warning('integrations_unavailable', 'Integration status could not be loaded.', checks.integrations.error));
   } else {
     for (const integration of integrations) {
-      if (integration.status && !['active', 'ok', 'healthy'].includes(String(integration.status).toLowerCase())) {
-        findings.push(warning('integration_degraded', `Integration ${integration.source} is ${integration.status}.`, `${integration.errors_24h || 0} errors in 24h.`));
+      const status = String(integration.status || '').toLowerCase();
+      if (status && !['active', 'ok', 'healthy'].includes(status)) {
+        findings.push(warning('integration_degraded', `Integration ${integration.source || '<unknown>'} is ${integration.status}.`, `${integration.errors_24h || 0} errors in 24h.`));
       }
     }
   }
 
-  const dlqItems = normalizeArrayPayload(checks.dlq.data, ['items', 'jobs', 'dlq']);
+  const dlqItems = normalizeArrayPayload(checks.dlq.data, ['items', 'jobs', 'dlq', 'data']);
   if (!checks.dlq.ok) {
     findings.push(warning('dlq_unavailable', 'DLQ could not be loaded.', checks.dlq.error));
   } else if (dlqItems.length > 0) {
@@ -191,17 +196,17 @@ function evaluateFindings(checks, smoke) {
 
 function buildSummary(checks, smoke) {
   const stats = checks.stats.data || {};
-  const integrations = Array.isArray(checks.integrations.data) ? checks.integrations.data : [];
-  const dlqItems = normalizeArrayPayload(checks.dlq.data, ['items', 'jobs', 'dlq']);
-  const tags = normalizeArrayPayload(checks.tags.data, ['tags', 'items']);
+  const integrations = normalizeArrayPayload(checks.integrations.data, ['integrations', 'items', 'data']);
+  const dlqItems = normalizeArrayPayload(checks.dlq.data, ['items', 'jobs', 'dlq', 'data']);
+  const tags = normalizeArrayPayload(checks.tags.data, ['tags', 'items', 'data']);
 
   return {
-    total_memories: stats.total_memories ?? null,
-    semantic_count: stats.semantic_count ?? null,
-    episodic_count: stats.episodic_count ?? null,
-    pinned_count: stats.pinned_count ?? null,
-    memories_created_7d: stats.memories_created_7d ?? null,
-    memories_created_30d: stats.memories_created_30d ?? null,
+    total_memories: numberField(stats, ['total_memories', 'total', 'memory_count'], null),
+    semantic_count: numberField(stats, ['semantic_count', 'semantic_memories'], null),
+    episodic_count: numberField(stats, ['episodic_count', 'episodic_memories'], null),
+    pinned_count: numberField(stats, ['pinned_count', 'pinned_memories'], null),
+    memories_created_7d: numberField(stats, ['memories_created_7d'], null),
+    memories_created_30d: numberField(stats, ['memories_created_30d'], null),
     integrations: integrations.length,
     dlq_jobs: dlqItems.length,
     contradiction_count: extractCount(checks.contradiction_count.data),
@@ -236,7 +241,7 @@ function printReport(report) {
     console.log(`  ${key}: ${formatValue(value)}`);
   }
   if (Array.isArray(report.summary.top_tags) && report.summary.top_tags.length > 0) {
-    console.log(`  top_tags: ${report.summary.top_tags.map((tag) => tag.name || tag.tag || String(tag)).join(', ')}`);
+    console.log(`  top_tags: ${report.summary.top_tags.map(formatTag).join(', ')}`);
   }
   console.log('');
   console.log('Findings');
@@ -273,14 +278,30 @@ function normalizeArrayPayload(payload, keys) {
 function extractCount(payload) {
   if (typeof payload === 'number') return payload;
   if (!payload || typeof payload !== 'object') return null;
-  for (const key of ['count', 'total', 'open', 'unresolved']) {
+  for (const key of ['count', 'total', 'open', 'unresolved', 'open_count', 'unresolved_count']) {
     if (typeof payload[key] === 'number') return payload[key];
   }
   return null;
+}
+
+function numberField(payload, keys, defaultValue = 0) {
+  if (!payload || typeof payload !== 'object') return defaultValue;
+  for (const key of keys) {
+    const value = Number(payload[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return defaultValue;
 }
 
 function formatValue(value) {
   if (value === null || value === undefined) return 'n/a';
   if (Array.isArray(value)) return String(value.length);
   return String(value);
+}
+
+function formatTag(tag) {
+  if (!tag || typeof tag !== 'object') return String(tag);
+  const label = tag.name || tag.tag || tag.value || '<unknown>';
+  const count = tag.count ?? tag.total ?? null;
+  return count === null ? String(label) : `${label}(${count})`;
 }
