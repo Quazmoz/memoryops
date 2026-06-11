@@ -31,6 +31,7 @@ Options:
   --repo <owner/name>         Optional repo scope metadata
   --user-id <id>              Optional user scope metadata
   --memory-type <type>        Direct memory mode only. Default: episodic
+  --scope-visibility <value>  Direct memory mode only. private, workspace, or published
   --importance <score>        Direct memory mode only. Default: 0.6
   --max-chars <n>             Chunk text files above this size. Default: 6000
   --dry-run                   Parse and report without writing to MemoryOps
@@ -46,7 +47,7 @@ Examples:
   node scripts/memoryops-import.mjs --path README.md --dry-run --json
 
 Supported JSON/JSONL item fields:
-  content, tags, metadata, source_ref, agent_id, user_id, repo, memory_type, importance_score
+  content, tags, metadata, source_ref, agent_id, user_id, repo, memory_type, scope_visibility, importance_score
 `;
 
 const { options } = parseArgs();
@@ -60,15 +61,9 @@ if (!options.path) {
   fail(USAGE.trim());
 }
 
-let config;
-try {
-  config = resolveMemoryOpsConfig(options);
-} catch (error) {
-  fail(error.message);
-}
-
 try {
   const importOptions = normalizeOptions(options);
+  const config = resolveMemoryOpsConfig(options, { requireAuth: !importOptions.dryRun });
   const items = loadImportItems(importOptions);
   const limitedItems = importOptions.limit === null ? items : items.slice(0, importOptions.limit);
 
@@ -102,6 +97,21 @@ function normalizeOptions(options) {
     throw new Error(`Unsupported import mode "${mode}".`);
   }
 
+  const importance = asNumber(options.importance, 0.6);
+  if (importance < 0 || importance > 1) {
+    throw new Error('--importance must be between 0 and 1.');
+  }
+
+  const maxChars = asNumber(options.maxChars, 6000);
+  if (!Number.isInteger(maxChars) || maxChars < 500) {
+    throw new Error('--max-chars must be an integer of at least 500.');
+  }
+
+  const limit = options.limit === undefined ? null : asNumber(options.limit, null);
+  if (limit !== null && (!Number.isInteger(limit) || limit < 1)) {
+    throw new Error('--limit must be a positive integer.');
+  }
+
   return {
     inputPath,
     format,
@@ -111,11 +121,12 @@ function normalizeOptions(options) {
     repo: options.repo || null,
     userId: options.userId || null,
     memoryType: options.memoryType || 'episodic',
-    importance: asNumber(options.importance, 0.6),
-    maxChars: asNumber(options.maxChars, 6000),
+    scopeVisibility: options.scopeVisibility || null,
+    importance,
+    maxChars,
     dryRun: asBoolean(options.dryRun, false),
     json: asBoolean(options.json, false),
-    limit: options.limit === undefined ? null : asNumber(options.limit, null),
+    limit,
   };
 }
 
@@ -153,6 +164,9 @@ function loadTextFile(filePath, importOptions) {
     content: chunks.length === 1 ? chunk : `${chunk}\n\n[chunk ${index + 1}/${chunks.length}]`,
     tags: inferTags(filePath, importOptions.tags),
     source_ref: rel,
+    agent_id: importOptions.agentId,
+    user_id: importOptions.userId,
+    repo: importOptions.repo,
     metadata: {
       importer: 'memoryops-import',
       source_path: rel,
@@ -175,13 +189,19 @@ function loadJsonItems(filePath, importOptions) {
 function loadJsonlItems(filePath, importOptions) {
   return fs.readFileSync(filePath, 'utf8')
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line, index) => normalizeJsonItem(JSON.parse(line), filePath, index, importOptions));
+    .map((line, index) => ({ line: line.trim(), index }))
+    .filter(({ line }) => Boolean(line))
+    .map(({ line, index }) => {
+      try {
+        return normalizeJsonItem(JSON.parse(line), filePath, index, importOptions);
+      } catch (error) {
+        throw new Error(`Invalid JSONL at ${filePath}:${index + 1}: ${error.message}`);
+      }
+    });
 }
 
 function normalizeJsonItem(item, filePath, index, importOptions) {
-  if (!item || typeof item !== 'object') {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) {
     throw new Error(`Import item ${index + 1} in ${filePath} is not an object.`);
   }
   if (!item.content || typeof item.content !== 'string') {
@@ -192,8 +212,12 @@ function normalizeJsonItem(item, filePath, index, importOptions) {
     ...item,
     tags: mergeTags(item.tags, importOptions.tags),
     source_ref: item.source_ref || item.sourceRef || path.relative(process.cwd(), filePath),
+    agent_id: item.agent_id || item.agentId || importOptions.agentId,
+    user_id: item.user_id || item.userId || importOptions.userId,
+    repo: item.repo || importOptions.repo,
+    scope_visibility: item.scope_visibility || item.scopeVisibility || importOptions.scopeVisibility,
     metadata: {
-      ...(item.metadata && typeof item.metadata === 'object' ? item.metadata : {}),
+      ...(item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata) ? item.metadata : {}),
       importer: 'memoryops-import',
       imported_at: new Date().toISOString(),
       source_path: path.relative(process.cwd(), filePath),
@@ -205,27 +229,31 @@ function normalizeJsonItem(item, filePath, index, importOptions) {
 async function writeImportItem(config, importOptions, item) {
   try {
     if (importOptions.mode === 'memory') {
-      const payload = {
+      const payload = stripUndefined({
         workspace_id: config.workspaceId,
-        memory_type: item.memory_type || importOptions.memoryType,
+        memory_type: item.memory_type || item.memoryType || importOptions.memoryType,
         content: item.content,
-        importance_score: item.importance_score ?? importOptions.importance,
+        importance_score: item.importance_score ?? item.importanceScore ?? importOptions.importance,
         tags: mergeTags(item.tags, importOptions.tags),
+        agent_id: item.agent_id || item.agentId || importOptions.agentId,
+        user_id: item.user_id || item.userId || importOptions.userId,
+        repo: item.repo || importOptions.repo,
+        scope_visibility: item.scope_visibility || item.scopeVisibility || importOptions.scopeVisibility || undefined,
         metadata: buildMetadata(importOptions, item),
-      };
+      });
       const response = await apiRequest(config, 'POST', '/v1/memory', payload);
       return { ok: true, source_ref: item.source_ref || null, id: response?.id || response?.memory_id || null };
     }
 
-    const payload = {
+    const payload = stripUndefined({
       content: item.content,
-      agent_id: item.agent_id || importOptions.agentId,
-      user_id: item.user_id || importOptions.userId || undefined,
-      repo: item.repo || importOptions.repo || undefined,
+      agent_id: item.agent_id || item.agentId || importOptions.agentId,
+      user_id: item.user_id || item.userId || importOptions.userId,
+      repo: item.repo || importOptions.repo,
       tags: mergeTags(item.tags, importOptions.tags),
-      source_ref: item.source_ref || undefined,
-      metadata: buildMetadata(importOptions, item),
-    };
+      importance: item.importance ?? item.importance_score ?? item.importanceScore,
+      source_ref: item.source_ref || item.sourceRef,
+    });
     const response = await apiRequest(config, 'POST', '/v1/ingest/observation', payload);
     return { ok: true, source_ref: item.source_ref || null, id: response?.id || response?.event_id || null };
   } catch (error) {
@@ -234,12 +262,12 @@ async function writeImportItem(config, importOptions, item) {
 }
 
 function buildMetadata(importOptions, item) {
-  return {
-    ...(item.metadata && typeof item.metadata === 'object' ? item.metadata : {}),
-    source_ref: item.source_ref || undefined,
-    repo: item.repo || importOptions.repo || undefined,
-    user_id: item.user_id || importOptions.userId || undefined,
-  };
+  return stripUndefined({
+    ...(item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata) ? item.metadata : {}),
+    source_ref: item.source_ref || item.sourceRef,
+    repo: item.repo || importOptions.repo,
+    user_id: item.user_id || item.userId || importOptions.userId,
+  });
 }
 
 function summarize(status, items, writes) {
@@ -317,7 +345,7 @@ function chunkText(content, maxChars) {
     remaining = remaining.slice(splitAt).trim();
   }
   if (remaining) chunks.push(remaining);
-  return chunks;
+  return chunks.filter(Boolean);
 }
 
 function inferTags(filePath, baseTags) {
@@ -332,6 +360,10 @@ function mergeTags(...tagSets) {
     return String(tags).split(',');
   });
   return [...new Set(merged.map((tag) => String(tag).trim()).filter(Boolean))];
+}
+
+function stripUndefined(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== null));
 }
 
 function snippet(value) {
