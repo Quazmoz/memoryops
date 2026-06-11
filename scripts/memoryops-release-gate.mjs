@@ -30,7 +30,7 @@ Options:
   --json                    Print machine-readable summary
   --api-url <url>           Forwarded to child utilities
   --workspace-id <uuid>     Forwarded to child utilities
-  --api-key <key>           Forwarded to child utilities
+  --api-key <key>           Forwarded to child utilities through environment, never command args
 
 Examples:
   node scripts/memoryops-release-gate.mjs
@@ -126,7 +126,7 @@ function runGate(gate, options) {
   const result = spawnSync(process.execPath, args, {
     cwd: process.cwd(),
     encoding: 'utf8',
-    env: process.env,
+    env: childEnv(options),
   });
 
   return {
@@ -145,8 +145,15 @@ function forwardedOptions(options) {
   const args = [];
   appendOption(args, '--api-url', options.apiUrl);
   appendOption(args, '--workspace-id', options.workspaceId);
-  appendOption(args, '--api-key', options.apiKey);
   return args;
+}
+
+function childEnv(options) {
+  const env = { ...process.env };
+  if (options.apiKey) env.MEMORYOPS_API_KEY = String(options.apiKey);
+  if (options.apiUrl) env.MEMORYOPS_API_URL = String(options.apiUrl);
+  if (options.workspaceId) env.MEMORYOPS_WORKSPACE_ID = String(options.workspaceId);
+  return env;
 }
 
 function appendOption(args, flag, value) {
