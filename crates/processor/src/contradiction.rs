@@ -369,9 +369,6 @@ fn stem_word(word: &str) -> String {
     if word.len() > 5 && word.ends_with("ing") {
         return word[..word.len() - 3].to_owned();
     }
-    if word.len() > 4 && word.ends_with("ed") {
-        return word[..word.len() - 2].to_owned();
-    }
     if word.len() > 3 && word.ends_with('s') {
         return word[..word.len() - 1].to_owned();
     }
