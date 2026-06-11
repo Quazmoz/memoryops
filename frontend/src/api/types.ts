@@ -65,6 +65,7 @@ export type ListMemoryResponse = {
 export type SearchFilters = {
   memory_type?: MemoryType;
   source?: string;
+  source_ref?: string;
   min_importance?: number;
   pinned?: boolean;
   tags?: string[];
@@ -87,6 +88,7 @@ export type SearchRequest = {
   memory_types?: MemoryType[];
   as_of?: string;
   include_workspace_pool?: boolean;
+  include_master_memory?: boolean;
 };
 
 export type SearchResult = {
@@ -114,6 +116,7 @@ export type RetrieveRequest = {
   include_trace?: boolean;
   as_of?: string;
   include_workspace_pool?: boolean;
+  include_master_memory?: boolean;
 };
 
 export type TagSummary = {
