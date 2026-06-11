@@ -112,9 +112,8 @@ section:has(> .prose-like) > h2 {
   table-layout: auto;
 }
 
-.prose-like pre,
-.prose-like code {
-  white-space: pre-wrap;
+.prose-like :not(pre) > code {
+  white-space: normal;
   overflow-wrap: anywhere;
 }
 
