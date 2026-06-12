@@ -33,12 +33,21 @@ pub struct WorkspaceConfig {
     pub decay_rate_episodic: f32,
     #[serde(default = "default_decay_rate_semantic")]
     pub decay_rate_semantic: f32,
+    /// Optional workspace-scoped LLM provider override. When absent, the app-wide
+    /// provider from config.toml remains authoritative.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_provider: Option<String>,
+    /// Optional workspace-scoped embedding provider override. When absent, the
+    /// app-wide embedding provider remains authoritative.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding_provider: Option<String>,
+    /// Optional workspace-scoped LLM model override.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_model: Option<String>,
+    /// Optional OpenAI-compatible/Ollama base URL override for this workspace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_base_url: Option<String>,
+    /// Server-side environment variable name containing this workspace's LLM credential.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_api_key_env: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,7 +190,7 @@ pub enum IntegrationStatus {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use serde_json::json;
 
@@ -243,8 +252,25 @@ mod tests {
 
         assert_eq!(decoded.decay_half_life_days, None);
         assert_eq!(decoded.pruning_threshold, None);
+        assert_eq!(decoded.llm_provider, None);
+        assert_eq!(decoded.embedding_provider, None);
         assert_eq!(decoded.llm_base_url, None);
         assert_eq!(decoded.llm_api_key_env, None);
+    }
+
+    #[test]
+    fn default_config_omits_absent_provider_overrides() {
+        let value = serde_json::to_value(WorkspaceConfig::default()).unwrap();
+        let object = value
+            .as_object()
+            .expect("workspace config should serialize to an object");
+
+        assert!(!object.contains_key("llm_provider"));
+        assert!(!object.contains_key("embedding_provider"));
+        assert!(!object.contains_key("llm_model"));
+        assert!(!object.contains_key("llm_base_url"));
+        assert!(!object.contains_key("llm_api_key_env"));
+        assert!(!object.contains_key("embedding_model"));
     }
 
     #[test]

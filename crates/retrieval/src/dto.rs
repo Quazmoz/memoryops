@@ -45,6 +45,8 @@ pub struct SearchRequest {
     pub as_of: Option<DateTime<Utc>>,
     #[serde(default)]
     pub include_workspace_pool: bool,
+    #[serde(default = "default_true")]
+    pub include_master_memory: bool,
     #[serde(default, skip_deserializing)]
     pub inherited_workspace_pool_agent_ids: Vec<String>,
 }
@@ -91,6 +93,7 @@ impl SearchRequest {
     pub fn workspace_pool_access(&self) -> WorkspacePoolAccess {
         WorkspacePoolAccess {
             include_all_workspace: self.include_workspace_pool,
+            include_master_memory: self.include_master_memory,
             inherited_agent_ids: normalized_agent_ids(&self.inherited_workspace_pool_agent_ids),
         }
     }
@@ -99,12 +102,15 @@ impl SearchRequest {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkspacePoolAccess {
     pub include_all_workspace: bool,
+    pub include_master_memory: bool,
     pub inherited_agent_ids: Vec<String>,
 }
 
 impl WorkspacePoolAccess {
     pub fn includes_any_workspace_pool(&self) -> bool {
-        self.include_all_workspace || !self.inherited_agent_ids.is_empty()
+        self.include_all_workspace
+            || self.include_master_memory
+            || !self.inherited_agent_ids.is_empty()
     }
 }
 
@@ -323,6 +329,10 @@ pub fn normalized_memory_types(req: &SearchRequest) -> AppResult<Option<Vec<Stri
         .map(|memory_type| vec![memory_type_as_str(memory_type).to_owned()]))
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn first_scope_value(values: [Option<&String>; 3]) -> Option<String> {
     values.into_iter().find_map(|value| {
         let trimmed = value?.trim();
@@ -371,6 +381,7 @@ mod tests {
         };
 
         assert_eq!(request.mode, SearchMode::Hybrid);
+        assert!(request.include_master_memory);
     }
 
     #[test]
@@ -418,6 +429,7 @@ mod tests {
             memory_types: None,
             as_of: None,
             include_workspace_pool: false,
+            include_master_memory: true,
             inherited_workspace_pool_agent_ids: Vec::new(),
         };
 

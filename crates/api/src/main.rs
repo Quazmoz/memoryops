@@ -1011,6 +1011,70 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
+    async fn list_workspaces_returns_only_current_workspace(pool: PgPool) {
+        let app = router(test_state(pool.clone()).await);
+        let workspace_id = insert_workspace(&pool).await;
+        let other_workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+
+        let response = match app
+            .oneshot(request(
+                Method::GET,
+                "/v1/workspaces".to_owned(),
+                Some(&api_key),
+                json!(null),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("workspace list should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let workspaces = match body.get("workspaces").and_then(Value::as_array) {
+            Some(workspaces) => workspaces,
+            None => panic!("workspace list response should include workspaces array"),
+        };
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(
+            workspaces[0].get("id").and_then(Value::as_str),
+            Some(workspace_id.to_string().as_str())
+        );
+        assert_eq!(
+            workspaces[0].get("name").and_then(Value::as_str),
+            Some(format!("workspace-{workspace_id}").as_str())
+        );
+        assert!(workspaces[0]
+            .get("created_at")
+            .and_then(Value::as_str)
+            .is_some());
+        assert!(workspaces
+            .iter()
+            .all(|workspace| workspace.get("id").and_then(Value::as_str)
+                != Some(other_workspace_id.to_string().as_str())));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn list_workspaces_requires_api_key(pool: PgPool) {
+        let app = router(test_state(pool).await);
+        let response = match app
+            .oneshot(request(
+                Method::GET,
+                "/v1/workspaces".to_owned(),
+                None,
+                json!(null),
+            ))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("request should respond: {error}"),
+        };
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
     async fn missing_key_returns_401(pool: PgPool) {
         let app = router(test_state(pool).await);
         let response = match app

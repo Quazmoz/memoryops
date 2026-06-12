@@ -524,6 +524,20 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
   /v1/workspaces:
+    get:
+      tags: [Workspaces]
+      operationId: listWorkspaces
+      summary: List accessible workspaces
+      description: Returns the workspaces accessible to the authenticated API key. Keys are currently scoped to a single workspace, so the list contains exactly that workspace; the shape is forward-compatible with future multi-workspace accounts.
+      responses:
+        '200':
+          description: Accessible workspaces
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     post:
       tags: [Workspaces]
       operationId: createWorkspace
@@ -2448,6 +2462,26 @@ components:
           format: uuid
         api_key:
           type: string
+    WorkspaceListResponse:
+      type: object
+      required: [workspaces]
+      properties:
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceListItem'
+    WorkspaceListItem:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
     Workspace:
       type: object
       required: [id, name, config, created_at, updated_at]

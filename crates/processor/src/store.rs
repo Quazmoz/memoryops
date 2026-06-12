@@ -41,6 +41,7 @@ pub async fn insert_memory_unit(db: &PgPool, unit: &NewMemoryUnit) -> AppResult<
             workspace_id,
             scope,
             memory_type,
+            scope_visibility,
             content,
             entities,
             importance_score,
@@ -49,7 +50,23 @@ pub async fn insert_memory_unit(db: &PgPool, unit: &NewMemoryUnit) -> AppResult<
             token_count,
             tags
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            CASE
+                WHEN ($3::jsonb->>'agent_id') IS NULL AND ($3::jsonb->>'user_id') IS NULL THEN 'workspace'
+                ELSE 'private'
+            END,
+            $5,
+            $6,
+            $7,
+            $8,
+            $9,
+            $10,
+            $11
+        )
         RETURNING id,
             workspace_id,
             scope,

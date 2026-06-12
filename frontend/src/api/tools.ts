@@ -71,6 +71,11 @@ export interface ToolInvocation {
   occurred_at: string;
 }
 
+export interface ToolSecret {
+  auth_header: string | null;
+  plaintext_secret: string;
+}
+
 export interface ExportedTool {
   name: string;
   description: string;
@@ -98,6 +103,14 @@ export async function listTools(workspaceId: string): Promise<Tool[]> {
   return apiRequest<Tool[]>(`/v1/workspaces/${workspaceId}/tools`);
 }
 
+export async function getTool(workspaceId: string, name: string): Promise<Tool> {
+  return apiRequest<Tool>(toolPath(workspaceId, name));
+}
+
+export async function getToolSecret(workspaceId: string, name: string): Promise<ToolSecret> {
+  return apiRequest<ToolSecret>(`${toolPath(workspaceId, name)}/secret`);
+}
+
 export async function createTool(workspaceId: string, payload: CreateToolPayload): Promise<Tool> {
   return apiRequest<Tool>(`/v1/workspaces/${workspaceId}/tools`, {
     method: "POST",
@@ -106,14 +119,14 @@ export async function createTool(workspaceId: string, payload: CreateToolPayload
 }
 
 export async function updateTool(workspaceId: string, name: string, patch: Partial<CreateToolPayload>): Promise<Tool> {
-  return apiRequest<Tool>(`/v1/workspaces/${workspaceId}/tools/${name}`, {
+  return apiRequest<Tool>(toolPath(workspaceId, name), {
     method: "PATCH",
     body: toolPayload(patch),
   });
 }
 
 export async function deleteTool(workspaceId: string, name: string): Promise<void> {
-  await apiRequest<unknown>(`/v1/workspaces/${workspaceId}/tools/${name}`, {
+  await apiRequest<unknown>(toolPath(workspaceId, name), {
     method: "DELETE",
   });
 }
@@ -131,18 +144,18 @@ export interface ToolTestResponse {
 }
 
 export async function testTool(workspaceId: string, name: string, request: ToolTestRequest): Promise<ToolTestResponse> {
-  return apiRequest<ToolTestResponse>(`/v1/workspaces/${workspaceId}/tools/${name}/test`, {
+  return apiRequest<ToolTestResponse>(`${toolPath(workspaceId, name)}/test`, {
     method: "POST",
     body: request as unknown as Record<string, JsonValue>,
   });
 }
 
 export async function listToolVersions(workspaceId: string, name: string): Promise<ToolVersion[]> {
-  return apiRequest<ToolVersion[]>(`/v1/workspaces/${workspaceId}/tools/${name}/versions`);
+  return apiRequest<ToolVersion[]>(`${toolPath(workspaceId, name)}/versions`);
 }
 
 export async function getToolVersion(workspaceId: string, name: string, version: number): Promise<ToolVersion> {
-  return apiRequest<ToolVersion>(`/v1/workspaces/${workspaceId}/tools/${name}/versions/${version}`);
+  return apiRequest<ToolVersion>(`${toolPath(workspaceId, name)}/versions/${version}`);
 }
 
 export async function rollbackToolVersion(
@@ -151,7 +164,7 @@ export async function rollbackToolVersion(
   version: number,
   changeNote?: string,
 ): Promise<Tool> {
-  return apiRequest<Tool>(`/v1/workspaces/${workspaceId}/tools/${name}/versions/${version}/rollback`, {
+  return apiRequest<Tool>(`${toolPath(workspaceId, name)}/versions/${version}/rollback`, {
     method: "POST",
     body: changeNote ? { change_note: changeNote } : {},
   });
@@ -162,7 +175,7 @@ export async function invokeTool(
   name: string,
   request: ToolTestRequest,
 ): Promise<ToolTestResponse> {
-  return apiRequest<ToolTestResponse>(`/v1/workspaces/${workspaceId}/tools/${name}/invoke`, {
+  return apiRequest<ToolTestResponse>(`${toolPath(workspaceId, name)}/invoke`, {
     method: "POST",
     body: request as unknown as Record<string, JsonValue>,
   });
@@ -174,7 +187,7 @@ export async function listToolInvocations(
   limit = 50,
 ): Promise<ToolInvocation[]> {
   return apiRequest<ToolInvocation[]>(
-    `/v1/workspaces/${workspaceId}/tools/${name}/invocations?limit=${limit}`,
+    `${toolPath(workspaceId, name)}/invocations?limit=${limit}`,
   );
 }
 
@@ -191,6 +204,10 @@ export async function importTools(
     method: "POST",
     body: { tools, overwrite } as Record<string, JsonValue>,
   });
+}
+
+function toolPath(workspaceId: string, name: string): string {
+  return `/v1/workspaces/${workspaceId}/tools/${encodeURIComponent(name)}`;
 }
 
 function toolPayload(payload: Partial<CreateToolPayload>): Record<string, JsonValue> {

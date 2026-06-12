@@ -18,6 +18,10 @@ use crate::{
     },
 };
 
+const DEFAULT_OPENAI_COMPATIBLE_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+const DEFAULT_HUGGINGFACE_ROUTER_BASE_URL: &str = "https://router.huggingface.co/v1";
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
@@ -46,7 +50,12 @@ pub fn build_embedding_provider_for_workspace(
     {
         effective.embedding.provider = provider;
     }
-    if let Some(model) = workspace_config.embedding_model.as_deref() {
+    if let Some(model) = workspace_config
+        .embedding_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
         effective.embedding.model = model.to_owned();
         if effective.embedding.provider == EmbeddingProviderKind::Openai {
             effective.embedding.openai = Some(OpenAiEmbeddingConfig {
@@ -70,7 +79,12 @@ pub fn build_llm_provider_for_workspace(
     {
         effective.llm.provider = provider;
     }
-    if let Some(model) = workspace_config.llm_model.as_deref() {
+    if let Some(model) = workspace_config
+        .llm_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
         effective.llm.model = model.to_owned();
         effective.llm.openai = Some(OpenAiLlmConfig {
             model: model.to_owned(),
@@ -106,7 +120,9 @@ pub fn build_llm_provider_for_workspace(
 fn ensure_workspace_compatible_llm_config(config: &mut AppConfig) {
     if matches!(
         config.llm.provider,
-        LlmProviderKind::OpenaiCompatible | LlmProviderKind::Openrouter | LlmProviderKind::Huggingface
+        LlmProviderKind::OpenaiCompatible
+            | LlmProviderKind::Openrouter
+            | LlmProviderKind::Huggingface
     ) && config.llm.openai_compatible.is_none()
     {
         config.llm.openai_compatible = Some(OpenAiCompatibleConfig {
@@ -265,11 +281,7 @@ pub fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
             let headers = compat.map(|cfg| cfg.headers.clone()).unwrap_or_default();
             let configured_base_url = config.llm.base_url.as_deref().unwrap_or("");
             let base_url = if configured_base_url.trim().is_empty() {
-                match config.llm.provider {
-                    LlmProviderKind::Openrouter => "https://openrouter.ai/api/v1".to_owned(),
-                    LlmProviderKind::Huggingface => "https://router.huggingface.co/v1".to_owned(),
-                    _ => configured_base_url.to_owned(),
-                }
+                default_openai_compatible_base_url(&config.llm.provider).to_owned()
             } else {
                 configured_base_url.to_owned()
             };
@@ -306,5 +318,14 @@ pub fn build_llm_provider(config: &AppConfig) -> Arc<dyn LlmProvider> {
                 .unwrap_or(&config.llm.model);
             Arc::new(GeminiProvider::new(model, api_key, config.llm.timeout_secs))
         }
+    }
+}
+
+fn default_openai_compatible_base_url(provider: &LlmProviderKind) -> &'static str {
+    match provider {
+        LlmProviderKind::OpenaiCompatible => DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+        LlmProviderKind::Openrouter => DEFAULT_OPENROUTER_BASE_URL,
+        LlmProviderKind::Huggingface => DEFAULT_HUGGINGFACE_ROUTER_BASE_URL,
+        _ => DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
     }
 }

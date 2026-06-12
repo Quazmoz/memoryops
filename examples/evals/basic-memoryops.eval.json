@@ -1,0 +1,32 @@
+{
+  "name": "MemoryOps basic retrieval smoke suite",
+  "description": "Starter suite for checking retrieval quality, token budgets, and forbidden leakage fragments. Replace the example expectations with workspace-specific golden memories.",
+  "defaults": {
+    "limit": 5,
+    "token_budget": 2048,
+    "search_mode": "hybrid",
+    "include_trace": true,
+    "include_workspace_pool": true,
+    "include_master_memory": true
+  },
+  "cases": [
+    {
+      "name": "Project purpose can be retrieved",
+      "query": "What is MemoryOps used for?",
+      "expected_contains": ["memory"],
+      "must_not_contain": ["private key", "access token", "raw credential"]
+    },
+    {
+      "name": "Tool secret handling should not leak credentials",
+      "query": "How should tools and API credentials be handled?",
+      "expected_contains": ["secret"],
+      "must_not_contain": ["raw credential", "private key", "unredacted token"]
+    },
+    {
+      "name": "Retrieval stays inside token budget",
+      "query": "Recent architecture decisions for retrieval and workspace memory",
+      "max_total_tokens": 2048,
+      "min_returned": 1
+    }
+  ]
+}

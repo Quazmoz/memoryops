@@ -1308,13 +1308,31 @@ pub(crate) fn push_scope_filter(
     workspace_pool: &WorkspacePoolAccess,
     table_alias: Option<&'static str>,
 ) {
-    if scope.is_empty() {
+    let variants = scope_variants(scope);
+    if variants.is_empty() && !workspace_pool.include_master_memory {
         return;
     }
 
-    push_agent_scope_field(builder, scope.agent_id.clone(), workspace_pool, table_alias);
-    push_scope_field(builder, "user_id", scope.user_id.clone(), table_alias);
-    push_scope_field(builder, "repo", scope.repo.clone(), table_alias);
+    builder.push(" AND (");
+    let mut wrote_clause = false;
+
+    for variant in variants {
+        push_scope_clause_separator(builder, &mut wrote_clause);
+        builder.push("(");
+        push_agent_scope_field(builder, variant.agent_id, workspace_pool, table_alias);
+        builder.push(" AND ");
+        push_scope_field(builder, "user_id", variant.user_id, table_alias);
+        builder.push(" AND ");
+        push_scope_field(builder, "repo", variant.repo, table_alias);
+        builder.push(")");
+    }
+
+    if workspace_pool.include_master_memory {
+        push_scope_clause_separator(builder, &mut wrote_clause);
+        push_master_scope_filter(builder, scope.repo.as_deref(), table_alias);
+    }
+
+    builder.push(")");
 }
 
 pub(crate) fn scope_matches_workspace_pool(
@@ -1322,54 +1340,134 @@ pub(crate) fn scope_matches_workspace_pool(
     requested_scope: &ScopeFilter,
     workspace_pool: &WorkspacePoolAccess,
 ) -> bool {
-    if let Some(agent_id) = &requested_scope.agent_id {
-        let agent_matches = unit.scope.agent_id.as_ref() == Some(agent_id);
-        let workspace_matches = match unit.scope_visibility {
-            ScopeVisibility::Workspace if workspace_pool.include_all_workspace => true,
-            ScopeVisibility::Workspace => {
-                unit.scope.agent_id.as_ref().is_some_and(|memory_agent_id| {
-                    workspace_pool
-                        .inherited_agent_ids
-                        .iter()
-                        .any(|agent_id| agent_id == memory_agent_id)
+    scope_variants(requested_scope)
+        .into_iter()
+        .any(|variant| scope_variant_matches(unit, variant, workspace_pool))
+        || (workspace_pool.include_master_memory
+            && master_scope_matches(unit, requested_scope.repo.as_deref()))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScopeVariant<'a> {
+    pub agent_id: Option<&'a str>,
+    pub user_id: Option<&'a str>,
+    pub repo: Option<&'a str>,
+}
+
+pub(crate) fn scope_variants(scope: &ScopeFilter) -> Vec<ScopeVariant<'_>> {
+    let agent_id = scope.agent_id.as_deref();
+    let user_id = scope.user_id.as_deref();
+    let repo = scope.repo.as_deref();
+
+    let mut variants = match (agent_id, user_id) {
+        (Some(agent_id), Some(user_id)) => vec![
+            ScopeVariant {
+                agent_id: Some(agent_id),
+                user_id: None,
+                repo: None,
+            },
+            ScopeVariant {
+                agent_id: None,
+                user_id: Some(user_id),
+                repo: None,
+            },
+            ScopeVariant {
+                agent_id: Some(agent_id),
+                user_id: Some(user_id),
+                repo: None,
+            },
+        ],
+        (Some(agent_id), None) => vec![ScopeVariant {
+            agent_id: Some(agent_id),
+            user_id: None,
+            repo: None,
+        }],
+        (None, Some(user_id)) => vec![ScopeVariant {
+            agent_id: None,
+            user_id: Some(user_id),
+            repo: None,
+        }],
+        (None, None) => Vec::new(),
+    };
+
+    if let Some(repo) = repo {
+        if variants.is_empty() {
+            variants.push(ScopeVariant {
+                agent_id: None,
+                user_id: None,
+                repo: Some(repo),
+            });
+        } else {
+            let repo_variants = variants
+                .iter()
+                .map(|variant| ScopeVariant {
+                    agent_id: variant.agent_id,
+                    user_id: variant.user_id,
+                    repo: Some(repo),
                 })
-            }
-            ScopeVisibility::Private => false,
-        };
-
-        if !agent_matches && !workspace_matches {
-            return false;
+                .collect::<Vec<_>>();
+            variants.extend(repo_variants);
         }
     }
 
-    if let Some(user_id) = &requested_scope.user_id {
-        if unit.scope.user_id.as_ref() != Some(user_id) {
-            return false;
-        }
-    }
-    if let Some(repo) = &requested_scope.repo {
-        if unit.scope.repo.as_ref() != Some(repo) {
-            return false;
-        }
-    }
+    variants
+}
 
-    true
+fn scope_variant_matches(
+    unit: &MemoryUnit,
+    variant: ScopeVariant<'_>,
+    workspace_pool: &WorkspacePoolAccess,
+) -> bool {
+    agent_scope_matches(unit, variant.agent_id, workspace_pool)
+        && unit.scope.user_id.as_deref() == variant.user_id
+        && unit.scope.repo.as_deref() == variant.repo
+}
+
+fn agent_scope_matches(
+    unit: &MemoryUnit,
+    requested_agent_id: Option<&str>,
+    workspace_pool: &WorkspacePoolAccess,
+) -> bool {
+    match requested_agent_id {
+        Some(agent_id) if unit.scope.agent_id.as_deref() == Some(agent_id) => true,
+        Some(_) if unit.scope_visibility != ScopeVisibility::Workspace => false,
+        Some(_) if workspace_pool.include_all_workspace => true,
+        Some(_) => unit.scope.agent_id.as_ref().is_some_and(|memory_agent_id| {
+            workspace_pool
+                .inherited_agent_ids
+                .iter()
+                .any(|agent_id| agent_id == memory_agent_id)
+        }),
+        None => unit.scope.agent_id.is_none(),
+    }
+}
+
+fn master_scope_matches(unit: &MemoryUnit, requested_repo: Option<&str>) -> bool {
+    unit.scope_visibility == ScopeVisibility::Workspace
+        && unit.scope.agent_id.is_none()
+        && unit.scope.user_id.is_none()
+        && match requested_repo {
+            Some(repo) => unit.scope.repo.is_none() || unit.scope.repo.as_deref() == Some(repo),
+            None => unit.scope.repo.is_none(),
+        }
 }
 
 fn push_agent_scope_field(
     builder: &mut QueryBuilder<'_, Postgres>,
-    value: Option<String>,
+    value: Option<&str>,
     workspace_pool: &WorkspacePoolAccess,
     table_alias: Option<&'static str>,
 ) {
     let Some(value) = value else {
+        push_qualified_column(builder, table_alias, "agent_id");
+        builder.push(" IS NULL");
         return;
     };
 
-    builder.push(" AND (");
+    builder.push("(");
     push_qualified_column(builder, table_alias, "agent_id");
     builder.push(" = ");
-    builder.push_bind(value);
+    builder.push_bind(value.to_owned());
     if workspace_pool.include_all_workspace {
         builder.push(" OR ");
         push_qualified_column(builder, table_alias, "scope_visibility");
@@ -1389,18 +1487,48 @@ fn push_agent_scope_field(
 fn push_scope_field(
     builder: &mut QueryBuilder<'_, Postgres>,
     column: &'static str,
-    value: Option<String>,
+    value: Option<&str>,
     table_alias: Option<&'static str>,
 ) {
-    let Some(value) = value else {
-        return;
-    };
-
-    builder.push(" AND (");
     push_qualified_column(builder, table_alias, column);
-    builder.push(" = ");
-    builder.push_bind(value);
+    if let Some(value) = value {
+        builder.push(" = ");
+        builder.push_bind(value.to_owned());
+    } else {
+        builder.push(" IS NULL");
+    }
+}
+
+fn push_master_scope_filter(
+    builder: &mut QueryBuilder<'_, Postgres>,
+    requested_repo: Option<&str>,
+    table_alias: Option<&'static str>,
+) {
+    builder.push("(");
+    push_qualified_column(builder, table_alias, "scope_visibility");
+    builder.push(" = 'workspace' AND ");
+    push_scope_field(builder, "agent_id", None, table_alias);
+    builder.push(" AND ");
+    push_scope_field(builder, "user_id", None, table_alias);
+    builder.push(" AND ");
+    if let Some(repo) = requested_repo {
+        builder.push("(");
+        push_scope_field(builder, "repo", None, table_alias);
+        builder.push(" OR ");
+        push_scope_field(builder, "repo", Some(repo), table_alias);
+        builder.push(")");
+    } else {
+        push_scope_field(builder, "repo", None, table_alias);
+    }
     builder.push(")");
+}
+
+fn push_scope_clause_separator(builder: &mut QueryBuilder<'_, Postgres>, wrote_clause: &mut bool) {
+    if *wrote_clause {
+        builder.push(" OR ");
+    } else {
+        *wrote_clause = true;
+    }
 }
 
 fn push_qualified_column(
@@ -1474,6 +1602,7 @@ fn nonnegative_i64_to_u64(value: i64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use serde_json::json;
 
     use super::*;
@@ -1496,6 +1625,128 @@ mod tests {
     #[test]
     fn relevance_score_formula_maps_opposing_ratings_to_neutral() {
         assert_eq!(relevance_score_from_ratings(&[1, -1]), 0.5);
+    }
+
+    fn memory_unit_with_scope(
+        scope_visibility: ScopeVisibility,
+        agent_id: Option<&str>,
+        user_id: Option<&str>,
+        repo: Option<&str>,
+    ) -> MemoryUnit {
+        let workspace_id = Uuid::now_v7();
+        MemoryUnit {
+            id: Uuid::now_v7(),
+            workspace_id,
+            scope: MemoryScope {
+                workspace_id,
+                source: Some("github".to_owned()),
+                actor: None,
+                agent_id: agent_id.map(str::to_owned),
+                user_id: user_id.map(str::to_owned),
+                repo: repo.map(str::to_owned),
+            },
+            memory_type: MemoryType::Semantic,
+            scope_visibility,
+            content: "memory".to_owned(),
+            entities: Json(Vec::new()),
+            importance_score: 0.8,
+            importance_overridden: false,
+            source_events: Vec::new(),
+            embedding_id: None,
+            token_count: None,
+            decay_score: 0.8,
+            relevance_score: 0.5,
+            pinned: false,
+            tags: Vec::new(),
+            version: 1,
+            promoted_at: None,
+            source_episode_ids: Vec::new(),
+            corroboration_count: 0,
+            deleted_at: None,
+            last_accessed_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn scope_matches_workspace_pool_allows_matching_user_agent_and_master_memory() {
+        let scope = ScopeFilter {
+            agent_id: Some("agent-1".to_owned()),
+            user_id: Some("user-1".to_owned()),
+            repo: Some("Quazmoz/memoryops".to_owned()),
+        };
+        let workspace_pool = WorkspacePoolAccess {
+            include_all_workspace: false,
+            include_master_memory: true,
+            inherited_agent_ids: Vec::new(),
+        };
+
+        assert!(scope_matches_workspace_pool(
+            &memory_unit_with_scope(ScopeVisibility::Private, None, Some("user-1"), None),
+            &scope,
+            &workspace_pool,
+        ));
+        assert!(scope_matches_workspace_pool(
+            &memory_unit_with_scope(ScopeVisibility::Private, Some("agent-1"), None, None),
+            &scope,
+            &workspace_pool,
+        ));
+        assert!(scope_matches_workspace_pool(
+            &memory_unit_with_scope(
+                ScopeVisibility::Private,
+                Some("agent-1"),
+                Some("user-1"),
+                Some("Quazmoz/memoryops"),
+            ),
+            &scope,
+            &workspace_pool,
+        ));
+        assert!(scope_matches_workspace_pool(
+            &memory_unit_with_scope(
+                ScopeVisibility::Workspace,
+                None,
+                None,
+                Some("Quazmoz/memoryops"),
+            ),
+            &scope,
+            &workspace_pool,
+        ));
+    }
+
+    #[test]
+    fn scope_matches_workspace_pool_rejects_other_identities_and_unrelated_repos() {
+        let scope = ScopeFilter {
+            agent_id: Some("agent-1".to_owned()),
+            user_id: Some("user-1".to_owned()),
+            repo: Some("Quazmoz/memoryops".to_owned()),
+        };
+        let workspace_pool = WorkspacePoolAccess {
+            include_all_workspace: false,
+            include_master_memory: true,
+            inherited_agent_ids: Vec::new(),
+        };
+
+        assert!(!scope_matches_workspace_pool(
+            &memory_unit_with_scope(ScopeVisibility::Private, None, Some("user-2"), None),
+            &scope,
+            &workspace_pool,
+        ));
+        assert!(!scope_matches_workspace_pool(
+            &memory_unit_with_scope(ScopeVisibility::Private, Some("agent-2"), None, None),
+            &scope,
+            &workspace_pool,
+        ));
+        assert!(!scope_matches_workspace_pool(
+            &memory_unit_with_scope(
+                ScopeVisibility::Private,
+                Some("agent-1"),
+                Some("user-1"),
+                Some("org/other-repo"),
+            ),
+            &scope,
+            &workspace_pool,
+        ));
     }
 
     async fn insert_workspace(pool: &PgPool, workspace_id: Uuid) {

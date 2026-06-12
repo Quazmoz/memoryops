@@ -8,20 +8,25 @@ import {
 
 import {
   buildSearchRequest,
+  deleteMemory,
   getMemoryFeedback,
   getMemory,
+  getMemoryHistory,
   getMemoryProvenance,
   getReadiness,
   listMemory,
+  mergeMemories,
   patchMemory,
+  promoteMemory,
   publishMemory,
+  restoreMemory,
   searchMemory,
   submitFeedback,
   bulkMemory,
   type MemoryListParams,
   type SearchCriteria,
 } from "../api/memory";
-import type { FeedbackResponse, ListMemoryResponse, MemoryUnit, SearchResponse, SubmitFeedbackRequest, UpdateMemoryRequest, BulkMemoryRequest, BulkMemoryResponse } from "../api/types";
+import type { FeedbackResponse, ListMemoryResponse, MemoryUnit, MemoryVersion, MergeMemoryRequest, SearchResponse, SubmitFeedbackRequest, UpdateMemoryRequest, BulkMemoryRequest, BulkMemoryResponse } from "../api/types";
 import { hasWorkspaceAuth } from "../lib/auth";
 import { validateImportanceScore } from "../lib/validation";
 import { useAppStore } from "../store/app-store";
@@ -259,6 +264,88 @@ function validatePatch(patch: UpdateMemoryRequest): void {
   if (message) {
     throw new Error(message);
   }
+}
+
+export function useMemoryHistory(workspaceId: string, id: string | undefined) {
+  const apiKey = useAppStore((state) => state.apiKey);
+
+  return useQuery<MemoryVersion[]>({
+    queryKey: [...memoryKeys.detail(workspaceId, id ?? "missing"), "history"],
+    queryFn: () => getMemoryHistory(workspaceId, id ?? ""),
+    enabled: hasWorkspaceAuth(workspaceId, apiKey) && Boolean(id?.trim()),
+    staleTime: 30_000,
+  });
+}
+
+function invalidateLifecycleQueries(queryClient: QueryClient, workspaceId: string, memoryId: string): void {
+  void queryClient.invalidateQueries({ queryKey: memoryKeys.detail(workspaceId, memoryId) });
+  void queryClient.invalidateQueries({ queryKey: memoryKeys.lists(workspaceId) });
+  void queryClient.invalidateQueries({ queryKey: memoryKeys.searches(workspaceId) });
+  void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "stats"] });
+  void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "dashboard"] });
+  void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "lifecycle"] });
+}
+
+export function useDeleteMemory(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<MemoryUnit, Error, { id: string }>({
+    mutationKey: ["workspace", workspaceId, "memory", "delete"],
+    mutationFn: ({ id }) => deleteMemory(workspaceId, id),
+    onSuccess: (_memory, variables) => {
+      queryClient.removeQueries({ queryKey: memoryKeys.detail(workspaceId, variables.id) });
+    },
+    onSettled: (_data, _error, variables) => {
+      invalidateLifecycleQueries(queryClient, workspaceId, variables.id);
+    },
+  });
+}
+
+export function useRestoreMemory(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<MemoryUnit, Error, { id: string }>({
+    mutationKey: ["workspace", workspaceId, "memory", "restore"],
+    mutationFn: ({ id }) => restoreMemory(workspaceId, id),
+    onSuccess: (memory) => {
+      queryClient.setQueryData(memoryKeys.detail(workspaceId, memory.id), memory);
+    },
+    onSettled: (_data, _error, variables) => {
+      invalidateLifecycleQueries(queryClient, workspaceId, variables.id);
+    },
+  });
+}
+
+export function usePromoteMemory(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<MemoryUnit, Error, { id: string }>({
+    mutationKey: ["workspace", workspaceId, "memory", "promote"],
+    mutationFn: ({ id }) => promoteMemory(workspaceId, id),
+    onSuccess: (memory) => {
+      queryClient.setQueryData(memoryKeys.detail(workspaceId, memory.id), memory);
+      optimisticallyPatchMemoryCaches(queryClient, workspaceId, memory.id, memory);
+    },
+    onSettled: (_data, _error, variables) => {
+      invalidateLifecycleQueries(queryClient, workspaceId, variables.id);
+    },
+  });
+}
+
+export function useMergeMemories(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<MemoryUnit, Error, MergeMemoryRequest>({
+    mutationKey: ["workspace", workspaceId, "memory", "merge"],
+    mutationFn: (request) => mergeMemories(workspaceId, request),
+    onSuccess: (memory) => {
+      queryClient.setQueryData(memoryKeys.detail(workspaceId, memory.id), memory);
+    },
+    onSettled: (_data, _error, variables) => {
+      queryClient.removeQueries({ queryKey: memoryKeys.detail(workspaceId, variables.source_id) });
+      invalidateLifecycleQueries(queryClient, workspaceId, variables.target_id);
+    },
+  });
 }
 
 export function useBulkMemory(workspaceId: string) {

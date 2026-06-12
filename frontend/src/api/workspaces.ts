@@ -17,11 +17,18 @@ import type {
   WorkspaceStats,
 } from "./types";
 
+export type { ApiKeySummary } from "./types";
+
 export async function createWorkspace(name: string, adminToken: string): Promise<WorkspaceSummary> {
+  const trimmedName = name.trim();
+  if (trimmedName.length === 0) {
+    throw new Error("Workspace name is required");
+  }
+
   const response = await apiContractRequest<CreateWorkspaceResponse>("createWorkspace", {
     auth: false,
-    headers: { "x-admin-token": adminToken },
-    body: { name },
+    headers: { "x-admin-token": adminToken.trim() },
+    body: { name: trimmedName },
   });
   const id = response.id ?? response.workspace_id;
 
@@ -31,7 +38,7 @@ export async function createWorkspace(name: string, adminToken: string): Promise
 
   const result: WorkspaceSummary = {
     id,
-    name: response.name ?? name,
+    name: response.name ?? trimmedName,
   };
 
   if (response.api_key) {
@@ -42,10 +49,14 @@ export async function createWorkspace(name: string, adminToken: string): Promise
 }
 
 export async function createApiKey(workspaceId: string, name: string): Promise<CreatedApiKey> {
+  const trimmedName = name.trim();
+  if (trimmedName.length === 0) {
+    throw new Error("API key name is required");
+  }
+
   const response = await apiContractRequest<CreateApiKeyResponse>("createApiKey", {
     path: resolveOperationPath("createApiKey", { id: workspaceId }),
-    auth: false,
-    body: { name },
+    body: { name: trimmedName },
   });
   const plaintextKey = response.plaintext_key ?? response.key;
 
@@ -153,16 +164,16 @@ export interface WorkspaceListResponse {
   workspaces: WorkspaceListItem[];
 }
 
-/**
- * List all workspaces accessible with the given API key.
- * Uses a direct fetch so the caller can supply the key explicitly
- * before the store is populated (first-run flow).
- */
 export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[]> {
+  const trimmedApiKey = apiKey.trim();
+  if (trimmedApiKey.length === 0) {
+    return [];
+  }
+
   const headers = requestHeaders({}, false);
-  headers.set("x-api-key", apiKey);
-  const response = await fetch(apiUrl(resolveOperationPath("getCurrentWorkspace", {})), {
-    method: operationMethod("getCurrentWorkspace").toUpperCase(),
+  headers.set("x-api-key", trimmedApiKey);
+  const response = await fetch(apiUrl(resolveOperationPath("listWorkspaces", {})), {
+    method: operationMethod("listWorkspaces").toUpperCase(),
     headers,
   });
   const payload = await parseResponse(response);
@@ -171,13 +182,20 @@ export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[
     throw new ApiError(response.status, extractDetail(payload, response.statusText));
   }
 
-  const listed = (payload as WorkspaceListResponse).workspaces;
+  return normalizeWorkspaceList(payload);
+}
+
+export function normalizeWorkspaceList(payload: unknown): WorkspaceListItem[] {
+  const listed = (payload as WorkspaceListResponse | null)?.workspaces;
   if (Array.isArray(listed)) {
-    return listed;
+    return listed.filter(
+      (workspace): workspace is WorkspaceListItem =>
+        typeof workspace?.id === "string" && typeof workspace?.name === "string",
+    );
   }
 
-  const single = payload as Partial<WorkspaceListItem>;
-  if (typeof single.id === "string" && typeof single.name === "string") {
+  const single = payload as Partial<WorkspaceListItem> | null;
+  if (single && typeof single.id === "string" && typeof single.name === "string") {
     return [
       {
         id: single.id,
@@ -188,6 +206,18 @@ export async function listWorkspaces(apiKey: string): Promise<WorkspaceListItem[
   }
 
   return [];
+}
+
+export type DeleteWorkspaceResponse = {
+  deleted: boolean;
+};
+
+export async function deleteWorkspace(workspaceId: string): Promise<DeleteWorkspaceResponse> {
+  const response = await apiContractRequest<DeleteWorkspaceResponse | null>("deleteWorkspace", {
+    path: resolveOperationPath("deleteWorkspace", { id: workspaceId }),
+  });
+
+  return { deleted: response?.deleted ?? true };
 }
 
 export interface ReindexResponse {
@@ -220,6 +250,8 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   const pruningThreshold = numberConfig(config.pruning_threshold);
   const llmProvider = stringConfig(config.llm_provider);
   const llmModel = stringConfig(config.llm_model);
+  const llmBaseUrl = stringConfig(config.llm_base_url);
+  const llmApiKeyEnv = stringConfig(config.llm_api_key_env);
   const embeddingProvider = stringConfig(config.embedding_provider);
   const embeddingModel = stringConfig(config.embedding_model);
   const subAgentPools = stringArrayConfig(config.sub_agent_pools);
@@ -227,6 +259,9 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   const skillVersionRetentionDays = numberConfig(config.skill_version_retention_days);
   const complianceHardPurge = booleanConfig(config.compliance_hard_purge);
   const complianceMode = booleanConfig(config.compliance_mode);
+  const contradictionMode = stringConfig(config.contradiction_mode);
+  const contradictionThreshold = numberConfig(config.contradiction_threshold);
+  const contradictionCandidates = numberConfig(config.contradiction_candidates);
 
   if (decayHalfLifeDays !== undefined) {
     normalized.decay_half_life_days = decayHalfLifeDays;
@@ -239,6 +274,12 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   }
   if (llmModel !== undefined) {
     normalized.llm_model = llmModel;
+  }
+  if (llmBaseUrl !== undefined) {
+    normalized.llm_base_url = llmBaseUrl;
+  }
+  if (llmApiKeyEnv !== undefined) {
+    normalized.llm_api_key_env = llmApiKeyEnv;
   }
   if (embeddingProvider !== undefined) {
     normalized.embedding_provider = embeddingProvider;
@@ -261,6 +302,15 @@ function normalizeWorkspaceDetail(workspace: WorkspaceDetail): WorkspaceDetail {
   if (complianceMode !== undefined) {
     normalized.compliance_mode = complianceMode;
   }
+  if (contradictionMode !== undefined) {
+    normalized.contradiction_mode = contradictionMode;
+  }
+  if (contradictionThreshold !== undefined) {
+    normalized.contradiction_threshold = contradictionThreshold;
+  }
+  if (contradictionCandidates !== undefined) {
+    normalized.contradiction_candidates = contradictionCandidates;
+  }
 
   return normalized;
 }
@@ -278,7 +328,12 @@ function numberConfig(value: JsonValue | undefined): number | undefined {
 }
 
 function stringConfig(value: JsonValue | undefined): string | undefined {
-  return typeof value === "string" ? value : undefined;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function booleanConfig(value: JsonValue | undefined): boolean | undefined {
@@ -290,5 +345,7 @@ function stringArrayConfig(value: JsonValue | undefined): string[] | undefined {
     return undefined;
   }
 
-  return value as string[];
+  const strings = value as string[];
+  const normalized = strings.map((item) => item.trim()).filter((item) => item.length > 0);
+  return Array.from(new Set(normalized));
 }

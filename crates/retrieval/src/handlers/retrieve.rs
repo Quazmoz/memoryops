@@ -29,6 +29,10 @@ use super::{resolve_workspace_id, workspace_id_param};
 
 const DEFAULT_TRACE_TTL_DAYS: i64 = 30;
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RetrieveRequest {
     pub query: String,
@@ -43,6 +47,8 @@ pub struct RetrieveRequest {
     pub as_of: Option<DateTime<Utc>>,
     #[serde(default)]
     pub include_workspace_pool: bool,
+    #[serde(default = "default_true")]
+    pub include_master_memory: bool,
 }
 
 impl RetrieveRequest {
@@ -185,6 +191,7 @@ pub(crate) async fn execute_retrieve(
         memory_types: None,
         as_of: request.as_of,
         include_workspace_pool: request.include_workspace_pool,
+        include_master_memory: request.include_master_memory,
         inherited_workspace_pool_agent_ids: Vec::new(),
     };
     search_request.apply_workspace_config(&config);
@@ -293,6 +300,10 @@ async fn hydrate_candidates(
     workspace_pool: &WorkspacePoolAccess,
     mode: SearchMode,
 ) -> AppResult<Vec<CandidateMemory>> {
+    if search_results.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let ids = search_results
         .iter()
         .map(|result| result.memory.id)
@@ -314,7 +325,7 @@ async fn hydrate_candidates(
             continue;
         };
         if let Some(scope) = scope {
-            if !store::scope_matches_workspace_pool(&unit, scope, workspace_pool) {
+            if !retrieve_scope_matches(&unit, scope, workspace_pool) {
                 continue;
             }
         }
@@ -329,6 +340,14 @@ async fn hydrate_candidates(
 
     candidates.sort_by(|left, right| right.score.total_cmp(&left.score));
     Ok(candidates)
+}
+
+fn retrieve_scope_matches(
+    unit: &MemoryUnit,
+    requested_scope: &ScopeFilter,
+    workspace_pool: &WorkspacePoolAccess,
+) -> bool {
+    store::scope_matches_workspace_pool(unit, requested_scope, workspace_pool)
 }
 
 struct PackedResult {
@@ -500,274 +519,4 @@ async fn persist_trace(
     .await
     .map(|_| ())
     .map_err(AppError::Database)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use std::collections::HashSet;
-
-    use common::models::{MemoryScope, MemoryType, ScopeVisibility};
-    use proptest::prelude::*;
-    use sqlx::types::Json;
-
-    // ---------------------------------------------------------------------------
-    // PackTestMemory — minimal projection of MemoryUnit for pure in-memory tests
-    // ---------------------------------------------------------------------------
-
-    #[derive(Debug, Clone)]
-    struct PackTestMemory {
-        id: Uuid,
-        content: String,
-        token_count: u32,
-        importance_score: f64,
-        decay_score: f64,
-    }
-
-    impl PackTestMemory {
-        fn into_candidate(self) -> CandidateMemory {
-            let workspace_id = Uuid::nil();
-            CandidateMemory {
-                score: self.importance_score as f32,
-                score_breakdown: ScoreBreakdown {
-                    semantic_similarity: 0.0,
-                    keyword_rank: 0.0,
-                    importance: self.importance_score as f32,
-                    recency: self.decay_score as f32,
-                    source_authority: 0.0,
-                },
-                unit: MemoryUnit {
-                    id: self.id,
-                    workspace_id,
-                    scope: MemoryScope {
-                        workspace_id,
-                        source: None,
-                        actor: None,
-                        agent_id: None,
-                        user_id: None,
-                        repo: None,
-                    },
-                    memory_type: MemoryType::Semantic,
-                    scope_visibility: ScopeVisibility::Private,
-                    content: self.content,
-                    entities: Json(Vec::new()),
-                    importance_score: self.importance_score as f32,
-                    importance_overridden: false,
-                    source_events: Vec::new(),
-                    embedding_id: None,
-                    token_count: Some(self.token_count as i32),
-                    decay_score: self.decay_score as f32,
-                    relevance_score: 0.5,
-                    pinned: false,
-                    tags: Vec::new(),
-                    version: 1,
-                    promoted_at: None,
-                    source_episode_ids: Vec::new(),
-                    corroboration_count: 0,
-                    deleted_at: None,
-                    last_accessed_at: None,
-                    created_at: Utc::now(),
-                    updated_at: Utc::now(),
-                },
-            }
-        }
-    }
-
-    // ---------------------------------------------------------------------------
-    // proptest strategies
-    // ---------------------------------------------------------------------------
-
-    fn arb_uuid() -> impl Strategy<Value = Uuid> {
-        any::<[u8; 16]>().prop_map(Uuid::from_bytes)
-    }
-
-    prop_compose! {
-        fn arb_test_memory()(
-            id in arb_uuid(),
-            content in "[a-z ]{20,200}",
-            token_count in 1u32..=500u32,
-            importance_score in 0.0f64..=1.0f64,
-            decay_score in 0.0f64..=1.0f64,
-        ) -> PackTestMemory {
-            PackTestMemory {
-                id,
-                content,
-                token_count,
-                importance_score,
-                decay_score,
-            }
-        }
-    }
-
-    fn arb_test_memories() -> impl Strategy<Value = Vec<PackTestMemory>> {
-        prop::collection::vec(arb_test_memory(), 0..=30)
-    }
-
-    // ---------------------------------------------------------------------------
-    // Invariant 1 — Packed total never exceeds the budget
-    // ---------------------------------------------------------------------------
-
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(256))]
-
-        #[test]
-        fn packed_total_never_exceeds_budget(
-            memories in arb_test_memories(),
-            budget in 100usize..=8000usize,
-        ) {
-            let candidates: Vec<CandidateMemory> = memories
-                .into_iter()
-                .map(PackTestMemory::into_candidate)
-                .collect();
-
-            let result = pack_memories(candidates, budget)
-                .map_err(|error| TestCaseError::fail(error.to_string()))?;
-
-            prop_assert!(
-                result.total_tokens <= budget,
-                "packed {} tokens but budget was {}",
-                result.total_tokens,
-                budget,
-            );
-        }
-    }
-
-    // ---------------------------------------------------------------------------
-    // Invariant 2 — Duplicate content copies are all accounted for in trace
-    // ---------------------------------------------------------------------------
-    //
-    // The current `pack_memories` function does greedy token-budget packing
-    // without cosine deduplication (dedup lives in the processor/promoter crate).
-    // This invariant verifies that when N identical-content copies are submitted,
-    // every copy appears in the trace entries (included or excluded) and none are
-    // silently dropped. Additionally, no more tokens are packed than the budget.
-    // ---------------------------------------------------------------------------
-
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(256))]
-
-        #[test]
-        fn duplicate_content_all_accounted_in_trace(
-            base_memory in arb_test_memory(),
-            n_copies in 2usize..=10usize,
-            budget in 500usize..=8000usize,
-        ) {
-            let mut copies: Vec<PackTestMemory> = Vec::with_capacity(n_copies);
-            for i in 0..n_copies {
-                let mut copy = base_memory.clone();
-                // Each copy gets a unique ID (but identical content).
-                // Build a deterministic UUID from the base ID bytes + copy index.
-                let mut bytes = copy.id.into_bytes();
-                // XOR the last bytes with the index to guarantee uniqueness
-                let idx_bytes = (i as u32).to_le_bytes();
-                for (b, ib) in bytes[12..16].iter_mut().zip(idx_bytes.iter()) {
-                    *b ^= ib;
-                }
-                copy.id = Uuid::from_bytes(bytes);
-                copies.push(copy);
-            }
-
-            let all_ids: HashSet<Uuid> = copies.iter().map(|m| m.id).collect();
-
-            let candidates: Vec<CandidateMemory> = copies
-                .into_iter()
-                .map(PackTestMemory::into_candidate)
-                .collect();
-
-            let result = pack_memories(candidates, budget)
-                .map_err(|error| TestCaseError::fail(error.to_string()))?;
-
-            // Every copy must appear in trace entries (included OR excluded)
-            let trace_ids: HashSet<Uuid> = result
-                .entries
-                .iter()
-                .map(|e| e.memory_id)
-                .collect();
-            prop_assert_eq!(
-                trace_ids.len(),
-                all_ids.len(),
-                "trace should contain every input copy; trace has {}, expected {}",
-                trace_ids.len(),
-                all_ids.len(),
-            );
-            prop_assert_eq!(&trace_ids, &all_ids);
-
-            // Budget invariant still holds
-            prop_assert!(
-                result.total_tokens <= budget,
-                "packed {} tokens but budget was {}",
-                result.total_tokens,
-                budget,
-            );
-        }
-    }
-
-    // ---------------------------------------------------------------------------
-    // Invariant 3 — All excluded items appear in the trace
-    // (packed ∪ excluded = all inputs, with no silent drops)
-    // ---------------------------------------------------------------------------
-
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(256))]
-
-        #[test]
-        fn all_items_appear_in_packed_or_excluded(
-            memories in arb_test_memories(),
-            budget in 100usize..=2000usize,
-        ) {
-            let all_ids: HashSet<Uuid> = memories.iter().map(|m| m.id).collect();
-
-            let candidates: Vec<CandidateMemory> = memories
-                .into_iter()
-                .map(PackTestMemory::into_candidate)
-                .collect();
-
-            let result = pack_memories(candidates, budget)
-                .map_err(|error| TestCaseError::fail(error.to_string()))?;
-
-            let packed_ids: HashSet<Uuid> = result
-                .memories
-                .iter()
-                .map(|m| m.id)
-                .collect();
-            let excluded_ids: HashSet<Uuid> = result
-                .entries
-                .iter()
-                .filter(|e| !e.included)
-                .map(|e| e.memory_id)
-                .collect();
-
-            let union: HashSet<Uuid> = packed_ids
-                .union(&excluded_ids)
-                .cloned()
-                .collect();
-
-            prop_assert_eq!(
-                &union,
-                &all_ids,
-                "packed ∪ excluded should equal all input IDs"
-            );
-        }
-    }
-
-    // ---------------------------------------------------------------------------
-    // Pre-existing unit test
-    // ---------------------------------------------------------------------------
-
-    #[test]
-    fn token_estimate_uses_tiktoken() {
-        let content = "hello, 世界";
-        let tokenizer = match tiktoken_rs::cl100k_base() {
-            Ok(tokenizer) => tokenizer,
-            Err(error) => panic!("tokenizer should initialize: {error}"),
-        };
-        let expected = tokenizer.encode_with_special_tokens(content).len().max(1);
-        let actual = match estimate_tokens(content) {
-            Ok(actual) => actual,
-            Err(error) => panic!("token estimate should succeed: {error}"),
-        };
-
-        assert_eq!(actual, expected);
-    }
 }

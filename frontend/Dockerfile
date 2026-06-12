@@ -1,7 +1,7 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm install
+RUN npm ci
 COPY . .
 # VITE_API_BASE_URL is baked in at build time (safe — it's a path, not a secret).
 # VITE_MEMORYOPS_WORKSPACE_ID is kept as a dev fallback only; the production
@@ -34,4 +34,3 @@ USER nginx
 EXPOSE 8080
 # The unprivileged image already calls nginx via its own entrypoint.d mechanism;
 # our script is dropped into /docker-entrypoint.d/ and runs before nginx starts.
-

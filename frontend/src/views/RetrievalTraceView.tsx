@@ -37,6 +37,8 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
   const [agentId, setAgentId] = useState("");
   const [userId, setUserId] = useState("");
   const [repo, setRepo] = useState("");
+  const [includeWorkspacePool, setIncludeWorkspacePool] = useState(false);
+  const [includeMasterMemory, setIncludeMasterMemory] = useState(true);
   const [activeQueryId, setActiveQueryId] = useState(initialActiveQueryId);
   const [submittedBudget, setSubmittedBudget] = useState(4000);
   const [lastElapsedMs, setLastElapsedMs] = useState<number | null>(null);
@@ -70,6 +72,8 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
       token_budget: nextBudget,
       mode,
       include_trace: true,
+      include_workspace_pool: includeWorkspacePool,
+      include_master_memory: includeMasterMemory,
     };
 
     if (scope !== undefined) {
@@ -126,6 +130,23 @@ export function RetrievalTraceView({ initialActiveQueryId = "" }: RetrievalTrace
               <ScopeInput id="trace-repo-input" label="Repo" helpText="Restrict retrieval to memories scoped to a specific repository, usually owner/repo." value={repo} onChange={setRepo} placeholder="owner/repo" />
             </div>
             <p className="text-xs text-ink/55">Leave blank to retrieve across all scopes</p>
+
+            <div className="flex flex-wrap gap-2">
+              <ScopeToggle
+                testId="trace-include-workspace-pool"
+                label="Include workspace pool"
+                active={includeWorkspacePool}
+                onToggle={() => setIncludeWorkspacePool((value) => !value)}
+                tooltip="Workspace pool includes workspace-visible memories beyond the exact private agent, user, or repo scope. Off by default so retrieval stays scoped to the requested agent/user/repo."
+              />
+              <ScopeToggle
+                testId="trace-include-master-memory"
+                label="Include master memory"
+                active={includeMasterMemory}
+                onToggle={() => setIncludeMasterMemory((value) => !value)}
+                tooltip="Master memory is the global, canonical workspace-level memory pool. It is included by default and intended to be available to every retrieval unless you explicitly disable it here."
+              />
+            </div>
 
             <div className="grid gap-3 md:grid-cols-[minmax(8rem,0.8fr)_minmax(7rem,0.6fr)_minmax(9rem,0.7fr)_auto] md:items-end">
               <div className="grid gap-2">
@@ -352,6 +373,29 @@ function TraceMeta({ label, tooltip, value, wide = false }: { label: string; too
       <dt className="text-sm text-ink/60"><InfoLabel label={label} tooltip={tooltip} /></dt>
       <dd className="min-w-0 break-words text-sm font-medium text-ink">{value}</dd>
     </div>
+  );
+}
+
+function ScopeToggle({ testId, label, active, onToggle, tooltip }: { testId: string; label: string; active: boolean; onToggle: () => void; tooltip: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={active}
+          data-testid={testId}
+          onClick={onToggle}
+          className={cn(
+            "inline-flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-accent",
+            active ? "border-accent bg-accent/10 text-accent-strong" : "border-line bg-white text-ink/70 hover:bg-soft",
+          )}
+        >
+          {label}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }
 

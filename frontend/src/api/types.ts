@@ -65,6 +65,7 @@ export type ListMemoryResponse = {
 export type SearchFilters = {
   memory_type?: MemoryType;
   source?: string;
+  source_ref?: string;
   min_importance?: number;
   pinned?: boolean;
   tags?: string[];
@@ -87,6 +88,7 @@ export type SearchRequest = {
   memory_types?: MemoryType[];
   as_of?: string;
   include_workspace_pool?: boolean;
+  include_master_memory?: boolean;
 };
 
 export type SearchResult = {
@@ -114,6 +116,7 @@ export type RetrieveRequest = {
   include_trace?: boolean;
   as_of?: string;
   include_workspace_pool?: boolean;
+  include_master_memory?: boolean;
 };
 
 export type TagSummary = {
@@ -157,6 +160,18 @@ export type ImportMemoriesResponse = {
   imported: number;
   skipped: number;
   errors: number;
+};
+
+export type ReadinessResponse = {
+  status: string;
+  httpStatus: number;
+};
+
+export type IngestResult = {
+  ok: boolean;
+  status: number;
+  data: JsonValue | null;
+  detail?: string | null;
 };
 
 export type ScoreBreakdown = {
@@ -259,40 +274,39 @@ export type UpdateMemoryRequest = {
   pinned?: boolean;
   tags?: string[];
   importance_score?: number;
+  content?: string;
+  scope_visibility?: ScopeVisibility;
 };
 
-export type ReadinessResponse = {
-  status: "ok" | "unavailable" | string;
-  checks?: {
-    database?: string;
-    redis?: string;
-    qdrant?: string;
-  };
-  httpStatus: number;
+export type BulkMemoryAction = "pin" | "unpin" | "delete";
+
+export type BulkMemoryRequest = {
+  ids: string[];
+  action: BulkMemoryAction;
 };
 
-export type IngestAcceptedResponse = {
-  status: string;
-  event_id?: string | null;
+export type BulkMemoryResponse = {
+  affected: number;
+  affected_ids: string[];
+  requested: number;
+  action: BulkMemoryAction;
 };
 
-export type IngestResult = {
-  ok: boolean;
-  status: number;
-  data: IngestAcceptedResponse | JsonValue | null;
-  detail?: string;
-};
-
-export type CreateWorkspaceResponse = {
-  id?: string;
-  name?: string;
-  workspace_id?: string;
-  api_key?: string;
+export type MergeMemoryRequest = {
+  source_id: string;
+  target_id: string;
 };
 
 export type WorkspaceSummary = {
   id: string;
   name: string;
+  api_key?: string;
+};
+
+export type CreateWorkspaceResponse = {
+  id?: string;
+  workspace_id?: string;
+  name?: string;
   api_key?: string;
 };
 
@@ -311,6 +325,8 @@ export type WorkspaceConfig = {
   sub_agent_pools?: string[];
   llm_provider?: string;
   llm_model?: string;
+  llm_base_url?: string | null;
+  llm_api_key_env?: string | null;
   embedding_provider?: string;
   embedding_model?: string;
   [key: string]: JsonValue | undefined;
@@ -377,6 +393,15 @@ export type CreatedApiKey = {
   plaintext_key: string;
 };
 
+export type ApiKeySummary = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked: boolean;
+};
+
 export type AuditEvent = {
   id: string;
   workspace_id: string;
@@ -403,23 +428,21 @@ export type IntegrationResponse = {
   events_24h: number;
   errors_24h: number;
   status: IntegrationStatus;
+  has_webhook_secret?: boolean;
+  has_api_credential?: boolean;
+  api_sync_enabled?: boolean;
+  sync_config?: JsonValue;
+  last_sync_at?: string | null;
 };
 
-export type BulkMemoryAction = "pin" | "unpin" | "delete";
-export type BulkMemoryRequest = { ids: string[]; action: BulkMemoryAction };
-export type BulkMemoryResponse = {
-  affected: number;
-  affected_ids: string[];
-  requested: number;
-  action: BulkMemoryAction;
-};
-
-export type ApiKeySummary = {
+export type MemoryVersion = {
   id: string;
-  name: string;
-  prefix: string;
+  memory_id: string;
+  workspace_id: string;
+  version: number;
+  content: string;
+  importance_score: number;
+  tags: string[];
+  edited_by: string;
   created_at: string;
-  last_used_at: string | null;
-  revoked: boolean;
 };
-

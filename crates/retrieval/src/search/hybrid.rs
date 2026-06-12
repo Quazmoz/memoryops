@@ -28,7 +28,7 @@ pub async fn hybrid_search(
     hybrid_search_with_config(state, req, limit, &workspace_config).await
 }
 
-pub(crate) async fn hybrid_search_with_config(
+pub async fn hybrid_search_with_config(
     state: &AppState,
     req: &SearchRequest,
     limit: u32,
@@ -36,7 +36,7 @@ pub(crate) async fn hybrid_search_with_config(
 ) -> AppResult<Vec<MemoryResult>> {
     let offset = req.offset.unwrap_or(DEFAULT_OFFSET);
     let requested = limit.saturating_add(offset);
-    let candidate_limit = requested.saturating_mul(2).max(limit.saturating_mul(2));
+    let candidate_limit = requested.saturating_mul(2).max(1);
     let (vector_results, keyword_results) = tokio::join!(
         vector_search_results_with_offset_and_config(
             state,
@@ -116,7 +116,7 @@ pub fn rrf_score(rank: u32) -> f32 {
 }
 
 pub fn fuse_ranked_ids(vector_ids: &[Uuid], keyword_ids: &[Uuid], limit: usize) -> Vec<FusedRank> {
-    let mut scores = HashMap::<Uuid, f32>::new();
+    let mut scores = HashMap::<Uuid, f32>::with_capacity(vector_ids.len() + keyword_ids.len());
     add_rrf_scores(&mut scores, vector_ids);
     add_rrf_scores(&mut scores, keyword_ids);
 

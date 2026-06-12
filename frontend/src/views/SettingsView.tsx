@@ -6,6 +6,7 @@ import type { ApiKeySummary, ForgetUserDataResponse, ImportMemoriesResponse, Pro
 import type { HealthCheck } from "../api/health";
 import { createApiKey, exportMemories, forgetUserData, getWorkspace, importMemories, listApiKeys, revokeApiKey, triggerPromotion, triggerReindex, updateWorkspaceConfig } from "../api/workspaces";
 import { InlineError } from "../components/InlineError";
+import { WorkspaceDangerZone } from "../components/WorkspaceDangerZone";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -34,8 +35,13 @@ export function SettingsView() {
   const [embeddingModel, setEmbeddingModel] = useState("BAAI/bge-small-en-v1.5");
   const [llmProvider, setLlmProvider] = useState("ollama");
   const [llmModel, setLlmModel] = useState("llama3");
+  const [llmBaseUrl, setLlmBaseUrl] = useState("");
+  const [llmApiKeyEnv, setLlmApiKeyEnv] = useState("");
   const [subAgentPools, setSubAgentPools] = useState("");
   const [contradictionMode, setContradictionMode] = useState<"quarantine" | "auto_resolve">("quarantine");
+  const [contradictionThreshold, setContradictionThreshold] = useState(0.35);
+  const [contradictionCandidates, setContradictionCandidates] = useState(20);
+  const [contradictionCandidatesDraft, setContradictionCandidatesDraft] = useState("20");
   const [retentionMaxAgeDays, setRetentionMaxAgeDays] = useState<number | undefined>(undefined);
   const [skillVersionRetentionDays, setSkillVersionRetentionDays] = useState<number | undefined>(undefined);
   const [complianceHardPurge, setComplianceHardPurge] = useState(false);
@@ -48,7 +54,6 @@ export function SettingsView() {
   const [reindexError, setReindexError] = useState<string | null>(null);
   const [confirmReindex, setConfirmReindex] = useState(false);
   const embeddingModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const llmModelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const hasApiKey = apiKey.trim().length > 0;
   const canAct = hasApiKey && workspaceId.trim().length > 0;
@@ -173,6 +178,8 @@ export function SettingsView() {
       setEmbeddingModel(workspace.embedding_model ?? "BAAI/bge-small-en-v1.5");
       setLlmProvider(workspace.llm_provider ?? "ollama");
       setLlmModel(workspace.llm_model ?? "llama3");
+      setLlmBaseUrl(workspace.llm_base_url ?? "");
+      setLlmApiKeyEnv(workspace.llm_api_key_env ?? "");
       setSubAgentPools((workspace.sub_agent_pools ?? []).join(", "));
       setRetentionMaxAgeDays(workspace.retention_max_age_days ?? undefined);
       setSkillVersionRetentionDays(workspace.skill_version_retention_days ?? undefined);
@@ -181,6 +188,13 @@ export function SettingsView() {
       const mode = workspace.contradiction_mode;
       if (mode === "quarantine" || mode === "auto_resolve") {
         setContradictionMode(mode);
+      }
+      if (typeof workspace.contradiction_threshold === "number") {
+        setContradictionThreshold(workspace.contradiction_threshold);
+      }
+      if (typeof workspace.contradiction_candidates === "number") {
+        setContradictionCandidates(workspace.contradiction_candidates);
+        setContradictionCandidatesDraft(String(workspace.contradiction_candidates));
       }
     },
     onError: (error: Error) => setConfigError(error.message),
@@ -225,6 +239,8 @@ export function SettingsView() {
       setEmbeddingModel(workspaceQuery.data.embedding_model ?? "BAAI/bge-small-en-v1.5");
       setLlmProvider(workspaceQuery.data.llm_provider ?? "ollama");
       setLlmModel(workspaceQuery.data.llm_model ?? "llama3");
+      setLlmBaseUrl(workspaceQuery.data.llm_base_url ?? "");
+      setLlmApiKeyEnv(workspaceQuery.data.llm_api_key_env ?? "");
       setSubAgentPools((workspaceQuery.data.sub_agent_pools ?? []).join(", "));
       setRetentionMaxAgeDays(workspaceQuery.data.retention_max_age_days ?? undefined);
       setSkillVersionRetentionDays(workspaceQuery.data.skill_version_retention_days ?? undefined);
@@ -234,6 +250,13 @@ export function SettingsView() {
       if (mode === "quarantine" || mode === "auto_resolve") {
         setContradictionMode(mode);
       }
+      if (typeof workspaceQuery.data.contradiction_threshold === "number") {
+        setContradictionThreshold(workspaceQuery.data.contradiction_threshold);
+      }
+      if (typeof workspaceQuery.data.contradiction_candidates === "number") {
+        setContradictionCandidates(workspaceQuery.data.contradiction_candidates);
+        setContradictionCandidatesDraft(String(workspaceQuery.data.contradiction_candidates));
+      }
     }
   }, [workspaceQuery.data]);
 
@@ -241,9 +264,6 @@ export function SettingsView() {
     return () => {
       if (embeddingModelTimeoutRef.current) {
         clearTimeout(embeddingModelTimeoutRef.current);
-      }
-      if (llmModelTimeoutRef.current) {
-        clearTimeout(llmModelTimeoutRef.current);
       }
     };
   }, []);
@@ -273,11 +293,6 @@ export function SettingsView() {
     configMutation.mutate({ embedding_provider: value });
   }
 
-  function saveLlmProvider(value: string) {
-    setLlmProvider(value);
-    configMutation.mutate({ llm_provider: value });
-  }
-
   function saveEmbeddingModel(value: string) {
     setEmbeddingModel(value);
     if (embeddingModelTimeoutRef.current) {
@@ -288,14 +303,15 @@ export function SettingsView() {
     }, 600);
   }
 
-  function saveLlmModel(value: string) {
-    setLlmModel(value);
-    if (llmModelTimeoutRef.current) {
-      clearTimeout(llmModelTimeoutRef.current);
-    }
-    llmModelTimeoutRef.current = setTimeout(() => {
-      configMutation.mutate({ llm_model: value });
-    }, 600);
+  function saveLlmSettings() {
+    const trimmedBaseUrl = llmBaseUrl.trim();
+    const trimmedApiKeyEnv = llmApiKeyEnv.trim();
+    configMutation.mutate({
+      llm_provider: llmProvider,
+      llm_model: llmModel.trim(),
+      llm_base_url: llmProviderSupportsBaseUrl(llmProvider) && trimmedBaseUrl.length > 0 ? trimmedBaseUrl : null,
+      llm_api_key_env: llmProviderSupportsApiKeyEnv(llmProvider) && trimmedApiKeyEnv.length > 0 ? trimmedApiKeyEnv : null,
+    });
   }
 
   function saveSubAgentPools() {
@@ -306,6 +322,32 @@ export function SettingsView() {
     const next = contradictionMode === "quarantine" ? "auto_resolve" : "quarantine";
     setContradictionMode(next);
     configMutation.mutate({ contradiction_mode: next });
+  }
+
+  function saveContradictionThreshold(value: number) {
+    setContradictionThreshold(value);
+    configMutation.mutate({ contradiction_threshold: value });
+  }
+
+  function saveContradictionCandidates(value: number) {
+    if (!Number.isInteger(value) || value < 1 || value > 100) {
+      setConfigError("contradiction_candidates must be an integer between 1 and 100");
+      setContradictionCandidatesDraft(String(contradictionCandidates));
+      return;
+    }
+
+    setConfigError(null);
+    setContradictionCandidates(value);
+    setContradictionCandidatesDraft(String(value));
+    configMutation.mutate({ contradiction_candidates: value });
+  }
+
+  function commitContradictionCandidates() {
+    const trimmed = contradictionCandidatesDraft.trim();
+    if (trimmed === String(contradictionCandidates)) {
+      return;
+    }
+    saveContradictionCandidates(Number(trimmed));
   }
 
   function saveRetentionMaxAgeDays(value: string) {
@@ -778,6 +820,48 @@ export function SettingsView() {
             </span>
             <HelpTooltip label="Auto-resolve newer wins">When a contradiction is detected, MemoryOps keeps the newer memory and archives the older one automatically.</HelpTooltip>
           </div>
+
+          <div className="grid gap-5 border-t border-line pt-4 lg:grid-cols-2">
+            <label className="grid gap-2 text-sm text-ink/70">
+              <span className="flex justify-between text-xs font-medium uppercase text-ink/45">
+                <InfoLabel
+                  label={`Detection sensitivity: ${contradictionThreshold.toFixed(2)}`}
+                  tooltip="Tunes contradiction detection. Higher values widen the similarity net so more loosely-related memories are compared, but also require stronger textual evidence before a pair is flagged as contradictory. Lower values only compare very similar memories and flag them more readily. Backend default is 0.35."
+                />
+                {configMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
+              </span>
+              <input
+                data-testid="contradiction-threshold-slider"
+                type="range"
+                min="0.05"
+                max="0.95"
+                step="0.01"
+                value={contradictionThreshold}
+                onChange={(event) => saveContradictionThreshold(Number(event.target.value))}
+                disabled={!canAct || configMutation.isPending}
+                className="accent-accent"
+              />
+            </label>
+
+            <div className="grid gap-2">
+              <label className="text-xs font-medium uppercase text-ink/45" htmlFor="contradiction-candidates-input">
+                <InfoLabel label="Candidate neighbours" tooltip="How many of the nearest memories are checked for a possible conflict when a new memory is stored. Higher values catch more contradictions at the cost of more work per write. Backend default is 20." />
+              </label>
+              <Input
+                id="contradiction-candidates-input"
+                data-testid="contradiction-candidates-input"
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                value={contradictionCandidatesDraft}
+                onChange={(event) => setContradictionCandidatesDraft(event.target.value)}
+                onBlur={commitContradictionCandidates}
+                disabled={!canAct || configMutation.isPending}
+                className="w-full lg:w-48"
+              />
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -823,19 +907,55 @@ export function SettingsView() {
                 id="llm-provider"
                 data-testid="llm-provider-select"
                 value={llmProvider}
-                onChange={(event) => saveLlmProvider(event.target.value)}
+                onChange={(event) => setLlmProvider(event.target.value)}
                 className="h-10 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
               >
-                <option value="ollama">ollama</option>
-                <option value="openai">openai</option>
-                <option value="anthropic">anthropic</option>
+                {LLM_PROVIDER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="grid gap-2">
               <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-model">
                 <InfoLabel label="LLM model" tooltip="Specific language model used for model-assisted MemoryOps workflows." />
               </label>
-              <Input id="llm-model" data-testid="llm-model-input" value={llmModel} onChange={(event) => saveLlmModel(event.target.value)} />
+              <Input id="llm-model" data-testid="llm-model-input" value={llmModel} onChange={(event) => setLlmModel(event.target.value)} />
+            </div>
+            {llmProviderSupportsBaseUrl(llmProvider) ? (
+              <div className="grid gap-2">
+                <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-base-url">
+                  <InfoLabel label="LLM base URL" tooltip="Base URL for the LLM API endpoint. Must start with http:// or https://. Leave blank to use the provider default." />
+                </label>
+                <Input
+                  id="llm-base-url"
+                  data-testid="llm-base-url-input"
+                  value={llmBaseUrl}
+                  onChange={(event) => setLlmBaseUrl(event.target.value)}
+                  placeholder="https://api.example.com/v1"
+                />
+              </div>
+            ) : null}
+            {llmProviderSupportsApiKeyEnv(llmProvider) ? (
+              <div className="grid gap-2">
+                <label className="text-xs font-medium uppercase text-ink/45" htmlFor="llm-api-key-env">
+                  <InfoLabel label="Credential env var" tooltip="Name of the server-side environment variable holding the API key for this provider. Leave blank if no credential is required." />
+                </label>
+                <Input
+                  id="llm-api-key-env"
+                  data-testid="llm-api-key-env-input"
+                  value={llmApiKeyEnv}
+                  onChange={(event) => setLlmApiKeyEnv(event.target.value)}
+                  placeholder="CUSTOM_LLM_API_KEY"
+                />
+              </div>
+            ) : null}
+            <div className="flex justify-end">
+              <Button type="button" variant="secondary" data-testid="llm-settings-save" onClick={saveLlmSettings} disabled={configMutation.isPending}>
+                {configMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+                Save LLM settings
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -1126,6 +1246,12 @@ export function SettingsView() {
         </CardContent>
       </Card>
 
+      <WorkspaceDangerZone
+        workspaceId={workspaceId}
+        workspaceName={workspaceQuery.data?.name}
+        disabled={!canAct}
+      />
+
       {/* API Key Plaintext One-Time Modal */}
       {createdPlaintextKey && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
@@ -1262,6 +1388,27 @@ function downloadBlob(blob: Blob, filename: string) {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+const LLM_PROVIDER_OPTIONS: { value: string; label: string }[] = [
+  { value: "ollama", label: "Ollama" },
+  { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
+  { value: "openai_compatible", label: "OpenAI-compatible / custom" },
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "huggingface", label: "Hugging Face Router" },
+  { value: "gemini", label: "Gemini" },
+];
+
+const LLM_BASE_URL_PROVIDERS = new Set(["ollama", "openai_compatible", "openrouter", "huggingface"]);
+const LLM_API_KEY_ENV_PROVIDERS = new Set(["ollama", "openai_compatible", "openrouter", "huggingface", "gemini"]);
+
+function llmProviderSupportsBaseUrl(provider: string): boolean {
+  return LLM_BASE_URL_PROVIDERS.has(provider);
+}
+
+function llmProviderSupportsApiKeyEnv(provider: string): boolean {
+  return LLM_API_KEY_ENV_PROVIDERS.has(provider);
 }
 
 function commaSeparatedValues(value: string): string[] {

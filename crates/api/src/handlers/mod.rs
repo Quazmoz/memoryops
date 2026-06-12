@@ -7,6 +7,8 @@ pub mod audit;
 pub mod compliance;
 pub mod contradictions;
 pub mod export;
+pub mod integration_dlq;
+pub mod integration_sync;
 pub mod integrations;
 pub mod keys;
 pub mod metrics;
@@ -23,6 +25,9 @@ pub fn bootstrap_router() -> Router<AppState> {
 
 pub fn protected_router() -> Router<AppState> {
     Router::new()
+        // GET only: POST /v1/workspaces stays in bootstrap_router (admin-token
+        // auth). Axum merges the two method routers for the shared path.
+        .route("/v1/workspaces", get(workspaces::list_workspaces))
         .route("/v1/workspaces/me", get(workspaces::get_current_workspace))
         .route(
             "/v1/workspaces/{id}",
@@ -149,6 +154,10 @@ pub fn protected_router() -> Router<AppState> {
             "/v1/workspaces/{id}/integrations",
             axum::routing::post(integrations::create_integration)
                 .get(integrations::list_integrations),
+        )
+        .route(
+            "/v1/workspaces/{id}/integrations/{source}/sync",
+            axum::routing::post(integrations::start_connector_sync),
         )
         .route(
             "/v1/workspaces/{id}/integrations/{source}",

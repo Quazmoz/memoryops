@@ -1,7 +1,7 @@
 import { useAppStore } from "../store/app-store";
 import type { JsonValue } from "./types";
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "/api";
 const SLOW_PATHS = ["/v1/retrieve", "/v1/memory/search"];
 const DEFAULT_TIMEOUT_MS = 15_000;
 const SLOW_TIMEOUT_MS = 30_000;
@@ -30,7 +30,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   const init: RequestInit = {
     ...requestOptions,
-    headers: requestHeaders(options, auth),
+    headers: requestHeaders(options, auth, body !== undefined),
     signal: controller.signal,
   };
 
@@ -72,8 +72,9 @@ export function queryString(params: Record<string, string | number | boolean | n
   const searchParams = new URLSearchParams();
 
   Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
-      searchParams.set(key, String(value));
+    const normalized = typeof value === "string" ? value.trim() : value;
+    if (normalized !== undefined && normalized !== null && normalized !== "") {
+      searchParams.set(key, String(normalized));
     }
   });
 
@@ -82,18 +83,25 @@ export function queryString(params: Record<string, string | number | boolean | n
 }
 
 export function extractDetail(payload: unknown, fallback: string): string {
-  if (typeof payload === "string" && payload.trim().length > 0) {
-    return payload;
-  }
-
-  if (isRecord(payload)) {
-    const detail = payload.detail ?? payload.error ?? payload.message;
-    if (typeof detail === "string" && detail.trim().length > 0) {
+  if (typeof payload === "string") {
+    const detail = payload.trim();
+    if (detail.length > 0) {
       return detail;
     }
   }
 
-  return fallback || "Request failed";
+  if (isRecord(payload)) {
+    const detail = payload.detail ?? payload.error ?? payload.message;
+    if (typeof detail === "string") {
+      const trimmedDetail = detail.trim();
+      if (trimmedDetail.length > 0) {
+        return trimmedDetail;
+      }
+    }
+  }
+
+  const trimmedFallback = fallback.trim();
+  return trimmedFallback || "Request failed";
 }
 
 export async function parseResponse(response: Response): Promise<unknown> {
@@ -109,11 +117,15 @@ export async function parseResponse(response: Response): Promise<unknown> {
   }
 }
 
-export function requestHeaders(options: Pick<RequestInit, "headers"> = {}, includeAuth = true): Headers {
+export function requestHeaders(
+  options: Pick<RequestInit, "headers"> = {},
+  includeAuth = true,
+  includeContentType = false,
+): Headers {
   const headers = new Headers(options.headers);
   const apiKey = includeAuth ? useAppStore.getState().apiKey.trim() : "";
 
-  if (!headers.has("content-type")) {
+  if (includeContentType && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
 

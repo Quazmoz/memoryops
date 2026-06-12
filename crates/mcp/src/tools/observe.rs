@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::ToolDefinition;
+use super::{retrieve, ToolDefinition};
 
 const DEFAULT_LIMIT: u32 = 20;
 const MAX_LIMIT: u32 = 100;
@@ -19,6 +19,9 @@ pub struct ObserveInput {
     #[serde(default)]
     pub tags: Vec<String>,
     pub scope_id: Option<Uuid>,
+    pub agent_id: Option<String>,
+    pub user_id: Option<String>,
+    pub repo: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -48,7 +51,7 @@ pub struct ObservationItem {
 pub fn observe_definition() -> ToolDefinition {
     ToolDefinition {
         name: "memory_observe",
-        description: "Ingest a raw observation into the current workspace. The processor will asynchronously consolidate it into memory units.",
+        description: "Ingest a raw observation into the current workspace. The processor will asynchronously consolidate it into scoped memory units.",
         input_schema: json!({
             "type": "object",
             "required": ["content"],
@@ -56,7 +59,10 @@ pub fn observe_definition() -> ToolDefinition {
                 "content": { "type": "string", "minLength": 1, "maxLength": 8000 },
                 "source": { "type": "string" },
                 "tags": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
-                "scope_id": { "type": "string", "format": "uuid" }
+                "scope_id": { "type": "string", "format": "uuid" },
+                "agent_id": { "type": "string", "description": "Optional agent scope. Defaults to mcp-agent when omitted." },
+                "user_id": { "type": "string", "description": "Optional user scope." },
+                "repo": { "type": "string", "description": "Optional repository/project scope such as owner/name." }
             }
         }),
     }
@@ -88,12 +94,13 @@ pub async fn run_observe(
 
     let observation_input = ObservationInput {
         content: input.content,
-        agent_id: DEFAULT_AGENT_ID.to_owned(),
-        user_id: None,
-        repo: None,
+        agent_id: retrieve::normalize_scope_value(input.agent_id)
+            .unwrap_or_else(|| DEFAULT_AGENT_ID.to_owned()),
+        user_id: retrieve::normalize_scope_value(input.user_id),
+        repo: retrieve::normalize_scope_value(input.repo),
         tags: Some(input.tags),
         importance: None,
-        source_ref: input.source,
+        source_ref: retrieve::normalize_scope_value(input.source),
         scope_id: input.scope_id,
     };
 
@@ -153,5 +160,17 @@ mod tests {
             list_observations_definition().name,
             "memory_list_observations"
         );
+    }
+
+    #[test]
+    fn observe_definition_exposes_scope_properties() {
+        let schema = observe_definition().input_schema;
+        let Some(properties) = schema.get("properties").and_then(serde_json::Value::as_object) else {
+            panic!("properties should exist");
+        };
+
+        assert!(properties.contains_key("agent_id"));
+        assert!(properties.contains_key("user_id"));
+        assert!(properties.contains_key("repo"));
     }
 }

@@ -766,6 +766,7 @@ fn compose_skill_markdown(title: &str, description: &str, instructions: &str) ->
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use common::providers::{FastEmbedProvider, OllamaProvider};
     use common::AppConfig;

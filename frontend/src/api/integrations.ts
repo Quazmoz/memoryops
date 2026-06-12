@@ -26,8 +26,79 @@ type DlqJobResponse = {
   created_at?: string | null;
 };
 
+/** Source values accepted by the backend `Source` enum (serde lowercase). */
+export const INTEGRATION_SOURCES = ["github", "slack", "jira", "linear", "observation"] as const;
+
+export type IntegrationSource = (typeof INTEGRATION_SOURCES)[number];
+
+export type CreateIntegrationRequest = {
+  source: IntegrationSource;
+  webhook_secret?: string | undefined;
+  api_token?: string | undefined;
+  api_sync_enabled?: boolean | undefined;
+  sync_config?: JsonValue | undefined;
+};
+
+export type ConnectorSyncRequest = {
+  repo?: string | undefined;
+  since?: string | undefined;
+  limit?: number | undefined;
+};
+
+export type ConnectorSyncResponse = {
+  source: IntegrationSource;
+  queued_events: number;
+  skipped_events: number;
+  status: string;
+  message: string;
+};
+
 export function listIntegrations(workspaceId: string): Promise<IntegrationResponse[]> {
-  return apiRequest<IntegrationResponse[]>(`/v1/workspaces/${workspaceId}/integrations`);
+  return apiRequest<IntegrationResponse[]>(`/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations`);
+}
+
+export function createIntegration(workspaceId: string, request: CreateIntegrationRequest): Promise<IntegrationResponse> {
+  const webhookSecret = request.webhook_secret?.trim() ?? "";
+  const apiToken = request.api_token?.trim() ?? "";
+  if (webhookSecret.length === 0 && apiToken.length === 0) {
+    return Promise.reject(new Error("Webhook secret or API token is required"));
+  }
+
+  return apiRequest<IntegrationResponse>(`/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations`, {
+    method: "POST",
+    body: {
+      source: request.source,
+      ...(webhookSecret.length > 0 ? { webhook_secret: webhookSecret } : {}),
+      ...(apiToken.length > 0 ? { api_token: apiToken } : {}),
+      ...(request.api_sync_enabled !== undefined ? { api_sync_enabled: request.api_sync_enabled } : {}),
+      ...(request.sync_config !== undefined ? { sync_config: request.sync_config } : {}),
+    },
+  });
+}
+
+export function startConnectorSync(
+  workspaceId: string,
+  source: IntegrationSource,
+  request: ConnectorSyncRequest,
+): Promise<ConnectorSyncResponse> {
+  return apiRequest<ConnectorSyncResponse>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations/${encodeURIComponent(source)}/sync`,
+    {
+      method: "POST",
+      body: {
+        ...(request.repo?.trim() ? { repo: request.repo.trim() } : {}),
+        ...(request.since?.trim() ? { since: request.since.trim() } : {}),
+        ...(request.limit !== undefined ? { limit: request.limit } : {}),
+      },
+    },
+  );
+}
+
+export function deleteIntegration(workspaceId: string, source: string): Promise<void> {
+  return apiRequest<void>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations/${encodeURIComponent(source)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function listDlqJobs(workspaceId: string): Promise<DlqJob[]> {

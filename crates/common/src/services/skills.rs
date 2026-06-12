@@ -66,54 +66,43 @@ pub async fn invoke_workspace_skill(
     actor: &str,
     version: Option<i32>,
 ) -> AppResult<(SkillInvocationResponse, i32)> {
-    let (query, has_version) = if let Some(v) = version {
-        (
-            sqlx::query_as::<_, InvokeSkillRow>(
-                r#"
-                SELECT t.id, v.endpoint_url, v.http_method, v.auth_header, v.auth_secret_enc, v.enabled,
-                       v.version, v.scope_visibility, t.rate_limit_per_minute,
-                       t.circuit_breaker_threshold, t.circuit_breaker_cooldown_seconds
-                FROM workspace_tools t
-                JOIN workspace_tool_versions v ON t.id = v.tool_id
-                WHERE t.workspace_id = $1 AND t.name = $2 AND v.version = $3
-                "#,
-            )
-            .bind(workspace_id)
-            .bind(name)
-            .bind(v),
-            true,
+    let query = if let Some(v) = version {
+        sqlx::query_as::<_, InvokeSkillRow>(
+            r#"
+            SELECT t.id, v.endpoint_url, v.http_method, v.auth_header, v.auth_secret_enc, v.enabled,
+                   v.version, v.scope_visibility, t.rate_limit_per_minute,
+                   t.circuit_breaker_threshold, t.circuit_breaker_cooldown_seconds
+            FROM workspace_tools t
+            JOIN workspace_tool_versions v ON t.id = v.tool_id
+            WHERE t.workspace_id = $1 AND t.name = $2 AND v.version = $3
+            "#,
         )
+        .bind(workspace_id)
+        .bind(name)
+        .bind(v)
     } else {
-        (
-            sqlx::query_as::<_, InvokeSkillRow>(
-                r#"
-                SELECT id, endpoint_url, http_method, auth_header, auth_secret_enc, enabled,
-                       version, scope_visibility, rate_limit_per_minute,
-                       circuit_breaker_threshold, circuit_breaker_cooldown_seconds
-                FROM workspace_tools
-                WHERE workspace_id = $1 AND name = $2
-                "#,
-            )
-            .bind(workspace_id)
-            .bind(name),
-            false,
+        sqlx::query_as::<_, InvokeSkillRow>(
+            r#"
+            SELECT id, endpoint_url, http_method, auth_header, auth_secret_enc, enabled,
+                   version, scope_visibility, rate_limit_per_minute,
+                   circuit_breaker_threshold, circuit_breaker_cooldown_seconds
+            FROM workspace_tools
+            WHERE workspace_id = $1 AND name = $2
+            "#,
         )
+        .bind(workspace_id)
+        .bind(name)
     };
 
     let skill = query
         .fetch_optional(&state.db)
         .await
         .map_err(AppError::Database)?
-        .ok_or_else(|| {
-            if has_version {
-                AppError::NotFound {
-                    resource: format!("workspace_tool:{name}@{}", version.unwrap()),
-                }
-            } else {
-                AppError::NotFound {
-                    resource: format!("workspace_tool:{name}"),
-                }
-            }
+        .ok_or_else(|| AppError::NotFound {
+            resource: match version {
+                Some(v) => format!("workspace_tool:{name}@{v}"),
+                None => format!("workspace_tool:{name}"),
+            },
         })?;
 
     if !skill.enabled {

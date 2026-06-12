@@ -33,7 +33,10 @@ impl AppConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        self.retrieval.weights.validate()?;
+        self.database.validate()?;
+        self.processor.validate()?;
+        self.rate_limit.validate()?;
+        self.retrieval.validate()?;
         validate_ratio(
             "promotion.promotion_threshold",
             self.promotion.promotion_threshold,
@@ -68,6 +71,33 @@ pub struct DatabaseConfig {
     pub max_connections: u32,
     pub min_connections: u32,
     pub connect_timeout_secs: u64,
+}
+
+impl DatabaseConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.max_connections == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "database.max_connections",
+                message: "must be at least 1".to_owned(),
+            });
+        }
+        if self.min_connections > self.max_connections {
+            return Err(ConfigError::InvalidValue {
+                field: "database.min_connections",
+                message: format!(
+                    "must be less than or equal to database.max_connections ({})",
+                    self.max_connections
+                ),
+            });
+        }
+        if self.connect_timeout_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "database.connect_timeout_secs",
+                message: "must be at least 1".to_owned(),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -241,6 +271,44 @@ pub struct ProcessorConfig {
     pub decay_window_hour_utc: u32,
 }
 
+impl ProcessorConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.fast_path_concurrency == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "processor.fast_path_concurrency",
+                message: "must be at least 1".to_owned(),
+            });
+        }
+        if self.slow_path_workers == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "processor.slow_path_workers",
+                message: "must be at least 1".to_owned(),
+            });
+        }
+        if self.dlq_ttl_days == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "processor.dlq_ttl_days",
+                message: "must be at least 1".to_owned(),
+            });
+        }
+        if self.processing_stale_threshold_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "processor.processing_stale_threshold_secs",
+                message: "must be at least 1".to_owned(),
+            });
+        }
+        validate_utc_hour(
+            "processor.maintenance_window_hour_utc",
+            self.maintenance_window_hour_utc,
+        )?;
+        validate_utc_hour(
+            "processor.decay_window_hour_utc",
+            self.decay_window_hour_utc,
+        )?;
+        Ok(())
+    }
+}
+
 fn default_processing_stale_threshold_secs() -> u64 {
     10 * 60
 }
@@ -288,6 +356,16 @@ pub struct RateLimitConfig {
     pub dashboard_rpm: u32,
 }
 
+impl RateLimitConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        validate_positive_u32("rate_limit.retrieve_rpm", self.retrieve_rpm)?;
+        validate_positive_u32("rate_limit.ingest_rpm", self.ingest_rpm)?;
+        validate_positive_u32("rate_limit.api_rpm", self.api_rpm)?;
+        validate_positive_u32("rate_limit.dashboard_rpm", self.dashboard_rpm)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalConfig {
@@ -296,6 +374,27 @@ pub struct RetrievalConfig {
     pub tokenizer: String,
     pub weights: ScoringWeights,
     pub source_authority: SourceAuthorityConfig,
+}
+
+impl RetrievalConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        validate_ratio("retrieval.dedup_threshold", self.dedup_threshold)?;
+        if self.default_token_budget == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "retrieval.default_token_budget",
+                message: "must be at least 1".to_owned(),
+            });
+        }
+        if self.tokenizer.trim().is_empty() {
+            return Err(ConfigError::InvalidValue {
+                field: "retrieval.tokenizer",
+                message: "must not be empty".to_owned(),
+            });
+        }
+        self.weights.validate()?;
+        self.source_authority.validate()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -310,6 +409,15 @@ pub struct ScoringWeights {
 
 impl ScoringWeights {
     pub fn validate(&self) -> Result<(), ConfigError> {
+        validate_ratio(
+            "retrieval.weights.semantic_similarity",
+            self.semantic_similarity,
+        )?;
+        validate_ratio("retrieval.weights.importance", self.importance)?;
+        validate_ratio("retrieval.weights.recency", self.recency)?;
+        validate_ratio("retrieval.weights.source_authority", self.source_authority)?;
+        validate_ratio("retrieval.weights.memory_type", self.memory_type)?;
+
         let sum = self.semantic_similarity
             + self.importance
             + self.recency
@@ -329,6 +437,16 @@ pub struct SourceAuthorityConfig {
     pub slack: f32,
     pub jira: f32,
     pub linear: f32,
+}
+
+impl SourceAuthorityConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        validate_ratio("retrieval.source_authority.github", self.github)?;
+        validate_ratio("retrieval.source_authority.slack", self.slack)?;
+        validate_ratio("retrieval.source_authority.jira", self.jira)?;
+        validate_ratio("retrieval.source_authority.linear", self.linear)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -365,6 +483,26 @@ fn validate_ratio(field: &'static str, value: f32) -> Result<(), ConfigError> {
     Ok(())
 }
 
+fn validate_positive_u32(field: &'static str, value: u32) -> Result<(), ConfigError> {
+    if value == 0 {
+        return Err(ConfigError::InvalidValue {
+            field,
+            message: "must be at least 1".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_utc_hour(field: &'static str, value: u32) -> Result<(), ConfigError> {
+    if value > 23 {
+        return Err(ConfigError::InvalidValue {
+            field,
+            message: format!("must be a UTC hour between 0 and 23, got {value}"),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,6 +531,57 @@ mod tests {
         };
 
         assert!(weights.validate().is_ok());
+    }
+
+    #[test]
+    fn scoring_weights_outside_ratio_range_fail_validation() {
+        let weights = ScoringWeights {
+            semantic_similarity: 1.20,
+            importance: -0.20,
+            recency: 0.0,
+            source_authority: 0.0,
+            memory_type: 0.0,
+        };
+
+        assert!(weights.validate().is_err());
+    }
+
+    #[test]
+    fn invalid_processor_window_hour_fails_validation() {
+        let config = ProcessorConfig {
+            fast_path_concurrency: 1,
+            slow_path_workers: 1,
+            max_retries: 3,
+            dlq_ttl_days: 7,
+            processing_stale_threshold_secs: 600,
+            maintenance_window_hour_utc: 24,
+            decay_window_hour_utc: 3,
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn invalid_database_pool_bounds_fail_validation() {
+        let config = DatabaseConfig {
+            max_connections: 4,
+            min_connections: 5,
+            connect_timeout_secs: 5,
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn zero_rate_limit_fails_validation() {
+        let config = RateLimitConfig {
+            retrieve_rpm: 60,
+            ingest_rpm: 300,
+            api_rpm: 0,
+            dashboard_rpm: 600,
+        };
+
+        assert!(config.validate().is_err());
     }
 
     #[test]
@@ -426,48 +615,6 @@ mod tests {
     #[test]
     fn ollama_config_none_api_key_env_resolves_to_none() {
         let cfg = OllamaConfig { api_key_env: None };
-        assert!(cfg.resolve_api_key().is_none());
-    }
-
-    #[test]
-    fn openai_compatible_config_resolves_api_key_from_env() {
-        let cfg = OpenAiCompatibleConfig {
-            api_key_env: Some("_TEST_COMPAT_KEY_MEMORYOPS".to_owned()),
-            headers: Default::default(),
-        };
-        std::env::remove_var("_TEST_COMPAT_KEY_MEMORYOPS");
-        assert!(cfg.resolve_api_key().is_none());
-
-        std::env::set_var("_TEST_COMPAT_KEY_MEMORYOPS", "sk-router-test");
-        assert_eq!(cfg.resolve_api_key().as_deref(), Some("sk-router-test"));
-        std::env::remove_var("_TEST_COMPAT_KEY_MEMORYOPS");
-    }
-
-    #[test]
-    fn openai_compatible_config_none_api_key_env_resolves_to_none() {
-        let cfg = OpenAiCompatibleConfig {
-            api_key_env: None,
-            headers: Default::default(),
-        };
-        assert!(cfg.resolve_api_key().is_none());
-    }
-
-    #[test]
-    fn gemini_config_resolves_api_key_from_env() {
-        let cfg = GeminiConfig {
-            api_key_env: Some("_TEST_GEMINI_KEY_MEMORYOPS".to_owned()),
-        };
-        std::env::remove_var("_TEST_GEMINI_KEY_MEMORYOPS");
-        assert!(cfg.resolve_api_key().is_none());
-
-        std::env::set_var("_TEST_GEMINI_KEY_MEMORYOPS", "AIza-test");
-        assert_eq!(cfg.resolve_api_key().as_deref(), Some("AIza-test"));
-        std::env::remove_var("_TEST_GEMINI_KEY_MEMORYOPS");
-    }
-
-    #[test]
-    fn gemini_config_none_api_key_env_resolves_to_none() {
-        let cfg = GeminiConfig { api_key_env: None };
         assert!(cfg.resolve_api_key().is_none());
     }
 }

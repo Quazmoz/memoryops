@@ -287,14 +287,15 @@ pub fn build_vector_filter(
         ));
     }
     if let Some(scope) = scope {
-        if let Some(agent_id) = &scope.agent_id {
-            conditions.push(agent_scope_condition(agent_id, workspace_pool));
+        let mut scope_conditions = store::scope_variants(scope)
+            .into_iter()
+            .map(|variant| scope_variant_condition(variant, workspace_pool))
+            .collect::<Vec<_>>();
+        if workspace_pool.include_master_memory {
+            scope_conditions.push(master_memory_condition(scope.repo.as_deref()));
         }
-        if let Some(user_id) = &scope.user_id {
-            conditions.push(Condition::matches("user_id", user_id.clone()));
-        }
-        if let Some(repo) = &scope.repo {
-            conditions.push(Condition::matches("repo", repo.clone()));
+        if !scope_conditions.is_empty() {
+            conditions.push(Filter::should(scope_conditions).into());
         }
     }
 
@@ -302,9 +303,13 @@ pub fn build_vector_filter(
 }
 
 fn agent_scope_condition(
-    agent_id: &str,
+    agent_id: Option<&str>,
     workspace_pool: &crate::dto::WorkspacePoolAccess,
 ) -> Condition {
+    let Some(agent_id) = agent_id else {
+        return Condition::is_null("agent_id");
+    };
+
     if workspace_pool.include_all_workspace {
         return Filter::should([
             Condition::matches("agent_id", agent_id.to_owned()),
@@ -326,6 +331,47 @@ fn agent_scope_condition(
     }
 
     Condition::matches("agent_id", agent_id.to_owned())
+}
+
+fn scope_variant_condition(
+    variant: store::ScopeVariant<'_>,
+    workspace_pool: &crate::dto::WorkspacePoolAccess,
+) -> Condition {
+    Filter::must([
+        agent_scope_condition(variant.agent_id, workspace_pool),
+        scope_field_condition("user_id", variant.user_id),
+        scope_field_condition("repo", variant.repo),
+    ])
+    .into()
+}
+
+fn scope_field_condition(field: &str, value: Option<&str>) -> Condition {
+    match value {
+        Some(value) => Condition::matches(field, value.to_owned()),
+        None => Condition::is_null(field),
+    }
+}
+
+fn master_memory_condition(requested_repo: Option<&str>) -> Condition {
+    let mut conditions = vec![
+        Condition::matches("scope_visibility", "workspace".to_owned()),
+        Condition::is_null("agent_id"),
+        Condition::is_null("user_id"),
+    ];
+
+    if let Some(repo) = requested_repo {
+        conditions.push(
+            Filter::should([
+                Condition::is_null("repo"),
+                Condition::matches("repo", repo.to_owned()),
+            ])
+            .into(),
+        );
+    } else {
+        conditions.push(Condition::is_null("repo"));
+    }
+
+    Filter::must(conditions).into()
 }
 
 fn timestamp_from_datetime(value: DateTime<Utc>) -> Timestamp {
@@ -421,6 +467,7 @@ mod tests {
         assert!(debug.contains(&workspace_id.to_string()));
         assert!(debug.contains("agent_id"));
         assert!(debug.contains("repo"));
+        assert!(debug.contains("IsNullCondition"));
     }
 
     #[test]
@@ -506,5 +553,32 @@ mod tests {
         let debug = format!("{filter:?}");
 
         assert!(debug.contains("created_at"));
+    }
+
+    #[test]
+    fn vector_filter_includes_master_memory_terms_when_requested() {
+        let workspace_id = Uuid::now_v7();
+        let scope = ScopeFilter {
+            agent_id: Some("agent".to_owned()),
+            user_id: Some("user".to_owned()),
+            repo: Some("Quazmoz/memoryops".to_owned()),
+        };
+        let filter = build_vector_filter(
+            workspace_id,
+            Some(&scope),
+            None,
+            None,
+            &crate::dto::WorkspacePoolAccess {
+                include_all_workspace: false,
+                include_master_memory: true,
+                inherited_agent_ids: Vec::new(),
+            },
+        );
+        let debug = format!("{filter:?}");
+
+        assert!(debug.contains("scope_visibility"));
+        assert!(debug.contains("workspace"));
+        assert!(debug.contains("repo"));
+        assert!(debug.contains("IsNullCondition"));
     }
 }

@@ -2,6 +2,8 @@ import {
   Check,
   ChevronDown,
   Clipboard,
+  Eye,
+  EyeOff,
   KeyRound,
   Loader2,
   Sparkles,
@@ -43,14 +45,23 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
   const [connectWorkspaceId, setConnectWorkspaceId] = useState("");
   const [connectApiKey, setConnectApiKey] = useState("");
 
+  // Secret field visibility controls
+  const [showAdminToken, setShowAdminToken] = useState(false);
+  const [showExistingKey, setShowExistingKey] = useState(false);
+  const [showConnectApiKey, setShowConnectApiKey] = useState(false);
+
   // Fix #1 — collapsible "Already have a workspace?" section
   const [connectOpen, setConnectOpen] = useState(false);
+  const normalizedConnectApiKey = connectApiKey.trim();
+  const normalizedConnectWorkspaceId = connectWorkspaceId.trim();
 
   // Workspace discovery query — fires only when key looks valid
   const workspacesQuery = useQuery({
-    queryKey: ["workspaces", connectApiKey],
-    queryFn: () => listWorkspaces(connectApiKey),
-    enabled: connectApiKey.startsWith("mops_") && connectApiKey.length > 20,
+    queryKey: ["workspaces", normalizedConnectApiKey],
+    queryFn: () => listWorkspaces(normalizedConnectApiKey),
+    enabled:
+      normalizedConnectApiKey.startsWith("mops_") &&
+      normalizedConnectApiKey.length > 20,
     staleTime: 30_000,
     retry: false,
   });
@@ -122,7 +133,7 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
 
   function finishSetup() {
     if (workspaceId.trim().length > 0 && plaintextKey.trim().length > 0) {
-      setWorkspace(workspaceId, plaintextKey);
+      setWorkspace(workspaceId, plaintextKey.trim());
     }
   }
 
@@ -170,12 +181,14 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
                 </label>
                 <label className="grid gap-2 text-sm font-medium text-ink/70">
                   Admin token
-                  <Input
-                    data-testid="workspace-admin-token-input"
-                    type="password"
-                    autoComplete="current-password"
+                  <SecretInput
+                    dataTestId="workspace-admin-token-input"
                     value={adminToken}
-                    onChange={(event) => setAdminToken(event.target.value)}
+                    onChange={setAdminToken}
+                    visible={showAdminToken}
+                    onToggleVisible={() => setShowAdminToken((visible) => !visible)}
+                    autoComplete="current-password"
+                    placeholder="Admin creation token"
                   />
                 </label>
                 <Button
@@ -256,16 +269,19 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
 
                     {/* Fix #2 — controlled existingKey state */}
                     <div className="flex gap-2">
-                      <Input
-                        data-testid="existing-key-input"
+                      <SecretInput
+                        dataTestId="existing-key-input"
                         placeholder="Paste API key (mops_...)"
                         value={existingKey}
-                        onChange={(e) => setExistingKey(e.target.value)}
+                        onChange={setExistingKey}
+                        visible={showExistingKey}
+                        onToggleVisible={() => setShowExistingKey((visible) => !visible)}
                       />
                       <Button
                         type="button"
                         variant="secondary"
                         data-testid="existing-key-submit"
+                        disabled={existingKey.trim().length === 0}
                         onClick={() => {
                           const val = existingKey.trim();
                           if (val) setWorkspace(workspaceId, val);
@@ -352,15 +368,16 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
                 {/* API key first — triggers workspace discovery */}
                 <label className="grid gap-2 text-sm font-medium text-ink/70">
                   API Key
-                  <Input
-                    data-testid="api-key-input"
-                    type="password"
+                  <SecretInput
+                    dataTestId="api-key-input"
                     placeholder="mops_..."
                     value={connectApiKey}
-                    onChange={(e) => {
-                      setConnectApiKey(e.target.value);
+                    onChange={(value) => {
+                      setConnectApiKey(value);
                       setConnectWorkspaceId(""); // reset selection on key change
                     }}
+                    visible={showConnectApiKey}
+                    onToggleVisible={() => setShowConnectApiKey((visible) => !visible)}
                   />
                 </label>
 
@@ -422,11 +439,14 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
                   type="button"
                   data-testid="connect-button"
                   variant="secondary"
-                  disabled={!connectWorkspaceId || !connectApiKey}
+                  disabled={
+                    normalizedConnectWorkspaceId.length === 0 ||
+                    normalizedConnectApiKey.length === 0
+                  }
                   onClick={() => {
-                    const wsId = connectWorkspaceId.trim();
-                    const key = connectApiKey.trim();
-                    if (wsId && key) setWorkspace(wsId, key);
+                    if (normalizedConnectWorkspaceId && normalizedConnectApiKey) {
+                      setWorkspace(normalizedConnectWorkspaceId, normalizedConnectApiKey);
+                    }
                   }}
                 >
                   Connect
@@ -436,6 +456,53 @@ export function FirstRunGate({ children }: FirstRunGateProps) {
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+type SecretInputProps = {
+  value: string;
+  onChange: (value: string) => void;
+  visible: boolean;
+  onToggleVisible: () => void;
+  dataTestId?: string;
+  placeholder?: string;
+  autoComplete?: string;
+};
+
+function SecretInput({
+  value,
+  onChange,
+  visible,
+  onToggleVisible,
+  dataTestId,
+  placeholder,
+  autoComplete,
+}: SecretInputProps) {
+  return (
+    <div className="flex min-w-0 items-center rounded-md border border-line bg-white focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20">
+      <input
+        data-testid={dataTestId}
+        type={visible ? "text" : "password"}
+        autoComplete={autoComplete}
+        placeholder={placeholder}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="min-w-0 flex-1 rounded-l-md bg-transparent px-3 py-2 text-sm text-ink outline-none placeholder:text-ink/35"
+      />
+      <button
+        type="button"
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-r-md text-ink/45 transition hover:bg-soft hover:text-ink/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        onClick={onToggleVisible}
+        aria-label={visible ? "Hide secret" : "Show secret"}
+        aria-pressed={visible}
+      >
+        {visible ? (
+          <EyeOff className="h-4 w-4" aria-hidden="true" />
+        ) : (
+          <Eye className="h-4 w-4" aria-hidden="true" />
+        )}
+      </button>
     </div>
   );
 }
