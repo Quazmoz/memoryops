@@ -90,7 +90,7 @@ MemoryOps is designed for:
 
 
 | **Feedback** | Per-memory ratings bias future retrieval via rolling relevance scores | System improves from agent and operator feedback over time |
-| **Governance** | Retrieval traces, audit log, pin/delete/merge, skills registry | Operators can inspect, control, and understand what agents remember |
+| **Governance** | Retrieval traces, audit log, pin/delete/merge, versioned agent library | Operators can inspect, control, and understand what agents remember |
 | **MCP/API** | Native Model Context Protocol server + REST API | Agents retrieve and store memory without HTTP glue code |
 | **Control UI** | Memory explorer, workspace settings, DLQ retry, health dashboard | Operators manage memory without touching the database |
 
@@ -156,7 +156,7 @@ Both approaches are valid. MemoryOps is optimized for teams that need governed, 
 - **Hybrid retrieval** — Semantic + BM25 + token-aware packing with Reciprocal Rank Fusion
 - **Feedback loop** — Per-memory ratings bias future retrieval via rolling relevance scores
 - **Retrieval traces** — Per-component scoring explains why each memory was selected
-- **Control UI** — Memory explorer, pin/delete/merge, audit log, and skills registry
+- **Control UI** — Memory explorer, pin/delete/merge, audit log, and versioned agent library
 - **MCP server** — Native Model Context Protocol server for Claude Code, VS Code, Open WebUI
 
 <p align="center">

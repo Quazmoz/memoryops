@@ -147,7 +147,7 @@ pub(crate) async fn workspace_exists(db: &PgPool, workspace_id: Uuid) -> AppResu
     .map_err(AppError::Database)
 }
 
-pub(crate) async fn raw_event_needs_publish(db: &PgPool, raw_event_id: Uuid) -> AppResult<bool> {
+pub async fn raw_event_needs_publish(db: &PgPool, raw_event_id: Uuid) -> AppResult<bool> {
     sqlx::query_scalar::<_, bool>(
         "SELECT NOT EXISTS(SELECT 1 FROM processing_state WHERE raw_event_id = $1)",
     )

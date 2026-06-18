@@ -9,9 +9,9 @@ mod store;
 mod webhook;
 
 pub use observation::ingest::{ingest_observation, ObservationInput, ObservationOutput};
-pub use queue::{publish_raw_event, STREAM_KEY};
+pub use queue::{publish_raw_event, publish_raw_event_with_mode, PublishMode, STREAM_KEY};
 pub use router::{ingestion_router, observation_router};
-pub use store::{insert_raw_event, NewRawEvent};
+pub use store::{insert_raw_event, raw_event_needs_publish, NewRawEvent};
 
 #[cfg(test)]
 mod tests {

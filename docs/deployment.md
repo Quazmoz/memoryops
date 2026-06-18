@@ -87,7 +87,7 @@ spec:
 ```
 
 ### 2. Horizontally Scaling Stateless API Replicas
-Since the Agent Skills registry is **database-backed** (stored in the `agent_skills` table), individual API replicas do not require local persistent volumes (PVs) or directory mounts for `.gemini/skills` or `.claude/skills`.
+Since the Agent Library is **database-backed** (stored in the versioned `agent_resources` tables, with `agent_skills` retained for compatibility), individual API replicas do not require local persistent volumes (PVs) or directory mounts for `.gemini/skills` or `.claude/skills`.
 You can safely set the `replicas` count to `2+` in your Deployment manifest.
 
 **Example API Deployment Spec (`memoryops-api-deployment.yaml`):**
@@ -227,16 +227,16 @@ If you choose to use the local `fastembed` provider (`provider = "fastembed"`), 
 
 ---
 
-## Managing Agent Skills on Remote Servers
+## Managing Agent Library Resources on Remote Servers
 
-Agent Skills are stored directly in the PostgreSQL database (`agent_skills` table) scoped by `workspace_id`. This guarantees database consistency and removes file synchronization issues across stateless API replicas.
+Agent skills, agent profiles, prompts, and reusable instructions are stored directly in PostgreSQL (`agent_resources` and `agent_resource_versions`) scoped by `workspace_id`. This guarantees database consistency, preserves immutable version history, and removes file synchronization issues across stateless API replicas. The legacy `agent_skills` API remains available for Claude/Gemini skill sync workflows.
 
 ### 1. Workspace Skill Seeding
-When a workspace is created, or when listing/retrieving skills for a workspace if it has `0` skills, the server automatically seeds default skills from the server filesystem's `.gemini/skills/` and `.claude/skills/` directories.
+When a workspace is created, or when listing/retrieving skills for a workspace if it has `0` skill resources, the server automatically seeds default skills from the server filesystem's `.gemini/skills/` and `.claude/skills/` directories.
 These default markdown files are packed into the production Docker image during the build stage (`COPY .gemini /app/.gemini` and `COPY .claude /app/.claude`).
 
 ### 2. Synchronizing Local Code Changes to Production Databases
-Because skills are in the Postgres database, modifying files inside your local workspace's `.gemini/skills` or `.claude/skills` directory will not automatically update a remote server. You can synchronize changes bidirectionally:
+Because resources are in the Postgres database, modifying files inside your local workspace's `.gemini/skills` or `.claude/skills` directory will not automatically update a remote server. You can synchronize skill changes bidirectionally:
 
 #### CLI Client Synchronizer
 From your workstation or a deploy script, run the Node.js helper to sync local skills to/from the remote server:

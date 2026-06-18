@@ -1165,6 +1165,198 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/agent-resources:
+    get:
+      tags: [Agent Resources]
+      operationId: listAgentResources
+      summary: List versioned agent resources
+      description: Returns skills, agent profiles, prompts, and reusable instructions for the authenticated workspace.
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [skill, agent, prompt, instruction]
+        - name: assistant
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [generic, openai, claude, gemini]
+      responses:
+        '200':
+          description: Agent resource library
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentResourceSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Agent Resources]
+      operationId: createAgentResource
+      summary: Create a versioned agent resource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentResourceRequest'
+      responses:
+        '200':
+          description: Agent resource created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/agent-resources/{kind}/{assistant}/{name}:
+    get:
+      tags: [Agent Resources]
+      operationId: getAgentResource
+      summary: Read one versioned agent resource
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+      responses:
+        '200':
+          description: Agent resource
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Agent Resources]
+      operationId: updateAgentResource
+      summary: Update one agent resource and create a new version
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAgentResourceRequest'
+      responses:
+        '200':
+          description: Agent resource updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Agent Resources]
+      operationId: deleteAgentResource
+      summary: Delete one agent resource
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+      responses:
+        '200':
+          description: Agent resource deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/agent-resources/{kind}/{assistant}/{name}/versions:
+    get:
+      tags: [Agent Resources]
+      operationId: listAgentResourceVersions
+      summary: List immutable versions for an agent resource
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+      responses:
+        '200':
+          description: Agent resource versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentResourceVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/agent-resources/{kind}/{assistant}/{name}/versions/{version}:
+    get:
+      tags: [Agent Resources]
+      operationId: getAgentResourceVersion
+      summary: Read one immutable agent resource version
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+        - $ref: '#/components/parameters/AgentResourceVersionNumber'
+      responses:
+        '200':
+          description: Agent resource version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResourceVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/agent-resources/{kind}/{assistant}/{name}/versions/{version}/rollback:
+    post:
+      tags: [Agent Resources]
+      operationId: rollbackAgentResource
+      summary: Restore a prior agent resource version as a new version
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+        - $ref: '#/components/parameters/AgentResourceVersionNumber'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                change_note:
+                  type: string
+      responses:
+        '200':
+          description: Agent resource restored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/agent-skills:
     get:
       tags: [Agent Skills]
@@ -1745,6 +1937,33 @@ components:
       schema:
         type: string
     ToolVersion:
+      name: version
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    AgentResourceKind:
+      name: kind
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [skill, agent, prompt, instruction]
+    AgentResourceAssistant:
+      name: assistant
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [generic, openai, claude, gemini]
+    AgentResourceName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+    AgentResourceVersionNumber:
       name: version
       in: path
       required: true
@@ -3012,6 +3231,135 @@ components:
                 type: string
               error:
                 type: string
+    AgentResourceSummary:
+      type: object
+      required: [id, workspace_id, kind, assistant, name, filename, title, description, metadata, version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [skill, agent, prompt, instruction]
+        assistant:
+          type: string
+          enum: [generic, openai, claude, gemini]
+        name:
+          type: string
+        filename:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AgentResource:
+      allOf:
+        - $ref: '#/components/schemas/AgentResourceSummary'
+        - type: object
+          required: [body, content]
+          properties:
+            body:
+              type: string
+            content:
+              type: string
+    AgentResourceVersion:
+      type: object
+      required: [id, resource_id, workspace_id, kind, assistant, name, filename, title, description, body, content, metadata, version, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        resource_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [skill, agent, prompt, instruction]
+        assistant:
+          type: string
+          enum: [generic, openai, claude, gemini]
+        name:
+          type: string
+        filename:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        body:
+          type: string
+        content:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        version:
+          type: integer
+        change_note:
+          type: [string, 'null']
+        created_by:
+          type: [string, 'null']
+        created_at:
+          type: string
+          format: date-time
+    CreateAgentResourceRequest:
+      type: object
+      required: [kind, name, title, description, body]
+      properties:
+        kind:
+          type: string
+          enum: [skill, agent, prompt, instruction]
+        assistant:
+          type: string
+          enum: [generic, openai, claude, gemini]
+        name:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        body:
+          type: string
+        content:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        change_note:
+          type: string
+    UpdateAgentResourceRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        body:
+          type: string
+        content:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        change_note:
+          type: string
     AgentSkill:
       type: object
       required: [name, filename, assistant, title, description]

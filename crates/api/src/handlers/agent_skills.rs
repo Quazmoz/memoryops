@@ -105,16 +105,31 @@ pub async fn seed_default_skills(
             "#
         )
         .bind(workspace_id)
-        .bind(name)
-        .bind(filename)
-        .bind(assistant)
-        .bind(parsed.title)
-        .bind(parsed.description)
-        .bind(parsed.instructions)
-        .bind(content)
+        .bind(&name)
+        .bind(&filename)
+        .bind(&assistant)
+        .bind(&parsed.title)
+        .bind(&parsed.description)
+        .bind(&parsed.instructions)
+        .bind(&content)
         .execute(db)
         .await
         .map_err(AppError::Database)?;
+
+        super::agent_resources::seed_skill_resource(
+            db,
+            workspace_id,
+            super::agent_resources::SkillResourceInput {
+                assistant: &assistant,
+                name: &name,
+                filename: &filename,
+                title: &parsed.title,
+                description: &parsed.description,
+                instructions: &parsed.instructions,
+                content: &content,
+            },
+        )
+        .await?;
     }
 
     Ok(())
@@ -129,8 +144,8 @@ pub async fn list_agent_skills(
     let mut skills = sqlx::query_as::<_, AgentSkill>(
         r#"
         SELECT name, filename, assistant, title, description
-        FROM agent_skills
-        WHERE workspace_id = $1
+        FROM agent_resources
+        WHERE workspace_id = $1 AND kind = 'skill' AND assistant IN ('claude', 'gemini')
         ORDER BY assistant ASC, LOWER(title) ASC, name ASC
         "#,
     )
@@ -146,8 +161,8 @@ pub async fn list_agent_skills(
         skills = sqlx::query_as::<_, AgentSkill>(
             r#"
             SELECT name, filename, assistant, title, description
-            FROM agent_skills
-            WHERE workspace_id = $1
+            FROM agent_resources
+            WHERE workspace_id = $1 AND kind = 'skill' AND assistant IN ('claude', 'gemini')
             ORDER BY assistant ASC, LOWER(title) ASC, name ASC
             "#,
         )
@@ -172,9 +187,9 @@ pub async fn get_agent_skill(
 
     let skill = sqlx::query_as::<_, AgentSkillContent>(
         r#"
-        SELECT name, filename, assistant, title, description, instructions, content
-        FROM agent_skills
-        WHERE workspace_id = $1 AND assistant = $2 AND name = $3
+        SELECT name, filename, assistant, title, description, body AS instructions, content
+        FROM agent_resources
+        WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
         "#,
     )
     .bind(workspace_id)
@@ -188,7 +203,7 @@ pub async fn get_agent_skill(
         Ok(Json(skill))
     } else {
         let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM agent_skills WHERE workspace_id = $1",
+            "SELECT COUNT(*) FROM agent_resources WHERE workspace_id = $1 AND kind = 'skill'",
         )
         .bind(workspace_id)
         .fetch_one(&state.db)
@@ -201,9 +216,9 @@ pub async fn get_agent_skill(
             }
             let skill = sqlx::query_as::<_, AgentSkillContent>(
                 r#"
-                SELECT name, filename, assistant, title, description, instructions, content
-                FROM agent_skills
-                WHERE workspace_id = $1 AND assistant = $2 AND name = $3
+                SELECT name, filename, assistant, title, description, body AS instructions, content
+                FROM agent_resources
+                WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
                 "#,
             )
             .bind(workspace_id)
@@ -241,7 +256,15 @@ pub async fn create_agent_skill(
     let content = compose_skill_markdown(title, description, instructions);
 
     let exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM agent_skills WHERE workspace_id = $1 AND assistant = $2 AND name = $3)"
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM agent_skills
+            WHERE workspace_id = $1 AND assistant = $2 AND name = $3
+            UNION ALL
+            SELECT 1 FROM agent_resources
+            WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
+        )
+        "#,
     )
     .bind(workspace_id)
     .bind(assistant)
@@ -265,15 +288,30 @@ pub async fn create_agent_skill(
     )
     .bind(workspace_id)
     .bind(name)
-    .bind(filename)
+    .bind(&filename)
     .bind(assistant)
     .bind(title)
     .bind(description)
     .bind(instructions)
-    .bind(content)
+    .bind(&content)
     .fetch_one(&state.db)
     .await
     .map_err(AppError::Database)?;
+
+    super::agent_resources::seed_skill_resource(
+        &state.db,
+        workspace_id,
+        super::agent_resources::SkillResourceInput {
+            assistant,
+            name,
+            filename: &filename,
+            title,
+            description,
+            instructions,
+            content: &content,
+        },
+    )
+    .await?;
 
     Ok(Json(skill))
 }
@@ -294,7 +332,31 @@ pub async fn update_agent_skill(
 
     let content = compose_skill_markdown(title, description, instructions);
 
-    let skill = sqlx::query_as::<_, AgentSkillContent>(
+    let exists = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM agent_skills
+            WHERE workspace_id = $1 AND assistant = $2 AND name = $3
+            UNION ALL
+            SELECT 1 FROM agent_resources
+            WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
+        )
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(assistant)
+    .bind(name)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if !exists {
+        return Err(AppError::NotFound {
+            resource: format!("agent_skill:{assistant}/{name}"),
+        });
+    }
+
+    let _ = sqlx::query(
         r#"
         UPDATE agent_skills
         SET title = $4,
@@ -303,7 +365,6 @@ pub async fn update_agent_skill(
             content = $7,
             updated_at = NOW()
         WHERE workspace_id = $1 AND assistant = $2 AND name = $3
-        RETURNING name, filename, assistant, title, description, instructions, content
         "#,
     )
     .bind(workspace_id)
@@ -312,13 +373,42 @@ pub async fn update_agent_skill(
     .bind(title)
     .bind(description)
     .bind(instructions)
-    .bind(content)
-    .fetch_optional(&state.db)
+    .bind(&content)
+    .execute(&state.db)
     .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("agent_skill:{assistant}/{name}"),
-    })?;
+    .map_err(AppError::Database)?;
+
+    let filename = format!("{name}.md");
+    super::agent_resources::upsert_skill_resource_versioned(
+        &state.db,
+        workspace_id,
+        super::agent_resources::SkillResourceInput {
+            assistant,
+            name,
+            filename: &filename,
+            title,
+            description,
+            instructions,
+            content: &content,
+        },
+        None,
+        Some(auth.key_prefix.as_str()),
+    )
+    .await?;
+
+    let skill = sqlx::query_as::<_, AgentSkillContent>(
+        r#"
+        SELECT name, filename, assistant, title, description, body AS instructions, content
+        FROM agent_resources
+        WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(assistant)
+    .bind(name)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
 
     Ok(Json(skill))
 }
