@@ -15,7 +15,7 @@ RUN npx tsc -b && npx vite build
 # Use the unprivileged nginx image so the container runs as uid 101 (nginx)
 # rather than root.  Ports < 1024 require extra capability; we listen on 8080
 # inside the container and remap at compose/k8s level.
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 
 LABEL com.memoryops.nginx="8080-unprivileged"
 
