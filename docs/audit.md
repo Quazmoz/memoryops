@@ -47,6 +47,43 @@ dropped loudly after logging; transient failures back off and retry.
 which path, and the `/audit/actions` endpoint exposes the `required` flag per
 action.
 
+### Call-site classification
+
+Every audit-emitting call site is classified as required, operational, or
+high-volume telemetry. Required events use `write_audit` /
+`write_audit_in_conn`; the rest use the best-effort path (which still falls back
+to the durable outbox on failure — never silently dropped).
+
+| Call site | Action(s) | Class | Path |
+| --- | --- | --- | --- |
+| `api/handlers/keys.rs` | `key_created/revoked` | required | `write_audit` |
+| `api/handlers/workspaces.rs` | `workspace_created/deleted`, `config_updated` | required | `write_audit` |
+| `api/handlers/integrations.rs` | `integration_*`, `webhook_secret_changed` | required | `write_audit` |
+| `api/handlers/tools.rs` | `tool_*`, `tool_secret_revealed` | required | `write_audit` |
+| `api/handlers/agent_resources.rs` | `agent_resource_*` | required | `write_audit` |
+| `api/handlers/agent_skills.rs` (legacy) | `agent_resource_created/updated` | required | `write_audit` (migrated) |
+| `api/handlers/compliance.rs` | `user_erasure` | required | `write_audit` |
+| `api/handlers/audit.rs` | `audit_exported` | required | `write_audit` |
+| `processor/scheduler.rs` hard-delete | `memory_hard_deleted` | required | `write_audit_in_conn` (migrated; tx-atomic with the DELETE) |
+| `processor/scheduler.rs` decay prune | `memory_deleted` | operational | best-effort |
+| `retrieval/handlers/lifecycle.rs` | `memory_deleted/restored/promoted`, `publish` | operational | best-effort |
+| `retrieval/handlers/update.rs` | `memory_edited/pinned/unpinned`, `importance_overridden` | operational | best-effort |
+| `api/handlers/contradictions.rs` | `contradiction_resolved` | operational | best-effort |
+| `processor/contradiction.rs` | flag detected (`memory_edited`) | operational | best-effort |
+| `common/services/skills.rs` | `tool_invoked` | high-volume telemetry | best-effort |
+| `ingestion/observation/ingest.rs` | `observation_ingested` | high-volume telemetry | best-effort |
+| `processor/worker.rs` | `memory_embedded` | high-volume telemetry | best-effort |
+
+**Intentionally best-effort.** Memory CRUD (`lifecycle.rs`/`update.rs`),
+contradiction resolution, tool invocation, observation ingest, embedding, and
+decay pruning are operational/high-volume events. They are not in
+`is_required()` and use the best-effort path on purpose: they are non-reversible
+or self-healing, are emitted at high volume, and must not add latency or fail
+the originating operation. The durable outbox still guarantees they are not lost
+on a transient write failure. Only `memory_hard_deleted` and the legacy
+agent-skills writes were promoted to the reliable path, because both are
+`is_required()` compliance events.
+
 ---
 
 ## 2. What is audited

@@ -1283,6 +1283,9 @@ async fn import_one_tool(
     }
 }
 
+// Thin wrapper that forwards the full invocation context to
+// `invoke_workspace_skill` (which carries the same argument list and allow).
+#[allow(clippy::too_many_arguments)]
 pub async fn invoke_tool_core(
     state: &AppState,
     workspace_id: Uuid,

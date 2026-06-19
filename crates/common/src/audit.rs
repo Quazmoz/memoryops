@@ -448,6 +448,35 @@ pub fn audit_hashing_enabled() -> bool {
     audit_signing_key().is_some()
 }
 
+/// Where the audit signing key is resolved from. For startup diagnostics only —
+/// it inspects the environment and never exposes key material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditKeySource {
+    /// A dedicated `AUDIT_SIGNING_KEY` is configured (preferred).
+    Dedicated,
+    /// `AUDIT_SIGNING_KEY` is unset; the chain falls back to `APP_SECRET_KEY`.
+    AppSecretFallback,
+    /// Neither is set; the hash chain is disabled (rows written without hashes).
+    Disabled,
+}
+
+/// Classify the audit signing key source from the environment, mirroring the
+/// resolution order of [`audit_signing_key`] without initialising the cached key.
+pub fn audit_key_source() -> AuditKeySource {
+    let is_set = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    if is_set("AUDIT_SIGNING_KEY") {
+        AuditKeySource::Dedicated
+    } else if is_set("APP_SECRET_KEY") {
+        AuditKeySource::AppSecretFallback
+    } else {
+        AuditKeySource::Disabled
+    }
+}
+
 /// Build the canonical object that is hashed for a row. Used identically at write
 /// and verify time so recomputation is deterministic.
 #[allow(clippy::too_many_arguments)]
@@ -831,6 +860,40 @@ pub async fn drain_audit_outbox(pool: &PgPool, batch_size: i64) -> Result<usize,
 // Retention
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Minimum sane audit retention window, in days.
+pub const AUDIT_RETENTION_MIN_DAYS: i32 = 1;
+/// Maximum sane audit retention window (~100 years). Larger values are treated
+/// as misconfiguration rather than passed to `make_interval`, which would risk
+/// overflow.
+pub const AUDIT_RETENTION_MAX_DAYS: i32 = 36_500;
+
+/// Effective audit retention policy resolved from configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuditRetentionPolicy {
+    /// Unset/empty — audit history is retained indefinitely (the safe default).
+    Disabled,
+    /// Prune rows older than `days`.
+    Days(i32),
+    /// The configured value was invalid (non-numeric, ≤ 0, or out of range) and
+    /// is ignored; pruning stays disabled. Carries the offending raw value.
+    Invalid(String),
+}
+
+/// Parse and validate an `AUDIT_RETENTION_DAYS`-style value into a policy. The
+/// single source of truth for retention validation, shared by the scheduler and
+/// startup diagnostics so they never drift.
+pub fn parse_audit_retention_days(raw: Option<&str>) -> AuditRetentionPolicy {
+    match raw.map(str::trim) {
+        None | Some("") => AuditRetentionPolicy::Disabled,
+        Some(value) => match value.parse::<i32>() {
+            Ok(days) if (AUDIT_RETENTION_MIN_DAYS..=AUDIT_RETENTION_MAX_DAYS).contains(&days) => {
+                AuditRetentionPolicy::Days(days)
+            }
+            _ => AuditRetentionPolicy::Invalid(value.to_owned()),
+        },
+    }
+}
+
 /// Delete audit rows older than `retention_days`. Returns rows removed. Callers
 /// must never invoke this unless retention is explicitly configured — there is
 /// no default pruning.
@@ -1105,6 +1168,43 @@ mod tests {
             &none,
         ));
         assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn retention_policy_parses_and_validates() {
+        assert_eq!(
+            parse_audit_retention_days(None),
+            AuditRetentionPolicy::Disabled
+        );
+        assert_eq!(
+            parse_audit_retention_days(Some("   ")),
+            AuditRetentionPolicy::Disabled
+        );
+        assert_eq!(
+            parse_audit_retention_days(Some("90")),
+            AuditRetentionPolicy::Days(90)
+        );
+        assert_eq!(
+            parse_audit_retention_days(Some(" 365 ")),
+            AuditRetentionPolicy::Days(365)
+        );
+        // Zero / negative / non-numeric / out-of-range are rejected (no pruning).
+        assert!(matches!(
+            parse_audit_retention_days(Some("0")),
+            AuditRetentionPolicy::Invalid(_)
+        ));
+        assert!(matches!(
+            parse_audit_retention_days(Some("-5")),
+            AuditRetentionPolicy::Invalid(_)
+        ));
+        assert!(matches!(
+            parse_audit_retention_days(Some("forever")),
+            AuditRetentionPolicy::Invalid(_)
+        ));
+        assert!(matches!(
+            parse_audit_retention_days(Some("99999999")),
+            AuditRetentionPolicy::Invalid(_)
+        ));
     }
 
     #[test]

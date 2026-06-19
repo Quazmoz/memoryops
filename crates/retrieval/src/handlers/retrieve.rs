@@ -176,7 +176,7 @@ pub(crate) async fn execute_retrieve(
         .unwrap_or(state.config.retrieval.default_token_budget);
     let query_id = Uuid::now_v7();
     let scope_filter = request.resolved_scope_filter();
-    let config = super::fetch_workspace_config(&state, workspace_id).await?;
+    let config = super::fetch_workspace_config(state, workspace_id).await?;
     let mut search_request = SearchRequest {
         query: request.query.clone(),
         workspace_id,
@@ -197,9 +197,9 @@ pub(crate) async fn execute_retrieve(
     search_request.apply_workspace_config(&config);
     let workspace_pool = search_request.workspace_pool_access();
 
-    let search_results = search_candidates(&state, &search_request, mode, &config).await?;
+    let search_results = search_candidates(state, &search_request, mode, &config).await?;
     let candidates = hydrate_candidates(
-        &state,
+        state,
         workspace_id,
         search_results,
         scope_filter.as_ref(),
@@ -229,7 +229,7 @@ pub(crate) async fn execute_retrieve(
         entries: packed.entries,
     };
 
-    persist_trace(&state, workspace_id, &trace).await?;
+    persist_trace(state, workspace_id, &trace).await?;
     RETRIEVAL_REQUESTS.add(1, &[]);
 
     Ok(RetrieveResponse {

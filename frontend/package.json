@@ -7,6 +7,7 @@
     "dev": "vite",
     "generate:api": "node ../scripts/generate-openapi-client.mjs",
     "check:api": "node ../scripts/generate-openapi-client.mjs --check",
+    "lint:openapi": "npx --yes @stoplight/spectral-cli@6.16.0 lint --fail-severity error ../docs/openapi.yaml",
     "build": "npm run check:api && tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",

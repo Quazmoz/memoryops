@@ -117,7 +117,10 @@ jobs:
           node-version: 20
 
       - name: Lint OpenAPI contract
-        run: npx --yes @stoplight/spectral-cli lint docs/openapi.yaml
+        # Pin the linter so CI is deterministic: an unpinned `@stoplight/spectral-cli`
+        # silently floats to the latest release, which has historically changed
+        # rules and even crashed on valid OpenAPI 3.1 constructs.
+        run: npx --yes @stoplight/spectral-cli@6.16.0 lint --fail-severity error docs/openapi.yaml
 
       - name: Check backend route parity
         run: node scripts/check-openapi-routes.mjs

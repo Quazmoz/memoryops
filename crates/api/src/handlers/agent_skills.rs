@@ -2,8 +2,11 @@ use std::path::Path;
 
 use axum::{extract::Path as AxumPath, extract::State, Extension, Json};
 use common::{
-    audit::spawn_audit_log, auth::AuthContext, error::AppResult, models::AuditAction, AppError,
-    AppState,
+    audit::{write_audit, AuditEvent, RequestContext},
+    auth::AuthContext,
+    error::AppResult,
+    models::AuditAction,
+    AppError, AppState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -247,6 +250,7 @@ pub async fn get_agent_skill(
 pub async fn create_agent_skill(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Json(request): Json<CreateAgentSkillRequest>,
 ) -> AppResult<Json<AgentSkillContent>> {
     let workspace_id = auth.workspace_id;
@@ -277,21 +281,29 @@ pub async fn create_agent_skill(
     )
     .await?;
 
-    spawn_audit_log(
-        state.db.clone(),
+    // AgentResourceCreated is a security/compliance-required action, so use the
+    // reliable (synchronous, error-propagating) write path — matching the
+    // canonical agent_resources handlers — rather than best-effort.
+    let event = AuditEvent::new(
         workspace_id,
-        actor,
         AuditAction::AgentResourceCreated,
         resource.id,
         "agent_resource",
-        Some(json!({
-            "kind": resource.kind,
-            "assistant": resource.assistant,
-            "name": resource.name,
-            "version": resource.version,
-            "source": "legacy-agent-skills-api",
-        })),
-    );
+    )
+    .actor_api_key(&auth)
+    .target_name(resource.name.clone())
+    .target_version(resource.version)
+    .metadata(json!({
+        "kind": resource.kind,
+        "assistant": resource.assistant,
+        "name": resource.name,
+        "version": resource.version,
+        "source": "legacy-agent-skills-api",
+    }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(skill_content_from_resource(resource)))
 }
@@ -300,6 +312,7 @@ pub async fn create_agent_skill(
 pub async fn update_agent_skill(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     AxumPath((assistant, name)): AxumPath<(String, String)>,
     Json(request): Json<UpdateAgentSkillRequest>,
 ) -> AppResult<Json<AgentSkillContent>> {
@@ -355,21 +368,27 @@ pub async fn update_agent_skill(
     )
     .await?;
 
-    spawn_audit_log(
-        state.db.clone(),
+    // AgentResourceUpdated is a security/compliance-required action: reliable write.
+    let event = AuditEvent::new(
         workspace_id,
-        actor,
         AuditAction::AgentResourceUpdated,
         resource.id,
         "agent_resource",
-        Some(json!({
-            "kind": resource.kind,
-            "assistant": resource.assistant,
-            "name": resource.name,
-            "version": resource.version,
-            "source": "legacy-agent-skills-api",
-        })),
-    );
+    )
+    .actor_api_key(&auth)
+    .target_name(resource.name.clone())
+    .target_version(resource.version)
+    .metadata(json!({
+        "kind": resource.kind,
+        "assistant": resource.assistant,
+        "name": resource.name,
+        "version": resource.version,
+        "source": "legacy-agent-skills-api",
+    }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(skill_content_from_resource(resource)))
 }
@@ -615,6 +634,7 @@ mod tests {
         let created = create_agent_skill(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Json(create_req),
         )
         .await
@@ -643,6 +663,7 @@ mod tests {
         let updated = update_agent_skill(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             AxumPath(("claude".to_owned(), "release_notes".to_owned())),
             Json(update_req),
         )
@@ -707,6 +728,7 @@ mod tests {
         let _ = create_agent_skill(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Json(create_req),
         )
         .await
@@ -723,6 +745,7 @@ mod tests {
         let error = create_agent_skill(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Json(create_req_dup),
         )
         .await

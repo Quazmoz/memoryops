@@ -2270,8 +2270,13 @@ components:
           type: string
           enum: [message, app_mention]
         subtype:
-          type: [string, 'null']
-          enum: [message_changed, null]
+          # Expressed as oneOf rather than `enum: [message_changed, null]`: a
+          # literal null inside an enum is valid OpenAPI 3.1 but crashes some
+          # JSONPath-based linters. This form is semantically identical.
+          oneOf:
+            - type: string
+              enum: [message_changed]
+            - type: 'null'
         channel:
           type: string
         user:
@@ -2977,8 +2982,7 @@ components:
         embedding_model:
           type: [string, 'null']
         decay_half_life_days:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
           minimum: 1
           maximum: 3650
           description: >
@@ -2986,9 +2990,8 @@ components:
             Defaults to 30 when null. Lower values cause faster decay.
           example: 30
         pruning_threshold:
-          type: number
+          type: [number, 'null']
           format: float
-          nullable: true
           minimum: 0.01
           maximum: 0.50
           description: >
@@ -2996,8 +2999,7 @@ components:
             Defaults to 0.10 when null.
           example: 0.10
         retention_max_age_days:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
           minimum: 1
           maximum: 3650
           description: >
@@ -3005,8 +3007,7 @@ components:
             Leave null to disable automatic retention purging.
           example: 365
         skill_version_retention_days:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
           minimum: 1
           maximum: 3650
           description: >

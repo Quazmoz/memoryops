@@ -1805,8 +1805,11 @@ mod tests {
     }
 
     async fn insert_workspace(pool: &PgPool, workspace_id: Uuid) {
-        sqlx::query("INSERT INTO workspaces (id, name) VALUES ($1, 'test-ws')")
+        // `workspaces.name` is UNIQUE, and this test seeds two workspaces to
+        // exercise cross-workspace isolation, so derive a unique name per id.
+        sqlx::query("INSERT INTO workspaces (id, name) VALUES ($1, $2)")
             .bind(workspace_id)
+            .bind(format!("test-ws-{workspace_id}"))
             .execute(pool)
             .await
             .unwrap();
