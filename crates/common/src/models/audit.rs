@@ -49,6 +49,7 @@ pub enum AuditAction {
     ToolDeleted,
     ToolRolledBack,
     ToolInvoked,
+    ToolSecretRevealed,
     AgentResourceCreated,
     AgentResourceUpdated,
     AgentResourceDeleted,

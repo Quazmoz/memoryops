@@ -7,7 +7,7 @@ This guide shows how to connect Open WebUI to a local MemoryOps deployment via t
 - MemoryOps API server running on :8080
 - Docker Compose infra up (postgres, redis, qdrant)
 - Migrations applied: `sqlx migrate run`
-- MCP server started with `MCP_TRANSPORT=http` (see the CRITICAL note below)
+- MCP server started with `MCP_TRANSPORT=http` and bound to localhost/private networking.
 - Open WebUI installed and reachable from your browser
 - API key obtained from `POST /v1/workspaces` (created once at workspace bootstrap)
 
@@ -23,18 +23,12 @@ curl -sS -X POST http://localhost:8080/v1/workspaces \
 
 Service ports (local dev): API `:8080`, MCP `:3003`, Frontend `:5173`, Postgres `:5432`, Redis `:6379`, Qdrant HTTP `:6333`, Qdrant gRPC `:6334`.
 
-## CRITICAL: docker-compose.yml MCP Transport Bug
+## Start MCP With Private HTTP Transport
 
-The `mcp` service in `docker-compose.yml` currently defaults to:
-
-```yaml
-MCP_TRANSPORT: "sse"
-```
-
-`sse` is the deprecated transport. When starting the MCP container for Open WebUI you MUST override this to `http`. Always override explicitly:
+The compose service uses HTTP transport and binds to `127.0.0.1:3003` by default. Keep it local/private; do not expose MCP directly to the internet. To start an explicit local MCP container:
 
 ```bash
-# Correct — override deprecated default
+# Local/private HTTP transport
 docker compose --profile mcp run --rm --service-ports \
   -e MCP_TRANSPORT=http \
   -e MCP_PORT=3003 \
@@ -58,7 +52,7 @@ When the MCP server is running it is reachable at: `http://localhost:3003/mcp`
 
 ### Docker Compose (with transport override)
 
-Use the explicit override shown above to ensure the MCP process uses HTTP streamable transport, not SSE:
+Use the explicit local command shown above when you want the MCP process available to Open WebUI:
 
 ```bash
 docker compose --profile mcp run --rm --service-ports \
@@ -192,7 +186,7 @@ Example:
 |---|---|---|
 | CORS error in browser | — | MCP already sets `CorsLayer::permissive()`. Check you're pointing at port 3003, not 8080. |
 | `401 Unauthorized` | Wrong header or key format | Header must be `Authorization: Bearer mops_<prefix>_<hex32>`. `X-API-Key: mops_...` also works. |
-| Session errors / `Mcp-Session-Id` rejected | Deprecated SSE transport active | Set `MCP_TRANSPORT=http` when starting MCP. Check docker-compose.yml default is `sse` — must override. |
+| Session errors / `Mcp-Session-Id` rejected | Wrong transport or stale session | Set `MCP_TRANSPORT=http` when starting MCP and retry initialization. |
 | Connection refused on port 3003 | MCP profile not running | Run `docker compose --profile mcp ...` with transport override, or `cargo run -p mcp` with env vars set. |
 | `memories: []` in response | No memories ingested yet | Valid. Seed data: `API_KEY=... bash scripts/seed.sh`, or ingest via `memory_store` / `memory_observe`. |
 | Tools not showing in Open WebUI | OWUI version quirk | Some OWUI versions expect `/mcp` appended to the URL, others don't. Try both `http://localhost:3003` and `http://localhost:3003/mcp`. |

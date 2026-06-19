@@ -186,7 +186,7 @@ Rule: prefer `memory_store` for next-session retrieval importance; prefer `memor
 | `memoryops` not in `/mcp` list | Restart Claude Code after editing `.mcp.json`. Check JSON is valid. |
 | stdio: `cargo: command not found` | `cargo` must be in the PATH Claude Code sees. On macOS, add to shell profile: `source "$HOME/.cargo/env"`. |
 | stdio: process exits immediately | Missing env vars. Verify `DATABASE_URL`, `REDIS_URL`, `QDRANT_URL` are set in the `env` block. Check infra is up: `docker compose ps`. |
-| http: connection refused | MCP server not running. Start with `MCP_TRANSPORT=http` override (not the docker-compose.yml default which is `sse`). |
+| http: connection refused | MCP server not running. Start the loopback-bound compose MCP service or run `MCP_TRANSPORT=http cargo run -p mcp`. |
 | Tools visible but calls return 401 | `Authorization: Bearer` header value is wrong. Regenerate key: `POST /v1/workspaces/{id}/keys`. |
 | Cold stdio start very slow | Build the binary first: `cargo build -p mcp`. Then use Option C (pre-built binary path) in `.mcp.json`. |
 | `memories: []` always returned | No memories ingested. Run `API_KEY=... bash scripts/seed.sh` for sample data, or store a test memory directly. |

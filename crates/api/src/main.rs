@@ -34,7 +34,11 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
     crate::security::validate_secret_key(app_secret_key.as_str())
         .map_err(|_| anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
-    workspace_creation_secret_from_env()?;
+    if handlers::workspaces::workspace_creation_enabled_from_env() {
+        workspace_creation_secret_from_env()?;
+    } else {
+        tracing::warn!("workspace creation endpoint disabled by WORKSPACE_CREATION_ENABLED=false");
+    }
     validate_production_secrets()?;
     let state = build_state(config.clone(), app_secret_key).await?;
     processor::start_workers(state.clone()).await?;
@@ -189,7 +193,7 @@ fn validate_production_secrets() -> anyhow::Result<()> {
 
     let mut errors: Vec<String> = Vec::new();
 
-    for name in ["APP_SECRET_KEY", "WORKSPACE_CREATION_SECRET"] {
+    for name in ["APP_SECRET_KEY"] {
         match std::env::var(name) {
             Ok(value) if !value.trim().is_empty() && value.trim() != DEV_PLACEHOLDER => {}
             Ok(value) if value.trim() == DEV_PLACEHOLDER => {
@@ -198,6 +202,20 @@ fn validate_production_secrets() -> anyhow::Result<()> {
                 ));
             }
             _ => errors.push(format!("{name} must be set in production")),
+        }
+    }
+
+    if handlers::workspaces::workspace_creation_enabled_from_env() {
+        match std::env::var("WORKSPACE_CREATION_SECRET") {
+            Ok(value) if !value.trim().is_empty() && value.trim() != DEV_PLACEHOLDER => {}
+            Ok(value) if value.trim() == DEV_PLACEHOLDER => {
+                errors.push(
+                    "WORKSPACE_CREATION_SECRET is set to the dev-placeholder value; set a real secret for production or disable workspace creation".to_owned(),
+                );
+            }
+            _ => errors.push(
+                "WORKSPACE_CREATION_SECRET must be set in production when workspace creation is enabled".to_owned(),
+            ),
         }
     }
 

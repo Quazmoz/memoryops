@@ -28,6 +28,9 @@ You will receive an acknowledgement within 72 hours. We aim to triage and releas
 
 ## Security Considerations
 
+For deployment-specific hardening, use the production checklist in
+[`docs/security-production.md`](docs/security-production.md).
+
 ### API Keys
 
 - Workspace API keys are hashed with Argon2 before storage. The plaintext key is returned **once** on creation — it cannot be recovered.
@@ -48,7 +51,7 @@ You will receive an acknowledgement within 72 hours. We aim to triage and releas
 
 ### Network Exposure
 
-- The bootstrap endpoint (`POST /v1/workspaces`) should be restricted to trusted networks or disabled via firewall rules after initial setup.
+- The bootstrap endpoint (`POST /v1/workspaces`) should be restricted to trusted networks and disabled with `WORKSPACE_CREATION_ENABLED=false` after initial setup.
 - The MCP server port (default `3003`) should not be exposed publicly — it is intended for local AI client connections only.
 - Qdrant and Redis should not be exposed to the public internet. Bind them to `localhost` or a private network interface.
 

@@ -31,7 +31,7 @@ function renderDangerZone(ui: ReactElement) {
 describe("WorkspaceDangerZone", () => {
   beforeEach(() => {
     mockDeleteWorkspace.mockReset();
-    useAppStore.setState({ workspaceId: WORKSPACE_ID, apiKey: "mops_key" });
+    useAppStore.setState({ workspaceId: WORKSPACE_ID, apiKey: "test-api-key" });
   });
 
   it("requires typing the exact workspace name before enabling deletion", () => {
@@ -103,6 +103,6 @@ describe("WorkspaceDangerZone", () => {
       expect(screen.getByText("backend exploded")).toBeTruthy();
     });
     expect(useAppStore.getState().workspaceId).toBe(WORKSPACE_ID);
-    expect(useAppStore.getState().apiKey).toBe("mops_key");
+    expect(useAppStore.getState().apiKey).toBe("test-api-key");
   });
 });

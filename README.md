@@ -378,6 +378,7 @@ Copy `.env.example` to `.env`. All required variables must be set before startin
 | `APP_PORT` | `8080` | API listen port |
 | `APP_ENV` | `development` | `development` or `production` |
 | `CONFIG_PATH` | `config.toml` | Path to TOML config file |
+| `WORKSPACE_CREATION_ENABLED` | `true` locally, `false` in production overlay | Disable `POST /v1/workspaces` after bootstrap |
 | `RUST_LOG` | `info` | Log level (`trace`/`debug`/`info`/`warn`/`error`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP endpoint, e.g. `http://localhost:4317` |
 
@@ -597,7 +598,7 @@ memoryops/
 
 ## Status
 
-MemoryOps is in **alpha**. Core ingestion, processing, retrieval, and MCP transport are functional. The API surface may change before v1.0. Not recommended for production use without review of the security considerations in [SECURITY.md](SECURITY.md).
+MemoryOps is in **alpha**. Core ingestion, processing, retrieval, and MCP transport are functional. The API surface may change before v1.0. Not recommended for production use without review of the security considerations in [SECURITY.md](SECURITY.md) and the production checklist in [docs/security-production.md](docs/security-production.md).
 
 ---
 

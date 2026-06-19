@@ -105,7 +105,7 @@ api_key_env = "OPENROUTER_API_KEY"
 
 ```bash
 # .env
-OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_API_KEY=<openrouter-api-key>
 ```
 
 OpenRouter uses the OpenAI-compatible `/chat/completions` endpoint internally.
@@ -126,7 +126,7 @@ api_key_env = "HF_API_KEY"
 
 ```bash
 # .env
-HF_API_KEY=hf_...
+HF_API_KEY=<huggingface-api-key>
 ```
 
 ---

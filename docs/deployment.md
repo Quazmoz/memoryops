@@ -150,8 +150,10 @@ spec:
                   key: workspace-creation-secret
             - name: APP_ENV
               value: "production"
+            - name: WORKSPACE_CREATION_ENABLED
+              value: "false"
             - name: TRUSTED_PROXY_CIDRS
-              value: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16" # Align with your VPC/Ingress subnet
+              value: "10.0.10.0/24" # Use only ingress/reverse-proxy CIDRs, not the whole VPC
 ```
 
 ---
@@ -160,7 +162,8 @@ spec:
 
 ### 1. Enforcing Production Mode (`APP_ENV=production`)
 When the environment variable `APP_ENV` is set to `production`, the backend enforces strict validation on startup:
-* **Secret Key Validation**: The API will crash on boot if `APP_SECRET_KEY` or `WORKSPACE_CREATION_SECRET` is set to the development fallback value `dev-placeholder`.
+* **Secret Key Validation**: The API will crash on boot if `APP_SECRET_KEY` is set to the development fallback value `dev-placeholder`. If workspace creation is enabled, `WORKSPACE_CREATION_SECRET` must also be a real value.
+* **Workspace Creation Switch**: Set `WORKSPACE_CREATION_ENABLED=false` after initial bootstrap so `POST /v1/workspaces` is rejected even if the admin token leaks.
 * **Database & Encryption**: These values must be long, randomly generated secrets securely stored in a KMS (Key Management Service) or Kubernetes Secret and injected at runtime.
 
 ### 2. SSRF & Private IP Whitelisting (`allow_private_ips`)
@@ -267,9 +270,12 @@ These environment variables configure MemoryOps. They can be placed in a `.env` 
 | `APP_PORT` | No | `8080` | Port the API server listens on. |
 | `APP_ENV` | No | `development` | Setting to `production` enforces strict secret key validation. |
 | `APP_SECRET_KEY` | **Yes** (in production) | — | Cryptographic key used to encrypt skill credentials. Must be stable across restarts. |
-| `WORKSPACE_CREATION_SECRET` | **Yes** (in production) | — | Secret token required to authenticate workspace creation requests (`x-admin-token`). |
+| `WORKSPACE_CREATION_SECRET` | Required only when workspace creation is enabled | — | Secret token required to authenticate workspace creation requests (`x-admin-token`). Rotate or remove after bootstrap. |
+| `WORKSPACE_CREATION_ENABLED` | No | `true` in local compose, `false` in production overlay | Set to `false` after initial bootstrap to disable `POST /v1/workspaces`. |
 | `SKIP_MIGRATIONS` | No | `false` | When set to `true`, bypasses database migrations on API server startup. |
 | `TRUSTED_PROXY_CIDRS` | No | `127.0.0.1/32` | Comma-separated CIDR blocks representing trusted reverse proxies. |
+
+For the complete production hardening checklist, see [security-production.md](security-production.md).
 | `MEMORYOPS_ALLOW_PRIVATE_IPS` | No | `false` | Set to `true` to allow skills to target internal/loopback IP addresses. |
 | `QDRANT_CHECK_COMPATIBILITY` | No | `false` | Bypasses major/minor version verification between client library and Qdrant database. |
 | `MCP_TRANSPORT` | No | `stdio` | Transport type for the MCP server (`stdio` or `http`). |

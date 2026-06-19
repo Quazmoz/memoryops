@@ -6,6 +6,14 @@ Use this flow to create your first workspace and obtain the initial API key in o
 
 `POST /v1/workspaces` requires the `x-admin-token` header set to `WORKSPACE_CREATION_SECRET`. It creates the workspace and provisions one initial API key in the same response.
 
+For production, enable this endpoint only during initial setup:
+
+```bash
+WORKSPACE_CREATION_ENABLED=true
+```
+
+After the initial workspace exists, set `WORKSPACE_CREATION_ENABLED=false`, rotate or remove `WORKSPACE_CREATION_SECRET`, and restrict `POST /v1/workspaces` at the reverse proxy or firewall.
+
 ```bash
 curl -sS -X POST http://localhost:8080/v1/workspaces \
   -H 'Content-Type: application/json' \

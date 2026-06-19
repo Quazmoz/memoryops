@@ -31,13 +31,13 @@ mod tests {
     fn extracts_initialize_bearer_token() {
         let params = json!({
             "_meta": {
-                "auth": { "token": "Bearer mops_01234567_abc" }
+                "auth": { "token": "Bearer test-api-key" }
             }
         });
 
         assert_eq!(
             initialize_bearer_token(Some(&params)),
-            Some("mops_01234567_abc".to_owned())
+            Some("test-api-key".to_owned())
         );
     }
 }

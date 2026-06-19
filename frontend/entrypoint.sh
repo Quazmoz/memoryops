@@ -13,7 +13,8 @@
 
 set -eu
 
-TARGET=/usr/share/nginx/html/config.json
+TARGET_DIR=/tmp/memoryops-runtime
+TARGET=${TARGET_DIR}/config.json
 
 WORKSPACE_ID="${MEMORYOPS_WORKSPACE_ID:-}"
 
@@ -31,6 +32,7 @@ if [ -n "${WORKSPACE_ID}" ]; then
   esac
 fi
 
+mkdir -p "${TARGET_DIR}"
 printf '{"workspaceId":"%s"}\n' "${WORKSPACE_ID}" > "${TARGET}"
 echo "Generated ${TARGET} (workspaceId=${WORKSPACE_ID:-<empty>})"
 # Do NOT exec nginx here — this script is invoked by nginx's entrypoint.d

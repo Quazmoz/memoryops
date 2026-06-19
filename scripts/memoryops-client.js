@@ -55,7 +55,7 @@ Commands:
   help                     Show this help message
 
 Environment Variables:
-  MEMORYOPS_API_KEY        API key for authentication (e.g. mops_019...)
+  MEMORYOPS_API_KEY        API key for authentication (for example, <memoryops-api-key>)
   MEMORYOPS_WORKSPACE_ID   Target Workspace UUID
   MEMORYOPS_API_URL        Endpoint URL of MemoryOps API (default: http://localhost:8080)
 `);

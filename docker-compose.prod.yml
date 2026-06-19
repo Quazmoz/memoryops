@@ -8,8 +8,11 @@
 #    are only reachable inside the Docker network (not exposed to the host).
 #  - Keeps the api (8080) and frontend (5173 -> container 8080) accessible via
 #    a reverse proxy.
+#  - Keeps MCP loopback-bound for local/private clients only.
 #  - Expects real secrets in the environment (APP_ENV=production enforced by
 #    the API startup validator).
+#  - Disables POST /v1/workspaces by default. Temporarily set
+#    WORKSPACE_CREATION_ENABLED=true during initial bootstrap, then turn it off.
 #
 # Prerequisites:
 #  - Set APP_ENV=production in your .env or shell.
@@ -22,11 +25,14 @@ services:
   postgres:
     # Remove host-facing port binding; only accessible within the Docker network.
     ports: !reset []
+    # Postgres needs a writable data directory, so read_only is intentionally not set.
 
   redis:
+    # Redis stays internal-only; persistence requires writes to /data.
     ports: !reset []
 
   qdrant:
+    # Qdrant stays internal-only; vector storage requires writes to /qdrant/storage.
     ports: !reset []
 
   api:
@@ -35,11 +41,52 @@ services:
       - "127.0.0.1:8080:8080"
     environment:
       APP_ENV: production
+      WORKSPACE_CREATION_ENABLED: ${WORKSPACE_CREATION_ENABLED:-false}
+    # Do not inherit local-dev bind mounts into production; bake or mount custom resources read-only explicitly.
+    volumes: !reset []
+    # Drop ambient Linux capabilities; the Rust API does not need them.
+    cap_drop: ["ALL"]
+    # Prevent privilege escalation through setuid/setgid binaries.
+    security_opt: ["no-new-privileges:true"]
+    # Make the container filesystem immutable; /tmp is kept as scratch space.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    # Reap orphaned child processes cleanly.
+    init: true
+    # Bound process creation in case of dependency or handler bugs.
+    pids_limit: 256
 
   mcp:
+    # MCP is intentionally loopback-only. Put it behind VPN/SSH/Tailscale if remote access is needed.
     ports:
       - "127.0.0.1:3003:3003"
+    # Do not inherit local-dev bind mounts into production; bake or mount custom resources read-only explicitly.
+    volumes: !reset []
+    # The MCP service runs as the non-root image user and needs no Linux capabilities.
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    init: true
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   frontend:
     ports:
       - "127.0.0.1:5173:8080"
+    # nginx listens on unprivileged port 8080 and does not require Linux capabilities.
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    # Runtime /config.json and nginx temp files live under /tmp, so the image can be read-only.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    init: true
+    pids_limit: 128

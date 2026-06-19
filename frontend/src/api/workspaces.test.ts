@@ -43,7 +43,7 @@ describe("workspaces api", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
     fetchMock.mockReset();
-    useAppStore.setState({ workspaceId: WORKSPACE_ID, apiKey: "mops_store_key" });
+    useAppStore.setState({ workspaceId: WORKSPACE_ID, apiKey: "test-store-key" });
   });
 
   afterEach(() => {
@@ -55,13 +55,13 @@ describe("workspaces api", () => {
       jsonResponse({ workspaces: [{ id: "a", name: "Alpha", created_at: "2026-01-01T00:00:00Z" }] }),
     );
 
-    const workspaces = await listWorkspaces("mops_explicit_key");
+    const workspaces = await listWorkspaces("test-explicit-key");
 
     expect(workspaces).toEqual([{ id: "a", name: "Alpha", created_at: "2026-01-01T00:00:00Z" }]);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/v1/workspaces");
     expect(init.method).toBe("GET");
-    expect(new Headers(init.headers).get("x-api-key")).toBe("mops_explicit_key");
+    expect(new Headers(init.headers).get("x-api-key")).toBe("test-explicit-key");
   });
 
   it("returns an empty list without a network call when the key is blank", async () => {

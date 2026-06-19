@@ -168,6 +168,10 @@ pub async fn create_workspace(
     headers: HeaderMap,
     Json(request): Json<CreateWorkspaceRequest>,
 ) -> AppResult<Json<CreateWorkspaceResponse>> {
+    if !workspace_creation_enabled_from_env() {
+        tracing::warn!("rejected workspace creation because WORKSPACE_CREATION_ENABLED=false");
+        return Err(AppError::Forbidden);
+    }
     authorize_workspace_creation(&headers)?;
     // Build a minimal Request so we can reuse the shared IP resolver.
     let created_from_ip = {
@@ -799,6 +803,20 @@ fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
     } else {
         Err(AppError::Forbidden)
     }
+}
+
+pub(crate) fn workspace_creation_enabled_from_env() -> bool {
+    workspace_creation_enabled_from_value(
+        std::env::var("WORKSPACE_CREATION_ENABLED").ok().as_deref(),
+    )
+}
+
+fn workspace_creation_enabled_from_value(value: Option<&str>) -> bool {
+    let Some(value) = value else {
+        return true;
+    };
+    let normalized = value.trim().to_ascii_lowercase();
+    !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
 }
 
 async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> AppResult<()> {
@@ -1595,6 +1613,17 @@ mod tests {
         let mut request = update_request(None, None);
         request.extra.insert(key.to_owned(), value);
         request
+    }
+
+    #[test]
+    fn workspace_creation_enabled_parser_defaults_on_and_accepts_false_values() {
+        assert!(workspace_creation_enabled_from_value(None));
+        assert!(workspace_creation_enabled_from_value(Some("true")));
+        assert!(workspace_creation_enabled_from_value(Some("1")));
+        assert!(!workspace_creation_enabled_from_value(Some("false")));
+        assert!(!workspace_creation_enabled_from_value(Some("0")));
+        assert!(!workspace_creation_enabled_from_value(Some(" off ")));
+        assert!(!workspace_creation_enabled_from_value(Some("NO")));
     }
 
     fn stats_row() -> WorkspaceStatsRow {

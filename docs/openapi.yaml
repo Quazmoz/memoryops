@@ -543,7 +543,7 @@ paths:
       tags: [Workspaces]
       operationId: createWorkspace
       summary: Create a workspace
-      description: Creates a tenant workspace that owns memory, keys, integrations, and configuration. Requires the workspace creation secret in the x-admin-token header.
+      description: Creates a tenant workspace that owns memory, keys, integrations, and configuration. Requires the workspace creation secret in the x-admin-token header and is rejected when WORKSPACE_CREATION_ENABLED=false.
       security:
         - AdminTokenAuth: []
       requestBody:
@@ -553,7 +553,7 @@ paths:
             schema:
               $ref: '#/components/schemas/WorkspaceCreateRequest'
       responses:
-        '201':
+        '200':
           description: Workspace created
           content:
             application/json:
@@ -563,6 +563,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/workspaces/me:
     get:
       tags: [Workspaces]

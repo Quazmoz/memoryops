@@ -1339,7 +1339,7 @@ M11 introduces a dedicated `crates/mcp/` server crate that exposes MemoryOps ret
 |---------|----------|
 | Default port | `3003` |
 | Port env var | `MCP_PORT` |
-| Transport env var | `MCP_TRANSPORT=stdio\|sse`, default `sse` |
+| Transport env var | `MCP_TRANSPORT=stdio\|http\|sse`, default `stdio`; compose sets `http` for local clients |
 | Dependency boundary | `mcp` depends on `common`, `retrieval`, and `processor`; it must not depend on the `api` crate |
 
 ### 24.2 Transports
@@ -1347,7 +1347,7 @@ M11 introduces a dedicated `crates/mcp/` server crate that exposes MemoryOps ret
 | Transport | Use Case | Contract |
 |-----------|----------|----------|
 | stdio | Local agents and editor-launched processes | Newline-delimited JSON-RPC 2.0 over stdin/stdout; stdout is flushed after every response |
-| HTTP SSE | Remote or hosted MCP clients | `POST /mcp` accepts JSON-RPC requests and returns JSON responses; `GET /mcp/sse` opens an SSE event stream for server-initiated messages |
+| HTTP/SSE | Local, private-network, or tunnelled MCP clients | HTTP Streamable uses `/mcp`; legacy SSE uses `/mcp/sse`. Do not expose MCP publicly without explicit auth and network controls. |
 
 ### 24.3 Auth
 
