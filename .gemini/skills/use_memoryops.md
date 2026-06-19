@@ -1,42 +1,42 @@
 # Skill: Use MemoryOps Context Registry
 
-**Description:** Interfaces with the running local MemoryOps database and vector search server to retrieve episodic/semantic memories, log new engineering decisions, ingest observations, or discover workspace skills.
+**Description:** Retrieves durable workspace context from MemoryOps and stores only decisions or observations that will help future agent runs.
 
 ## Trigger
+
 Use this skill when:
-- Resolving queries about recent system architecture decisions, past deployment logs, incident triages, or developer workflows.
-- Starting a new task and needing to fetch relevant context from memory.
-- Completing a task or refactor and needing to store the decision in the permanent semantic memory registry.
-- Logging raw developer observations for async categorization.
+- Starting a coding, debugging, migration, release, or incident task that may depend on prior project decisions.
+- The user asks to retrieve, search, remember, store, or observe MemoryOps context.
+- Completing work that produced a stable decision, root cause, policy, migration note, or reusable operational lesson.
 
 ## Execution Steps
 
 1. **Locate Credentials**
-   - Check the directory hierarchy for `.memoryops.local.json`.
-   - Read the file to extract the `api_key` and `workspace_id`.
-   - If not found, check the environment for `MEMORYOPS_API_KEY` and `MEMORYOPS_WORKSPACE_ID`. If these are absent, ask the user to provide them or to ensure MemoryOps has been initialized.
+   - Prefer an existing MemoryOps MCP connection if one is configured.
+   - Otherwise look for `MEMORYOPS_API_KEY`, `MEMORYOPS_WORKSPACE_ID`, and `MEMORYOPS_API_URL`.
+   - If a local helper exists, use `node scripts/memoryops-client.js`; do not print or store plaintext API keys.
 
-2. **Retrieve Context (Task Startup)**
-   - Before executing code changes, query existing memories to find out if there are related guidelines, rules, or past issues.
-   - Run the client command:
-     ```bash
-     node scripts/memoryops-client.js retrieve "<search query>"
-     ```
-   - *Example queries:* "Qdrant ports", "deployment guidelines", "incident alerts".
+2. **Retrieve Before Acting**
+   - Query for concrete identifiers from the task: service names, files, dependencies, incidents, or config keys.
+   - Use at least one broader follow-up query for related architecture decisions or known pitfalls.
+   - Prefer recent, scoped, and corroborated memories. Treat stale or conflicting memories as evidence, not automatic truth.
 
-3. **Store Key Decisions (Task Completion)**
-   - When finishing a significant refactor or config change, store it to ensure future agent runs or teammates can query it.
-   - Run:
-     ```bash
-     node scripts/memoryops-client.js store "<brief description of the decision>" [optional-tags]
-     ```
-   - *Example:* `node scripts/memoryops-client.js store "Configured HNSW indexing tuning on Qdrant collections to improve recall from 0.82 to 0.89" infra qdrant`
+3. **Use Context Carefully**
+   - Apply retrieved memories only when they match the current workspace, repository, service, and time horizon.
+   - If memory conflicts with code or user instructions, pause and explain the conflict before proceeding.
 
-4. **Observe Raw Events**
-   - If there are unstructured notes, error messages, or raw traces you want analyzed asynchronously later, run:
-     ```bash
-     node scripts/memoryops-client.js observe "<raw observation content>" [optional-tags]
-     ```
+4. **Store Durable Outcomes**
+   - Store concise memories for decisions, resolved causes, stable preferences, migration results, and reusable workflow rules.
+   - Use observation ingestion for raw logs, symptoms, partial hypotheses, or notes that need later classification.
+   - Skip transient task steps, private reasoning, secrets, credentials, and noisy intermediate output.
 
-5. **Interact via MCP (Alternative)**
-   - If the project has a `.mcp.json` or you have a connection to the MemoryOps MCP server, you can call the native `memory_retrieve`, `memory_store`, or `memory_observe` tools directly instead of executing the CLI script.
+## Failure Handling
+
+- If credentials or MCP tools are unavailable, continue with local repo inspection and tell the user MemoryOps context was unavailable.
+- If retrieval returns nothing useful, say so briefly and avoid inventing historical context.
+- If storing fails, preserve the candidate memory in the final handoff so the user can retry.
+
+## Output Expectations
+
+- Mention MemoryOps findings only when they materially changed the work.
+- When storing, use a short factual sentence plus tags such as subsystem, tool, incident, dependency, or policy.

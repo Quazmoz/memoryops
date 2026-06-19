@@ -23,6 +23,7 @@ tags:
   - name: Export
   - name: Tags
   - name: Tools
+  - name: Agent Resources
   - name: Agent Skills
   - name: Contradictions
   - name: Health
@@ -1170,7 +1171,7 @@ paths:
       tags: [Agent Resources]
       operationId: listAgentResources
       summary: List versioned agent resources
-      description: Returns skills, agent profiles, prompts, and reusable instructions for the authenticated workspace.
+      description: Returns canonical Agent Library resources for the authenticated workspace. Resources include skills, agent profiles, prompts, and reusable instructions. Skill resources are limited to Claude and Gemini targets; other resource kinds may target generic, OpenAI, Claude, or Gemini agents.
       parameters:
         - name: kind
           in: query
@@ -1199,6 +1200,7 @@ paths:
       tags: [Agent Resources]
       operationId: createAgentResource
       summary: Create a versioned agent resource
+      description: Creates v1 of a canonical Agent Library resource. The `(workspace_id, kind, assistant, name)` tuple must be unique. If `content` is omitted, markdown is rendered from `kind`, `title`, `description`, and `body`.
       requestBody:
         required: true
         content:
@@ -1223,6 +1225,7 @@ paths:
       tags: [Agent Resources]
       operationId: getAgentResource
       summary: Read one versioned agent resource
+      description: Reads the latest canonical Agent Library resource by kind, assistant target, and stable resource name.
       parameters:
         - $ref: '#/components/parameters/AgentResourceKind'
         - $ref: '#/components/parameters/AgentResourceAssistant'
@@ -1244,6 +1247,7 @@ paths:
       tags: [Agent Resources]
       operationId: updateAgentResource
       summary: Update one agent resource and create a new version
+      description: Updates metadata, body, rendered content, title, or description and creates a new immutable version snapshot. Metadata-only updates preserve existing rendered content.
       parameters:
         - $ref: '#/components/parameters/AgentResourceKind'
         - $ref: '#/components/parameters/AgentResourceAssistant'
@@ -1271,6 +1275,7 @@ paths:
       tags: [Agent Resources]
       operationId: deleteAgentResource
       summary: Delete one agent resource
+      description: Deletes the current resource and its version history. Deleting a skill also removes the compatibility row from legacy `agent_skills`.
       parameters:
         - $ref: '#/components/parameters/AgentResourceKind'
         - $ref: '#/components/parameters/AgentResourceAssistant'
@@ -1287,6 +1292,7 @@ paths:
       tags: [Agent Resources]
       operationId: listAgentResourceVersions
       summary: List immutable versions for an agent resource
+      description: Returns immutable version snapshots newest first.
       parameters:
         - $ref: '#/components/parameters/AgentResourceKind'
         - $ref: '#/components/parameters/AgentResourceAssistant'
@@ -1309,6 +1315,7 @@ paths:
       tags: [Agent Resources]
       operationId: getAgentResourceVersion
       summary: Read one immutable agent resource version
+      description: Reads a single immutable version snapshot for a canonical Agent Library resource.
       parameters:
         - $ref: '#/components/parameters/AgentResourceKind'
         - $ref: '#/components/parameters/AgentResourceAssistant'
@@ -1330,6 +1337,7 @@ paths:
       tags: [Agent Resources]
       operationId: rollbackAgentResource
       summary: Restore a prior agent resource version as a new version
+      description: Restores the selected version into the current resource and records the restoration as a new version. Existing version history is retained.
       parameters:
         - $ref: '#/components/parameters/AgentResourceKind'
         - $ref: '#/components/parameters/AgentResourceAssistant'
@@ -1344,6 +1352,7 @@ paths:
               properties:
                 change_note:
                   type: string
+                  maxLength: 500
       responses:
         '200':
           description: Agent resource restored
@@ -1361,8 +1370,8 @@ paths:
     get:
       tags: [Agent Skills]
       operationId: listAgentSkills
-      summary: List bundled agent skill files
-      description: Returns markdown-based agent skills discovered under `.claude/skills` and `.gemini/skills`.
+      summary: List legacy Claude/Gemini agent skills
+      description: Legacy compatibility endpoint backed by canonical `agent_resources` rows where `kind = skill` and `assistant` is `claude` or `gemini`. New integrations should prefer `/v1/agent-resources`.
       responses:
         '200':
           description: Agent skill library
@@ -1378,8 +1387,8 @@ paths:
     get:
       tags: [Agent Skills]
       operationId: getAgentSkill
-      summary: Read one bundled agent skill file
-      description: Returns the markdown contents for a single bundled agent skill file.
+      summary: Read one legacy Claude/Gemini agent skill
+      description: Legacy compatibility endpoint that returns the markdown contents of a canonical skill resource.
       parameters:
         - name: assistant
           in: path
@@ -1954,6 +1963,7 @@ components:
       name: assistant
       in: path
       required: true
+      description: Target assistant runtime. Skill resources only allow `claude` or `gemini`; agents, prompts, and instructions allow all listed values.
       schema:
         type: string
         enum: [generic, openai, claude, gemini]
@@ -1961,8 +1971,11 @@ components:
       name: name
       in: path
       required: true
+      description: Stable lowercase resource identifier.
       schema:
         type: string
+        pattern: '^[a-z][a-z0-9_-]{0,63}$'
+        maxLength: 64
     AgentResourceVersionNumber:
       name: version
       in: path
@@ -3249,15 +3262,20 @@ components:
           enum: [generic, openai, claude, gemini]
         name:
           type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          maxLength: 64
         filename:
           type: string
         title:
           type: string
+          maxLength: 120
         description:
           type: string
+          maxLength: 500
         metadata:
           type: object
           additionalProperties: true
+          description: JSON object for source, ownership, seeded/default markers, tags, or runtime compatibility hints.
         version:
           type: integer
         created_at:
@@ -3274,8 +3292,12 @@ components:
           properties:
             body:
               type: string
+              minLength: 1
+              maxLength: 100000
             content:
               type: string
+              minLength: 1
+              maxLength: 120000
     AgentResourceVersion:
       type: object
       required: [id, resource_id, workspace_id, kind, assistant, name, filename, title, description, body, content, metadata, version, created_at]
@@ -3297,16 +3319,24 @@ components:
           enum: [generic, openai, claude, gemini]
         name:
           type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          maxLength: 64
         filename:
           type: string
         title:
           type: string
+          maxLength: 120
         description:
           type: string
+          maxLength: 500
         body:
           type: string
+          minLength: 1
+          maxLength: 100000
         content:
           type: string
+          minLength: 1
+          maxLength: 120000
         metadata:
           type: object
           additionalProperties: true
@@ -3329,37 +3359,56 @@ components:
         assistant:
           type: string
           enum: [generic, openai, claude, gemini]
+          description: Defaults to `claude` for skills and `generic` for agents, prompts, and instructions. Skills must target `claude` or `gemini`.
         name:
           type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          maxLength: 64
         title:
           type: string
+          maxLength: 120
         description:
           type: string
+          maxLength: 500
         body:
           type: string
+          minLength: 1
+          maxLength: 100000
         content:
           type: string
+          minLength: 1
+          maxLength: 120000
         metadata:
           type: object
           additionalProperties: true
+          description: Must be a JSON object.
         change_note:
           type: string
+          maxLength: 500
     UpdateAgentResourceRequest:
       type: object
       properties:
         title:
           type: string
+          maxLength: 120
         description:
           type: string
+          maxLength: 500
         body:
           type: string
+          minLength: 1
+          maxLength: 100000
         content:
           type: string
+          minLength: 1
+          maxLength: 120000
         metadata:
           type: object
           additionalProperties: true
+          description: Must be a JSON object. Metadata-only updates preserve existing rendered content.
         change_note:
           type: string
+          maxLength: 500
     AgentSkill:
       type: object
       required: [name, filename, assistant, title, description]

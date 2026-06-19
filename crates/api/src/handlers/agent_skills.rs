@@ -1,8 +1,12 @@
 use std::path::Path;
 
 use axum::{extract::Path as AxumPath, extract::State, Extension, Json};
-use common::{auth::AuthContext, error::AppResult, AppError, AppState};
+use common::{
+    audit::spawn_audit_log, auth::AuthContext, error::AppResult, models::AuditAction, AppError,
+    AppState,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 const MAX_SKILL_NAME_LEN: usize = 64;
 const MAX_SKILL_TITLE_LEN: usize = 120;
@@ -254,51 +258,9 @@ pub async fn create_agent_skill(
 
     let filename = format!("{name}.md");
     let content = compose_skill_markdown(title, description, instructions);
+    let actor = auth.actor();
 
-    let exists = sqlx::query_scalar::<_, bool>(
-        r#"
-        SELECT EXISTS(
-            SELECT 1 FROM agent_skills
-            WHERE workspace_id = $1 AND assistant = $2 AND name = $3
-            UNION ALL
-            SELECT 1 FROM agent_resources
-            WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
-        )
-        "#,
-    )
-    .bind(workspace_id)
-    .bind(assistant)
-    .bind(name)
-    .fetch_one(&state.db)
-    .await
-    .map_err(AppError::Database)?;
-
-    if exists {
-        return Err(AppError::Conflict(format!(
-            "Agent skill '{assistant}/{name}' already exists"
-        )));
-    }
-
-    let skill = sqlx::query_as::<_, AgentSkillContent>(
-        r#"
-        INSERT INTO agent_skills (workspace_id, name, filename, assistant, title, description, instructions, content)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING name, filename, assistant, title, description, instructions, content
-        "#
-    )
-    .bind(workspace_id)
-    .bind(name)
-    .bind(&filename)
-    .bind(assistant)
-    .bind(title)
-    .bind(description)
-    .bind(instructions)
-    .bind(&content)
-    .fetch_one(&state.db)
-    .await
-    .map_err(AppError::Database)?;
-
-    super::agent_resources::seed_skill_resource(
+    let resource = super::agent_resources::create_skill_resource_versioned(
         &state.db,
         workspace_id,
         super::agent_resources::SkillResourceInput {
@@ -310,10 +272,28 @@ pub async fn create_agent_skill(
             instructions,
             content: &content,
         },
+        Some("created via legacy agent-skills API"),
+        Some(actor.as_str()),
     )
     .await?;
 
-    Ok(Json(skill))
+    spawn_audit_log(
+        state.db.clone(),
+        workspace_id,
+        actor,
+        AuditAction::AgentResourceCreated,
+        resource.id,
+        "agent_resource",
+        Some(json!({
+            "kind": resource.kind,
+            "assistant": resource.assistant,
+            "name": resource.name,
+            "version": resource.version,
+            "source": "legacy-agent-skills-api",
+        })),
+    );
+
+    Ok(Json(skill_content_from_resource(resource)))
 }
 
 #[axum::debug_handler]
@@ -356,30 +336,9 @@ pub async fn update_agent_skill(
         });
     }
 
-    let _ = sqlx::query(
-        r#"
-        UPDATE agent_skills
-        SET title = $4,
-            description = $5,
-            instructions = $6,
-            content = $7,
-            updated_at = NOW()
-        WHERE workspace_id = $1 AND assistant = $2 AND name = $3
-        "#,
-    )
-    .bind(workspace_id)
-    .bind(assistant)
-    .bind(name)
-    .bind(title)
-    .bind(description)
-    .bind(instructions)
-    .bind(&content)
-    .execute(&state.db)
-    .await
-    .map_err(AppError::Database)?;
-
     let filename = format!("{name}.md");
-    super::agent_resources::upsert_skill_resource_versioned(
+    let actor = auth.actor();
+    let resource = super::agent_resources::upsert_skill_resource_versioned(
         &state.db,
         workspace_id,
         super::agent_resources::SkillResourceInput {
@@ -391,26 +350,42 @@ pub async fn update_agent_skill(
             instructions,
             content: &content,
         },
-        None,
-        Some(auth.key_prefix.as_str()),
+        Some("updated via legacy agent-skills API"),
+        Some(actor.as_str()),
     )
     .await?;
 
-    let skill = sqlx::query_as::<_, AgentSkillContent>(
-        r#"
-        SELECT name, filename, assistant, title, description, body AS instructions, content
-        FROM agent_resources
-        WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
-        "#,
-    )
-    .bind(workspace_id)
-    .bind(assistant)
-    .bind(name)
-    .fetch_one(&state.db)
-    .await
-    .map_err(AppError::Database)?;
+    spawn_audit_log(
+        state.db.clone(),
+        workspace_id,
+        actor,
+        AuditAction::AgentResourceUpdated,
+        resource.id,
+        "agent_resource",
+        Some(json!({
+            "kind": resource.kind,
+            "assistant": resource.assistant,
+            "name": resource.name,
+            "version": resource.version,
+            "source": "legacy-agent-skills-api",
+        })),
+    );
 
-    Ok(Json(skill))
+    Ok(Json(skill_content_from_resource(resource)))
+}
+
+fn skill_content_from_resource(
+    resource: super::agent_resources::AgentResource,
+) -> AgentSkillContent {
+    AgentSkillContent {
+        name: resource.name,
+        filename: resource.filename,
+        assistant: resource.assistant,
+        title: resource.title,
+        description: resource.description,
+        instructions: resource.body,
+        content: resource.content,
+    }
 }
 
 fn validate_assistant(assistant: &str) -> AppResult<&str> {

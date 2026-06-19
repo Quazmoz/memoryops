@@ -232,8 +232,8 @@ If you choose to use the local `fastembed` provider (`provider = "fastembed"`), 
 Agent skills, agent profiles, prompts, and reusable instructions are stored directly in PostgreSQL (`agent_resources` and `agent_resource_versions`) scoped by `workspace_id`. This guarantees database consistency, preserves immutable version history, and removes file synchronization issues across stateless API replicas. The legacy `agent_skills` API remains available for Claude/Gemini skill sync workflows.
 
 ### 1. Workspace Skill Seeding
-When a workspace is created, or when listing/retrieving skills for a workspace if it has `0` skill resources, the server automatically seeds default skills from the server filesystem's `.gemini/skills/` and `.claude/skills/` directories.
-These default markdown files are packed into the production Docker image during the build stage (`COPY .gemini /app/.gemini` and `COPY .claude /app/.claude`).
+When a workspace is created, or when listing/retrieving an Agent Library kind that has `0` resources, the server seeds safe starter resources without overwriting existing rows. Skill defaults come from the server filesystem's `.gemini/skills/` and `.claude/skills/` directories; prompts, agent profiles, and reusable instructions are seeded from built-in MemoryOps defaults with version history.
+The default skill markdown files are packed into the production Docker image during the build stage (`COPY .gemini /app/.gemini` and `COPY .claude /app/.claude`).
 
 ### 2. Synchronizing Local Code Changes to Production Databases
 Because resources are in the Postgres database, modifying files inside your local workspace's `.gemini/skills` or `.claude/skills` directory will not automatically update a remote server. You can synchronize skill changes bidirectionally:

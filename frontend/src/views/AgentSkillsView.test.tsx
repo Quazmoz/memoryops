@@ -83,6 +83,56 @@ describe("AgentSkillsView", () => {
     });
   });
 
+  it("submits metadata for a prompt resource from the drawer", async () => {
+    mockListAgentResources.mockResolvedValue([]);
+    mockListAgentResourceVersions.mockResolvedValue([]);
+    mockCreateAgentResource.mockResolvedValue({
+      ...releaseNotesResource(),
+      kind: "prompt",
+      assistant: "generic",
+      name: "release_brief",
+      title: "Release Brief",
+      description: "Drafts release notes",
+      metadata: { owner: "release" },
+      content: "# Prompt: Release Brief\n\n**Description:** Drafts release notes\n\n## Prompt\nSummarize changes.\n",
+    });
+    mockGetAgentResource.mockResolvedValue(releaseNotesResource());
+
+    renderWithQueryClient(<AgentSkillsView />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /add resource/i }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/type/i), {
+      target: { value: "prompt" },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText("release_notes"), {
+      target: { value: "release_brief" },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText("Release Brief Prompt"), {
+      target: { value: "Release Brief" },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText("Drafts concise release notes from merged changes."), {
+      target: { value: "Drafts release notes" },
+    });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /body/i }), {
+      target: { value: "## Prompt\nSummarize changes." },
+    });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /metadata/i }), {
+      target: { value: '{ "owner": "release", "default": false }' },
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /create resource/i }));
+
+    await waitFor(() => {
+      expect(mockCreateAgentResource).toHaveBeenCalledWith(expect.objectContaining({
+        assistant: "generic",
+        kind: "prompt",
+        metadata: { owner: "release", default: false },
+        name: "release_brief",
+      }));
+    });
+  });
+
   it("loads an existing resource and submits edits", async () => {
     mockListAgentResources.mockResolvedValue([releaseNotesSummary()]);
     mockGetAgentResource.mockResolvedValue(releaseNotesResource());

@@ -350,7 +350,7 @@ MemoryOps exposes MCP tools via HTTP Streamable or stdio transport.
 | Claude Code | [docs/integrations/claude-code.md](docs/integrations/claude-code.md) |
 | GitHub Copilot / Continue.dev | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
 | VS Code Extension | [docs/integrations/vscode-extension.md](docs/integrations/vscode-extension.md) (Early local scaffold, not Marketplace-published) |
-| External Agents / CLI Scripts | [docs/agent-integration.md](docs/agent-integration.md) (Includes skill copying and API downloading guide) |
+| External Agents / CLI Scripts | [docs/agent-integration.md](docs/agent-integration.md) (Agent Library, MCP, and CLI integration guide) |
 
 See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport reference and HTTP Streamable session lifecycle.
 
@@ -427,7 +427,7 @@ curl -X POST http://localhost:8080/v1/workspaces \
   -H 'Content-Type: application/json' \
   -H 'x-admin-token: <your-WORKSPACE_CREATION_SECRET>' \
   -d '{"name": "acme-engineering"}'
-# {"workspace_id": "018f...", "api_key": "mops_018f..._..."}
+# {"workspace_id": "YOUR_WORKSPACE_ID", "api_key": "YOUR_MEMORYOPS_API_KEY"}
 ```
 
 The bootstrap API key is returned **once**. Store it securely.
@@ -435,11 +435,11 @@ The bootstrap API key is returned **once**. Store it securely.
 ### Create an additional API key
 
 ```bash
-curl -X POST http://localhost:8080/v1/workspaces/018f.../keys \
-  -H 'X-API-Key: mops_018f...' \
+curl -X POST http://localhost:8080/v1/workspaces/YOUR_WORKSPACE_ID/keys \
+  -H 'X-API-Key: YOUR_MEMORYOPS_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"name": "coding-agent"}'
-# {"key": "mops_acme_3xK9m..."}  ← returned once, store it
+# {"key": "YOUR_NEW_MEMORYOPS_API_KEY"}  ← returned once, store it
 ```
 
 ### Register a GitHub webhook
@@ -454,11 +454,11 @@ Set the secret to the GitHub integration secret registered for that workspace.
 
 ```bash
 curl -X POST http://localhost:8080/v1/retrieve \
-  -H 'X-API-Key: mops_acme_3xK9m...' \
+  -H 'X-API-Key: YOUR_MEMORYOPS_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "Recent decisions about the auth service?",
-    "workspace_id": "018f...",
+    "workspace_id": "YOUR_WORKSPACE_ID",
     "token_budget": 4096,
     "agent_id": "coding-agent"
   }'
@@ -470,7 +470,7 @@ Response includes scored, token-packed memories and a retrieval trace showing **
 
 ```bash
 curl -X POST http://localhost:8080/v1/memory/019a.../feedback \
-  -H 'X-API-Key: mops_acme_3xK9m...' \
+  -H 'X-API-Key: YOUR_MEMORYOPS_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
     "query_id": "trace-uuid-from-retrieve",
@@ -486,11 +486,11 @@ Ratings (`-1`, `0`, `1`) roll into a `relevance_score` that nudges future hybrid
 
 ```bash
 curl -X POST http://localhost:8080/v1/retrieve \
-  -H 'X-API-Key: mops_acme_3xK9m...' \
+  -H 'X-API-Key: YOUR_MEMORYOPS_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "auth service decisions",
-    "workspace_id": "018f...",
+    "workspace_id": "YOUR_WORKSPACE_ID",
     "as_of": "2026-04-15T00:00:00Z"
   }'
 ```

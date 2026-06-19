@@ -372,7 +372,7 @@ pub struct ApiKey {
 ```
 
 **Key format:** `mops_<workspace_prefix>_<32 random bytes as base58>`  
-**Example:** `mops_acme_3xK9mPqRvZ...`
+**Example:** `YOUR_MEMORYOPS_API_KEY`
 
 **Hashing:** Argon2id with params: `m=65536, t=2, p=1` (OWASP recommended)
 
@@ -1362,7 +1362,7 @@ MCP clients authenticate during the `initialize` request by passing a workspace 
     "protocolVersion": "2025-06-18",
     "_meta": {
       "auth": {
-        "token": "Bearer mops_workspace_example"
+        "token": "Bearer YOUR_MEMORYOPS_API_KEY"
       }
     }
   }

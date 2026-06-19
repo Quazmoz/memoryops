@@ -122,7 +122,7 @@ Example response:
 ```json
 {
   "workspace_id": "0196f6c1-7e42-7f4f-8a6b-2945ea7f1e9a",
-  "api_key": "mops_0196f6c1_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  "api_key": "YOUR_MEMORYOPS_API_KEY"
 }
 ```
 

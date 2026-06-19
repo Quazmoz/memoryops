@@ -544,17 +544,33 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/tools/deployment_status/
             </p>
             <DefinitionGrid
               items={[
-                ["Type", "Skill, agent, prompt, or instruction."],
-                ["Target", "The agent family or client, such as Claude, Gemini, OpenAI, or a generic library."],
-                ["Version", "Each save creates an immutable snapshot that can be restored later."],
-                ["Content", "The markdown behavior contract or prompt body for the agent."],
-                ["Best use", "Store stable user/project preferences, architectural decisions, repeated incident learnings, and durable workflow rules."],
+                ["Canonical API", "`/v1/agent-resources` manages skills, agents, prompts, and instructions with metadata and version history."],
+                ["Legacy API", "`/v1/agent-skills` remains for Claude/Gemini skill sync and is backed by canonical skill resources."],
+                ["Target", "Skills target Claude or Gemini. Agents, prompts, and instructions can target generic, OpenAI, Claude, or Gemini runtimes."],
+                ["Version", "Each save and rollback creates an immutable snapshot that can be restored later."],
+                ["Export", "Copy or download the rendered markdown content for agent runtimes and keep metadata as sidecar context when supported."],
               ]}
             />
             <Callout>
               Good resources should be opinionated. They should tell the agent to retrieve before answering project-specific
               questions and to store only durable knowledge, not every intermediate thought or temporary task.
             </Callout>
+            <CodeBlock code={`# List canonical Agent Library resources
+curl "{{API_URL}}/v1/agent-resources" \\
+  -H "x-api-key: {{API_KEY}}"
+
+# Create a reusable prompt
+curl -X POST "{{API_URL}}/v1/agent-resources" \\
+  -H "x-api-key: {{API_KEY}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "kind": "prompt",
+    "assistant": "generic",
+    "name": "memory_retrieval_prompt",
+    "title": "Memory Retrieval Prompt",
+    "description": "Retrieves relevant workspace context before an agent acts.",
+    "body": "## Prompt\\nRetrieve durable MemoryOps context for {{task}}."
+  }'`} />
           </Section>
 
           <Section id="contradictions" title="Contradictions" tooltip="Review queue for memories that may disagree and need operator resolution.">

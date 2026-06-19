@@ -18,7 +18,7 @@ Create a workspace (example):
 curl -sS -X POST http://localhost:8080/v1/workspaces \
   -H 'Content-Type: application/json' \
   -d '{"name": "my-workspace"}'
-# Response: {"workspace_id": "0196f6c1-7e42-7f4f-8a6b-2945ea7f1e9a", "api_key": "mops_0196f6c1_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+# Response: {"workspace_id": "YOUR_WORKSPACE_ID", "api_key": "YOUR_MEMORYOPS_API_KEY"}
 ```
 
 Service ports (local dev): API `:8080`, MCP `:3003`, Frontend `:5173`, Postgres `:5432`, Redis `:6379`, Qdrant HTTP `:6333`, Qdrant gRPC `:6334`.
@@ -90,7 +90,7 @@ cargo run -p mcp
 Authorization header example:
 
 ```text
-Authorization: Bearer mops_018f..._<32b>
+Authorization: Bearer YOUR_MEMORYOPS_API_KEY
 ```
 
 ## Verify the Connection

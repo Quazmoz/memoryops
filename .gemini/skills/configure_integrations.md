@@ -13,6 +13,6 @@ Use this skill when:
 2. **Register the Integration**
    - Perform a POST request to register the integration in MemoryOps and obtain/store the signing secret:
      - HTTP: `POST /v1/workspaces/{workspace_id}/integrations`
-     - Payload: `{"provider": "github", "secret": "your-webhook-secret"}`
+     - Payload: `{"provider": "github", "secret": "YOUR_WEBHOOK_SIGNING_SECRET"}`
 3. **Configure Tool Webhook**
    - Navigate to the tool settings (e.g. GitHub Repository Webhooks) and set Payload URL to the ingest URL and Content Type to `application/json`. Add the secret.

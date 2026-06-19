@@ -23,7 +23,7 @@ Option A — HTTP transport (MCP server already running externally):
       "type": "http",
       "url": "http://localhost:3003/mcp",
       "headers": {
-        "Authorization": "Bearer YOUR_API_KEY"
+        "Authorization": "Bearer YOUR_MEMORYOPS_API_KEY"
       }
     }
   }
@@ -92,7 +92,7 @@ For a user-global configuration put the same `mcpServers` block in `~/.claude.js
 .mcp.json
 ```
 
-For team use, add `.mcp.json.example` with `YOUR_API_KEY` placeholder and document usage in the repo README.
+For team use, add `.mcp.json.example` with a `YOUR_MEMORYOPS_API_KEY` placeholder and document usage in the repo README.
 
 ## Verify the Connection
 

@@ -18,7 +18,7 @@ Example response:
 ```json
 {
   "workspace_id": "0196f6c1-7e42-7f4f-8a6b-2945ea7f1e9a",
-  "api_key": "mops_0196f6c1_xxxxxxxxxxxxxxxxxxxxxxxxx"
+  "api_key": "YOUR_MEMORYOPS_API_KEY"
 }
 ```
 
@@ -35,7 +35,7 @@ Send the returned key as either `Authorization: Bearer <api_key>` or `X-API-Key:
 
 ```bash
 curl -sS http://localhost:8080/v1/memory?workspace_id=0196f6c1-7e42-7f4f-8a6b-2945ea7f1e9a \
-  -H 'Authorization: Bearer mops_0196f6c1_xxxxxxxxxxxxxxxxxxxxxxxxx'
+  -H 'Authorization: Bearer YOUR_MEMORYOPS_API_KEY'
 ```
 
 ## Important
@@ -58,4 +58,3 @@ API_KEY=<your-returned-api-key> WORKSPACE_ID=<your-returned-workspace-id> node s
 - Create additional keys as needed with `POST /v1/workspaces/{id}/keys`.
 - Configure workspace promotion, lifecycle, and memory-sharing settings through the workspace endpoints.
 - See [docs/mcp-transport.md](mcp-transport.md) for the full MCP transport reference.
-

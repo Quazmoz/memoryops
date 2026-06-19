@@ -171,13 +171,172 @@ pub struct SkillResourceInput<'a> {
     pub content: &'a str,
 }
 
+#[derive(Clone, Copy)]
+struct DefaultAgentResourceInput {
+    kind: AgentResourceKind,
+    assistant: &'static str,
+    name: &'static str,
+    title: &'static str,
+    description: &'static str,
+    body: &'static str,
+}
+
+const DEFAULT_AGENT_RESOURCE_KINDS: [AgentResourceKind; 4] = [
+    AgentResourceKind::Skill,
+    AgentResourceKind::Agent,
+    AgentResourceKind::Prompt,
+    AgentResourceKind::Instruction,
+];
+
+const DEFAULT_AGENT_RESOURCES: &[DefaultAgentResourceInput] = &[
+    DefaultAgentResourceInput {
+        kind: AgentResourceKind::Instruction,
+        assistant: "generic",
+        name: "coding_agent_memory_rules",
+        title: "Coding Agent Memory Rules",
+        description:
+            "Rules for when coding agents should retrieve, store, or ignore MemoryOps context.",
+        body: r#"## Trigger
+
+Apply this instruction at the start and end of any substantial coding, debugging, release, or incident task.
+
+## Execution Steps
+
+1. Retrieve context before making project-specific decisions. Search for architecture rules, prior incidents, deployment constraints, and user preferences.
+2. Use retrieved memories as supporting evidence. Prefer recent, scoped, and corroborated memories over broad or stale memories.
+3. Store durable outcomes only after the task is complete: decisions, resolved root causes, migration notes, and stable workflow rules.
+4. Use observation ingestion for raw logs or notes that still need later classification.
+
+## Failure Handling
+
+- If MemoryOps credentials or tools are unavailable, continue with local repo inspection and mention that memory context was unavailable.
+- If retrieved memories conflict, pause before acting on either one and apply the contradiction-management instruction.
+
+## Output Expectations
+
+When memory materially influenced the work, mention the relevant finding briefly in the handoff."#,
+    },
+    DefaultAgentResourceInput {
+        kind: AgentResourceKind::Prompt,
+        assistant: "generic",
+        name: "memory_retrieval_prompt",
+        title: "Memory Retrieval Prompt",
+        description:
+            "Reusable prompt for retrieving focused workspace context before an agent acts.",
+        body: r#"## Prompt
+
+Retrieve MemoryOps context for the task below. Search for durable facts, architectural decisions, known pitfalls, relevant incidents, and user preferences.
+
+## Inputs
+
+- Task: {{task}}
+- Repository or subsystem: {{repo_or_subsystem}}
+- Time sensitivity: {{time_sensitivity}}
+
+## Retrieval Guidance
+
+1. Start with a narrow query using concrete identifiers from the task.
+2. Run a second broader query for related decisions or incidents.
+3. Prefer semantic memories for stable rules and episodic memories for recent operational evidence.
+4. Do not treat a single stale memory as authoritative if newer context exists.
+
+## Output
+
+Return the top findings as concise bullets with source hints, confidence, and any contradictions or missing context."#,
+    },
+    DefaultAgentResourceInput {
+        kind: AgentResourceKind::Prompt,
+        assistant: "generic",
+        name: "memory_storage_observation_prompt",
+        title: "Memory Storage Observation Prompt",
+        description:
+            "Reusable prompt for deciding whether to store a memory or submit an observation.",
+        body: r#"## Prompt
+
+Decide whether the following information should be saved to MemoryOps.
+
+## Inputs
+
+- Candidate information: {{candidate_information}}
+- Task outcome: {{task_outcome}}
+- Scope: {{workspace_or_repo_scope}}
+
+## Decision Rules
+
+1. Store a memory when the information is durable, reusable, and likely to help future agents or operators.
+2. Submit an observation when the content is raw evidence, logs, symptoms, or a partial hypothesis that needs processing.
+3. Do not store transient task steps, private chain-of-thought, secrets, credentials, or noisy intermediate output.
+4. Include tags for subsystem, tool, incident, dependency, or policy when available.
+
+## Output
+
+Return one of: `store`, `observe`, or `skip`, followed by the exact concise content and tags to send."#,
+    },
+    DefaultAgentResourceInput {
+        kind: AgentResourceKind::Instruction,
+        assistant: "generic",
+        name: "contradiction_management",
+        title: "Contradiction Management",
+        description:
+            "Guidance for handling conflicting memories without amplifying stale or unsafe context.",
+        body: r#"## Trigger
+
+Use this instruction when retrieved memories disagree, a user disputes a memory, or a new observation invalidates older context.
+
+## Execution Steps
+
+1. Identify the conflicting claims and their scopes: workspace, repository, service, branch, user, and timestamp.
+2. Prefer the most recent validated source only when it is in the same scope and directly addresses the conflict.
+3. If both claims can be true in different scopes, keep both and record the distinction.
+4. If one claim is stale or incorrect, resolve or flag the contradiction rather than silently ignoring it.
+5. When uncertain, ask for confirmation before storing a replacement memory.
+
+## Failure Handling
+
+- If contradiction tools are unavailable, summarize the conflict and avoid relying on either claim as fact.
+- Never delete or overwrite memory solely because it is inconvenient; require evidence or user confirmation.
+
+## Output Expectations
+
+Explain which claim is being used, why, and whether follow-up resolution is needed."#,
+    },
+    DefaultAgentResourceInput {
+        kind: AgentResourceKind::Agent,
+        assistant: "generic",
+        name: "production_code_review",
+        title: "Production Code Review Agent",
+        description:
+            "Agent profile for risk-first production code review with MemoryOps context retrieval.",
+        body: r#"## Role
+
+Act as a production code-review agent. Prioritize correctness, security, data safety, migrations, compatibility, and missing tests over style preferences.
+
+## Operating Rules
+
+1. Retrieve MemoryOps context for the subsystem, prior regressions, and release constraints before reviewing.
+2. Read the diff and the surrounding code paths. Do not infer behavior from filenames alone.
+3. Lead with actionable findings ordered by severity. Include file and line references.
+4. Call out missing tests only when they protect a realistic failure mode.
+5. Do not approve broad rewrites unless they are necessary for the stated change.
+
+## Failure Handling
+
+- If the diff or memory context is incomplete, state the gap and review the available code.
+- If a finding depends on an assumption, label it as an assumption.
+
+## Output
+
+Return findings first, then open questions, then a short residual-risk summary."#,
+    },
+];
+
 pub async fn seed_skill_resource(
     db: &PgPool,
     workspace_id: Uuid,
     input: SkillResourceInput<'_>,
 ) -> Result<(), AppError> {
     let metadata = json!({ "seeded": true });
-    sqlx::query(
+    let resource = sqlx::query_as::<_, AgentResource>(&format!(
         r#"
         INSERT INTO agent_resources (
             workspace_id, kind, assistant, name, filename, title, description,
@@ -185,8 +344,9 @@ pub async fn seed_skill_resource(
         )
         VALUES ($1, 'skill', $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (workspace_id, kind, assistant, name) DO NOTHING
+        RETURNING {AGENT_RESOURCE_COLUMNS}
         "#,
-    )
+    ))
     .bind(workspace_id)
     .bind(input.assistant)
     .bind(input.name)
@@ -196,22 +356,61 @@ pub async fn seed_skill_resource(
     .bind(input.instructions)
     .bind(input.content)
     .bind(metadata)
-    .execute(db)
+    .fetch_optional(db)
     .await
     .map_err(AppError::Database)?;
 
-    let resource = sqlx::query_as::<_, AgentResource>(
-        &format!("SELECT {AGENT_RESOURCE_COLUMNS} FROM agent_resources WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3"),
-    )
+    if let Some(resource) = resource {
+        insert_agent_resource_version_from_pool(
+            db,
+            &resource,
+            Some("seeded initial version"),
+            None,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+pub async fn create_skill_resource_versioned(
+    db: &PgPool,
+    workspace_id: Uuid,
+    input: SkillResourceInput<'_>,
+    change_note: Option<&str>,
+    created_by: Option<&str>,
+) -> Result<AgentResource, AppError> {
+    let metadata = json!({ "source": "legacy-agent-skills-api" });
+    let mut tx = db.begin().await.map_err(AppError::Database)?;
+
+    let resource = sqlx::query_as::<_, AgentResource>(&format!(
+        r#"
+            INSERT INTO agent_resources (
+                workspace_id, kind, assistant, name, filename, title, description,
+                body, content, metadata
+            )
+            VALUES ($1, 'skill', $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING {AGENT_RESOURCE_COLUMNS}
+            "#
+    ))
     .bind(workspace_id)
     .bind(input.assistant)
     .bind(input.name)
-    .fetch_one(db)
+    .bind(input.filename)
+    .bind(input.title)
+    .bind(input.description)
+    .bind(input.instructions)
+    .bind(input.content)
+    .bind(&metadata)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(AppError::Database)?;
+    .map_err(map_agent_resource_write_error)?;
 
-    insert_agent_resource_version_from_pool(db, &resource, Some("seeded initial version"), None)
-        .await
+    upsert_legacy_agent_skill(&mut tx, workspace_id, skill_input_from_resource(&resource)).await?;
+    insert_agent_resource_version(&mut tx, &resource, change_note, created_by).await?;
+    tx.commit().await.map_err(AppError::Database)?;
+
+    Ok(resource)
 }
 
 pub async fn upsert_skill_resource_versioned(
@@ -220,7 +419,7 @@ pub async fn upsert_skill_resource_versioned(
     input: SkillResourceInput<'_>,
     change_note: Option<&str>,
     created_by: Option<&str>,
-) -> Result<(), AppError> {
+) -> Result<AgentResource, AppError> {
     let metadata = json!({ "source": "legacy-agent-skills-api" });
     let mut tx = db.begin().await.map_err(AppError::Database)?;
 
@@ -282,7 +481,7 @@ pub async fn upsert_skill_resource_versioned(
     insert_agent_resource_version(&mut tx, &resource, change_note, created_by).await?;
     tx.commit().await.map_err(AppError::Database)?;
 
-    Ok(())
+    Ok(resource)
 }
 
 #[axum::debug_handler]
@@ -291,8 +490,6 @@ pub async fn list_agent_resources(
     Extension(auth): Extension<AuthContext>,
     Query(query): Query<AgentResourceListQuery>,
 ) -> AppResult<Json<Vec<AgentResourceSummary>>> {
-    ensure_default_skill_resources(&state, auth.workspace_id, query.kind.as_deref()).await?;
-
     let kind = query
         .kind
         .as_deref()
@@ -303,6 +500,8 @@ pub async fn list_agent_resources(
         .as_deref()
         .map(validate_assistant)
         .transpose()?;
+
+    ensure_default_agent_resources(&state, auth.workspace_id, kind).await?;
 
     let mut sql = "SELECT id, workspace_id, kind, assistant, name, filename, title, description, \
          metadata, version, created_at, updated_at \
@@ -342,10 +541,10 @@ pub async fn get_agent_resource(
     Extension(auth): Extension<AuthContext>,
     Path((kind, assistant, name)): Path<(String, String, String)>,
 ) -> AppResult<Json<AgentResource>> {
-    ensure_default_skill_resources(&state, auth.workspace_id, Some(&kind)).await?;
     let kind = AgentResourceKind::parse(&kind)?;
     let assistant = validate_assistant_for_kind(kind, &assistant)?;
     let name = validate_resource_name(&name)?;
+    ensure_default_agent_resources(&state, auth.workspace_id, Some(kind)).await?;
 
     Ok(Json(
         fetch_agent_resource(&state.db, auth.workspace_id, kind, assistant, name).await?,
@@ -370,10 +569,11 @@ pub async fn create_agent_resource(
     let title = validate_title(&request.title)?;
     let description = validate_description(&request.description)?;
     let body = validate_body(&request.body)?;
-    let content = normalize_content(kind, title, description, body, request.content.as_deref())?;
+    let content = normalize_content(kind, title, description, &body, request.content.as_deref())?;
     let metadata = validate_metadata(request.metadata.unwrap_or_else(|| json!({})))?;
     let change_note = validate_change_note(request.change_note.as_deref())?;
     let filename = resource_filename(name);
+    let actor = auth.actor();
 
     let mut tx = state.db.begin().await.map_err(AppError::Database)?;
 
@@ -394,7 +594,7 @@ pub async fn create_agent_resource(
     .bind(&filename)
     .bind(title)
     .bind(description)
-    .bind(body)
+    .bind(&body)
     .bind(&content)
     .bind(&metadata)
     .fetch_one(&mut *tx)
@@ -409,15 +609,14 @@ pub async fn create_agent_resource(
         )
         .await?;
     }
-    insert_agent_resource_version(&mut tx, &resource, change_note, Some(auth.actor().as_str()))
-        .await?;
+    insert_agent_resource_version(&mut tx, &resource, change_note, Some(actor.as_str())).await?;
 
     tx.commit().await.map_err(AppError::Database)?;
 
     spawn_audit_log(
         state.db.clone(),
         auth.workspace_id,
-        auth.actor(),
+        actor,
         AuditAction::AgentResourceCreated,
         resource.id,
         "agent_resource",
@@ -439,10 +638,19 @@ pub async fn update_agent_resource(
     Path((kind, assistant, name)): Path<(String, String, String)>,
     Json(request): Json<UpdateAgentResourceRequest>,
 ) -> AppResult<Json<AgentResource>> {
+    let UpdateAgentResourceRequest {
+        title,
+        description,
+        body,
+        content,
+        metadata,
+        change_note,
+    } = request;
     let kind = AgentResourceKind::parse(&kind)?;
     let assistant = validate_assistant_for_kind(kind, &assistant)?;
     let name = validate_resource_name(&name)?;
-    let change_note = validate_change_note(request.change_note.as_deref())?;
+    let change_note = validate_change_note(change_note.as_deref())?;
+    let actor = auth.actor();
 
     let mut tx = state.db.begin().await.map_err(AppError::Database)?;
     let current = sqlx::query_as::<_, ResourceWriteState>(
@@ -463,31 +671,34 @@ pub async fn update_agent_resource(
         resource: format!("agent_resource:{}/{}/{}", kind.as_str(), assistant, name),
     })?;
 
-    let title = match request.title.as_deref() {
-        Some(value) => validate_title(value)?,
-        None => current.title.as_str(),
+    let title_value = match title.as_deref() {
+        Some(value) => validate_title(value)?.to_owned(),
+        None => current.title,
     };
-    let description = match request.description.as_deref() {
-        Some(value) => validate_description(value)?,
-        None => current.description.as_str(),
+    let description_value = match description.as_deref() {
+        Some(value) => validate_description(value)?.to_owned(),
+        None => current.description,
     };
-    let body = match request.body.as_deref() {
+    let body_value = match body.as_deref() {
         Some(value) => validate_body(value)?,
-        None => current.body.as_str(),
+        None => current.body,
     };
-    let metadata = match request.metadata {
+    let metadata_value = match metadata {
         Some(value) => validate_metadata(value)?,
         None => current.metadata,
     };
-    let content = if request.content.is_none()
-        && request.title.is_none()
-        && request.description.is_none()
-        && request.body.is_none()
-    {
-        current.content
-    } else {
-        normalize_content(kind, title, description, body, request.content.as_deref())?
-    };
+    let content_value =
+        if content.is_none() && title.is_none() && description.is_none() && body.is_none() {
+            current.content
+        } else {
+            normalize_content(
+                kind,
+                &title_value,
+                &description_value,
+                &body_value,
+                content.as_deref(),
+            )?
+        };
 
     let resource = sqlx::query_as::<_, AgentResource>(&format!(
         r#"
@@ -506,11 +717,11 @@ pub async fn update_agent_resource(
     .bind(kind.as_str())
     .bind(assistant)
     .bind(name)
-    .bind(title)
-    .bind(description)
-    .bind(body)
-    .bind(&content)
-    .bind(&metadata)
+    .bind(&title_value)
+    .bind(&description_value)
+    .bind(&body_value)
+    .bind(&content_value)
+    .bind(&metadata_value)
     .fetch_one(&mut *tx)
     .await
     .map_err(AppError::Database)?;
@@ -523,15 +734,14 @@ pub async fn update_agent_resource(
         )
         .await?;
     }
-    insert_agent_resource_version(&mut tx, &resource, change_note, Some(auth.actor().as_str()))
-        .await?;
+    insert_agent_resource_version(&mut tx, &resource, change_note, Some(actor.as_str())).await?;
 
     tx.commit().await.map_err(AppError::Database)?;
 
     spawn_audit_log(
         state.db.clone(),
         auth.workspace_id,
-        auth.actor(),
+        actor,
         AuditAction::AgentResourceUpdated,
         resource.id,
         "agent_resource",
@@ -695,6 +905,7 @@ pub async fn rollback_agent_resource(
     let assistant = validate_assistant_for_kind(kind, &assistant)?;
     let name = validate_resource_name(&name)?;
     let change_note = validate_change_note(request.change_note.as_deref())?;
+    let actor = auth.actor();
 
     let mut tx = state.db.begin().await.map_err(AppError::Database)?;
 
@@ -765,15 +976,14 @@ pub async fn rollback_agent_resource(
     let note = change_note
         .map(str::to_owned)
         .unwrap_or_else(|| format!("rollback to v{version}"));
-    insert_agent_resource_version(&mut tx, &resource, Some(&note), Some(auth.actor().as_str()))
-        .await?;
+    insert_agent_resource_version(&mut tx, &resource, Some(&note), Some(actor.as_str())).await?;
 
     tx.commit().await.map_err(AppError::Database)?;
 
     spawn_audit_log(
         state.db.clone(),
         auth.workspace_id,
-        auth.actor(),
+        actor,
         AuditAction::AgentResourceRolledBack,
         resource.id,
         "agent_resource",
@@ -812,30 +1022,103 @@ async fn fetch_agent_resource(
     })
 }
 
-async fn ensure_default_skill_resources(
+async fn ensure_default_agent_resources(
     state: &AppState,
     workspace_id: Uuid,
-    requested_kind: Option<&str>,
+    requested_kind: Option<AgentResourceKind>,
 ) -> AppResult<()> {
-    if requested_kind
-        .map(|kind| kind.trim().eq_ignore_ascii_case("skill"))
-        .unwrap_or(true)
-    {
+    let kinds = requested_kind
+        .map(|kind| vec![kind])
+        .unwrap_or_else(|| DEFAULT_AGENT_RESOURCE_KINDS.to_vec());
+
+    for kind in kinds {
         let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM agent_resources WHERE workspace_id = $1 AND kind = 'skill'",
+            "SELECT COUNT(*) FROM agent_resources WHERE workspace_id = $1 AND kind = $2",
         )
         .bind(workspace_id)
+        .bind(kind.as_str())
         .fetch_one(&state.db)
         .await
         .map_err(AppError::Database)?;
 
-        if count == 0 {
+        if count != 0 {
+            continue;
+        }
+
+        if kind == AgentResourceKind::Skill {
             if let Err(err) =
                 super::agent_skills::seed_default_skills(&state.db, workspace_id).await
             {
-                tracing::warn!(?err, "failed to auto-seed default agent resources");
+                tracing::warn!(?err, "failed to auto-seed default agent skills");
+            }
+            continue;
+        }
+
+        for input in DEFAULT_AGENT_RESOURCES
+            .iter()
+            .copied()
+            .filter(|resource| resource.kind == kind)
+        {
+            if let Err(err) = seed_default_agent_resource(&state.db, workspace_id, input).await {
+                tracing::warn!(
+                    ?err,
+                    kind = kind.as_str(),
+                    name = input.name,
+                    "failed to auto-seed default agent resource"
+                );
             }
         }
+    }
+
+    Ok(())
+}
+
+async fn seed_default_agent_resource(
+    db: &PgPool,
+    workspace_id: Uuid,
+    input: DefaultAgentResourceInput,
+) -> Result<(), AppError> {
+    let filename = resource_filename(input.name);
+    let content = compose_resource_markdown(input.kind, input.title, input.description, input.body);
+    let metadata = json!({
+        "seeded": true,
+        "default": true,
+        "source": "memoryops-defaults",
+    });
+
+    let resource = sqlx::query_as::<_, AgentResource>(&format!(
+        r#"
+        INSERT INTO agent_resources (
+            workspace_id, kind, assistant, name, filename, title, description,
+            body, content, metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (workspace_id, kind, assistant, name) DO NOTHING
+        RETURNING {AGENT_RESOURCE_COLUMNS}
+        "#,
+    ))
+    .bind(workspace_id)
+    .bind(input.kind.as_str())
+    .bind(input.assistant)
+    .bind(input.name)
+    .bind(&filename)
+    .bind(input.title)
+    .bind(input.description)
+    .bind(input.body)
+    .bind(&content)
+    .bind(&metadata)
+    .fetch_optional(db)
+    .await
+    .map_err(AppError::Database)?;
+
+    if let Some(resource) = resource {
+        insert_agent_resource_version_from_pool(
+            db,
+            &resource,
+            Some("seeded default resource"),
+            None,
+        )
+        .await?;
     }
 
     Ok(())
@@ -1055,8 +1338,8 @@ fn validate_single_line_text<'a>(
     Ok(trimmed)
 }
 
-fn validate_body(body: &str) -> AppResult<&str> {
-    let normalized = body.replace("\r\n", "\n");
+fn validate_body(body: &str) -> AppResult<String> {
+    let normalized = normalize_newlines(body);
     let trimmed = normalized.trim();
     if trimmed.is_empty() {
         return Err(AppError::Validation("Resource body is required".to_owned()));
@@ -1066,11 +1349,11 @@ fn validate_body(body: &str) -> AppResult<&str> {
             "Resource body must be at most {MAX_RESOURCE_BODY_LEN} characters"
         )));
     }
-    Ok(body.trim())
+    Ok(trimmed.to_owned())
 }
 
-fn validate_content(content: &str) -> AppResult<&str> {
-    let normalized = content.replace("\r\n", "\n");
+fn validate_content(content: &str) -> AppResult<String> {
+    let normalized = normalize_newlines(content);
     let trimmed = normalized.trim();
     if trimmed.is_empty() {
         return Err(AppError::Validation(
@@ -1082,7 +1365,7 @@ fn validate_content(content: &str) -> AppResult<&str> {
             "Resource content must be at most {MAX_RESOURCE_CONTENT_LEN} characters"
         )));
     }
-    Ok(content.trim())
+    Ok(trimmed.to_owned())
 }
 
 fn validate_metadata(metadata: Value) -> AppResult<Value> {
@@ -1119,7 +1402,7 @@ fn normalize_content(
     content: Option<&str>,
 ) -> AppResult<String> {
     if let Some(content) = content {
-        return validate_content(content).map(str::to_owned);
+        return validate_content(content);
     }
     Ok(compose_resource_markdown(kind, title, description, body))
 }
@@ -1148,6 +1431,10 @@ fn resource_filename(name: &str) -> String {
     format!("{name}.md")
 }
 
+fn normalize_newlines(value: &str) -> String {
+    value.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 fn map_agent_resource_write_error(error: sqlx::Error) -> AppError {
     if let sqlx::Error::Database(db_error) = &error {
         if db_error.code().as_deref() == Some("23505") {
@@ -1161,13 +1448,56 @@ fn map_agent_resource_write_error(error: sqlx::Error) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
     use super::*;
+    use axum::{
+        extract::{Path, Query, State},
+        Extension, Json,
+    };
+    use common::providers::{FastEmbedProvider, OllamaProvider};
+    use common::{AppConfig, AppState};
+    use qdrant_client::Qdrant;
+    use serde_json::json;
+    use sqlx::PgPool;
+    use std::sync::Arc;
+    use tokio::sync::Semaphore;
 
     #[test]
     fn skill_resources_are_limited_to_claude_and_gemini() {
         assert!(validate_assistant_for_kind(AgentResourceKind::Skill, "claude").is_ok());
         assert!(validate_assistant_for_kind(AgentResourceKind::Skill, "gemini").is_ok());
         assert!(validate_assistant_for_kind(AgentResourceKind::Skill, "generic").is_err());
+    }
+
+    #[test]
+    fn non_skill_resources_accept_all_assistants() {
+        for kind in [
+            AgentResourceKind::Agent,
+            AgentResourceKind::Prompt,
+            AgentResourceKind::Instruction,
+        ] {
+            for assistant in ["generic", "openai", "claude", "gemini"] {
+                assert!(validate_assistant_for_kind(kind, assistant).is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn validation_rejects_invalid_names_and_metadata() {
+        assert!(validate_resource_name("BadName").is_err());
+        assert!(validate_resource_name("bad/name").is_err());
+        assert!(validate_metadata(json!(["not", "object"])).is_err());
+        assert!(validate_metadata(json!({ "source": "test" })).is_ok());
+    }
+
+    #[test]
+    fn body_and_content_are_trimmed_and_newline_normalized() {
+        let body = validate_body("\r\n## Trigger\r\n- Run\r\n").expect("valid body");
+        assert_eq!(body, "## Trigger\n- Run");
+
+        let content = validate_content("\r# Prompt: Test\rBody\r\n").expect("valid content");
+        assert_eq!(content, "# Prompt: Test\nBody");
     }
 
     #[test]
@@ -1182,5 +1512,295 @@ mod tests {
         assert!(content.starts_with("# Prompt: Release Brief"));
         assert!(content.contains("**Description:** Drafts concise release notes"));
         assert!(content.ends_with("Summarize changes in three bullets.\n"));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn agent_resource_lifecycle_covers_kinds_versions_and_legacy_sync(pool: PgPool) {
+        let workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, workspace_id).await;
+        let state = test_state(pool.clone());
+        let auth = test_auth(workspace_id);
+
+        let skill = create_agent_resource(
+            State(state.clone()),
+            Extension(auth.clone()),
+            Json(CreateAgentResourceRequest {
+                kind: "skill".to_owned(),
+                assistant: Some("claude".to_owned()),
+                name: "memoryops_usage".to_owned(),
+                title: "MemoryOps Usage".to_owned(),
+                description: "Guides Claude to use MemoryOps context.".to_owned(),
+                body: "## Trigger\r\n- Before project work\r\n".to_owned(),
+                content: None,
+                metadata: Some(json!({ "seeded": false })),
+                change_note: Some("Initial skill".to_owned()),
+            }),
+        )
+        .await
+        .expect("skill create should succeed")
+        .0;
+
+        assert_eq!(skill.kind, "skill");
+        assert_eq!(skill.assistant, "claude");
+        assert_eq!(skill.version, 1);
+        assert_eq!(skill.body, "## Trigger\n- Before project work");
+        assert!(skill.content.starts_with("# Skill: MemoryOps Usage"));
+
+        let legacy_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_skills WHERE workspace_id = $1 AND assistant = 'claude' AND name = 'memoryops_usage'",
+        )
+        .bind(workspace_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(legacy_count, 1);
+
+        let mut prompt_generic_content = String::new();
+        for kind in ["agent", "prompt", "instruction"] {
+            for assistant in ["generic", "openai", "claude", "gemini"] {
+                let name = format!("{kind}_{assistant}");
+                let created = create_agent_resource(
+                    State(state.clone()),
+                    Extension(auth.clone()),
+                    Json(CreateAgentResourceRequest {
+                        kind: kind.to_owned(),
+                        assistant: Some(assistant.to_owned()),
+                        name: name.clone(),
+                        title: format!("{assistant} {kind}"),
+                        description: format!("Test {kind} for {assistant}."),
+                        body: "## Body\nReusable guidance.".to_owned(),
+                        content: None,
+                        metadata: Some(json!({ "assistant": assistant })),
+                        change_note: None,
+                    }),
+                )
+                .await
+                .expect("resource create should succeed")
+                .0;
+
+                assert_eq!(created.kind, kind);
+                assert_eq!(created.assistant, assistant);
+                assert_eq!(created.version, 1);
+
+                if kind == "prompt" && assistant == "generic" {
+                    prompt_generic_content = created.content;
+                }
+            }
+        }
+
+        let duplicate = create_agent_resource(
+            State(state.clone()),
+            Extension(auth.clone()),
+            Json(CreateAgentResourceRequest {
+                kind: "skill".to_owned(),
+                assistant: Some("claude".to_owned()),
+                name: "memoryops_usage".to_owned(),
+                title: "MemoryOps Usage".to_owned(),
+                description: "Guides Claude to use MemoryOps context.".to_owned(),
+                body: "## Trigger\n- Duplicate".to_owned(),
+                content: None,
+                metadata: None,
+                change_note: None,
+            }),
+        )
+        .await
+        .expect_err("duplicate resource should conflict");
+        assert!(matches!(duplicate, AppError::Conflict(_)));
+
+        let metadata_only = update_agent_resource(
+            State(state.clone()),
+            Extension(auth.clone()),
+            Path((
+                "prompt".to_owned(),
+                "generic".to_owned(),
+                "prompt_generic".to_owned(),
+            )),
+            Json(UpdateAgentResourceRequest {
+                title: None,
+                description: None,
+                body: None,
+                content: None,
+                metadata: Some(json!({ "default": false, "labels": ["review"] })),
+                change_note: Some("metadata only".to_owned()),
+            }),
+        )
+        .await
+        .expect("metadata update should succeed")
+        .0;
+        assert_eq!(metadata_only.version, 2);
+        assert_eq!(metadata_only.content, prompt_generic_content);
+        assert_eq!(metadata_only.metadata["labels"][0], "review");
+
+        let content_only = update_agent_resource(
+            State(state.clone()),
+            Extension(auth.clone()),
+            Path((
+                "prompt".to_owned(),
+                "generic".to_owned(),
+                "prompt_generic".to_owned(),
+            )),
+            Json(UpdateAgentResourceRequest {
+                title: None,
+                description: None,
+                body: None,
+                content: Some("# Prompt: Override\r\n\r\nCustom export body.\r\n".to_owned()),
+                metadata: None,
+                change_note: Some("custom content".to_owned()),
+            }),
+        )
+        .await
+        .expect("content update should succeed")
+        .0;
+        assert_eq!(content_only.version, 3);
+        assert_eq!(content_only.body, "## Body\nReusable guidance.");
+        assert_eq!(
+            content_only.content,
+            "# Prompt: Override\n\nCustom export body."
+        );
+
+        let rolled_back = rollback_agent_resource(
+            State(state.clone()),
+            Extension(auth.clone()),
+            Path((
+                "prompt".to_owned(),
+                "generic".to_owned(),
+                "prompt_generic".to_owned(),
+                1,
+            )),
+            Json(RollbackAgentResourceRequest {
+                change_note: Some("restore initial prompt".to_owned()),
+            }),
+        )
+        .await
+        .expect("rollback should succeed")
+        .0;
+        assert_eq!(rolled_back.version, 4);
+        assert_eq!(rolled_back.content, prompt_generic_content);
+
+        let missing_version = get_agent_resource_version(
+            State(state.clone()),
+            Extension(auth.clone()),
+            Path((
+                "prompt".to_owned(),
+                "generic".to_owned(),
+                "prompt_generic".to_owned(),
+                99,
+            )),
+        )
+        .await
+        .expect_err("missing version should 404");
+        assert!(matches!(missing_version, AppError::NotFound { .. }));
+
+        let versions = list_agent_resource_versions(
+            State(state.clone()),
+            Extension(auth.clone()),
+            Path((
+                "prompt".to_owned(),
+                "generic".to_owned(),
+                "prompt_generic".to_owned(),
+            )),
+        )
+        .await
+        .expect("versions should list")
+        .0;
+        assert_eq!(versions.len(), 4);
+        assert_eq!(versions[0].version, 4);
+
+        let _ = delete_agent_resource(
+            State(state.clone()),
+            Extension(auth.clone()),
+            Path((
+                "skill".to_owned(),
+                "claude".to_owned(),
+                "memoryops_usage".to_owned(),
+            )),
+        )
+        .await
+        .expect("delete should succeed");
+        let legacy_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_skills WHERE workspace_id = $1 AND assistant = 'claude' AND name = 'memoryops_usage'",
+        )
+        .bind(workspace_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(legacy_count, 0);
+
+        let other_workspace_id = Uuid::now_v7();
+        insert_workspace(&pool, other_workspace_id).await;
+        let other_auth = test_auth(other_workspace_id);
+        let _ = create_agent_resource(
+            State(state.clone()),
+            Extension(other_auth.clone()),
+            Json(CreateAgentResourceRequest {
+                kind: "prompt".to_owned(),
+                assistant: Some("generic".to_owned()),
+                name: "prompt_generic".to_owned(),
+                title: "Other Workspace Prompt".to_owned(),
+                description: "Same name in a different workspace.".to_owned(),
+                body: "## Body\nWorkspace isolated.".to_owned(),
+                content: None,
+                metadata: None,
+                change_note: None,
+            }),
+        )
+        .await
+        .expect("same resource name should be allowed in another workspace");
+
+        let listed = list_agent_resources(
+            State(state),
+            Extension(auth),
+            Query(AgentResourceListQuery {
+                kind: Some("prompt".to_owned()),
+                assistant: Some("generic".to_owned()),
+            }),
+        )
+        .await
+        .expect("list should succeed")
+        .0;
+        assert_eq!(
+            listed
+                .iter()
+                .filter(|resource| resource.name == "prompt_generic")
+                .count(),
+            1
+        );
+        assert!(listed
+            .iter()
+            .all(|resource| resource.workspace_id == workspace_id));
+    }
+
+    async fn insert_workspace(pool: &PgPool, workspace_id: Uuid) {
+        sqlx::query("INSERT INTO workspaces (id, name) VALUES ($1, 'test-ws')")
+            .bind(workspace_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    fn test_auth(workspace_id: Uuid) -> AuthContext {
+        AuthContext {
+            workspace_id,
+            key_id: Uuid::now_v7(),
+            key_prefix: "prefix".to_owned(),
+        }
+    }
+
+    fn test_state(pool: PgPool) -> AppState {
+        AppState {
+            db: pool,
+            redis: deadpool_redis::Config::from_url("redis://localhost:16379")
+                .create_pool(None)
+                .unwrap(),
+            qdrant: Qdrant::from_url("http://localhost:16333").build().unwrap(),
+            processor_semaphore: Arc::new(Semaphore::new(1)),
+            embedding_provider: Arc::new(FastEmbedProvider::new("test")),
+            llm_provider: Arc::new(OllamaProvider::new("http://localhost:9", "test", 1, None)),
+            config: Arc::new(
+                AppConfig::from_toml_str(include_str!("../../../../config.toml")).unwrap(),
+            ),
+            app_secret_key: Arc::new(zeroize::Zeroizing::new("secret".to_owned())),
+            trusted_proxy_cidrs: Arc::new(Vec::new()),
+        }
     }
 }

@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 
 import {
   createAgentResource,
@@ -29,6 +29,7 @@ import {
   type AgentResourceSummary,
   type CreateAgentResourcePayload,
 } from "../api/agentResources";
+import type { JsonValue } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { InlineError } from "../components/InlineError";
 import { Badge } from "../components/ui/badge";
@@ -44,12 +45,21 @@ const defaultBodyTemplates: Record<AgentResourceKind, string> = {
 
 Use this skill when:
 - The user asks for this workflow explicitly.
+- The task matches the durable workflow described below.
 
 ## Execution Steps
 
 1. Describe the first step the agent should take.
 2. Add important safety checks or constraints.
-3. Explain the expected outcome or handoff.`,
+3. Explain the expected outcome or handoff.
+
+## Failure Handling
+
+- Say what the agent should do when required tools, credentials, or context are unavailable.
+
+## Output Expectations
+
+- Describe the final response or artifact shape.`,
   agent: `## Role
 
 Define the agent's responsibility, boundaries, and default posture.
@@ -58,7 +68,15 @@ Define the agent's responsibility, boundaries, and default posture.
 
 1. List the checks this agent should run before acting.
 2. Describe when it should ask for clarification.
-3. Define what it should hand back to the user.`,
+3. Define what it should hand back to the user.
+
+## Failure Handling
+
+- Define fallback behavior when inputs, tools, or upstream systems are unavailable.
+
+## Output
+
+Describe the required review, plan, or handoff format.`,
   prompt: `## Prompt
 
 Write the reusable prompt body here.
@@ -69,14 +87,18 @@ Write the reusable prompt body here.
 
 ## Output
 
-Describe the desired response shape.`,
+Describe the desired response shape and any validation requirements.`,
   instruction: `## Instruction
 
 State the reusable rule or operating constraint.
 
 ## Applies When
 
-- Describe the situations where this instruction should be active.`,
+- Describe the situations where this instruction should be active.
+
+## Failure Handling
+
+- Explain what to do when the instruction conflicts with user intent, policy, or available evidence.`,
 };
 
 const resourceKinds: AgentResourceKind[] = ["skill", "agent", "prompt", "instruction"];
@@ -93,6 +115,7 @@ type ResourceDraft = {
   title: string;
   description: string;
   body: string;
+  metadataText: string;
   change_note: string;
 };
 
@@ -104,16 +127,17 @@ type SelectedResource = {
 
 type FormErrors = Partial<Record<keyof ResourceDraft, string>>;
 
-export function AgentSkillsView() {
+export function AgentLibraryView() {
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedKind, setSelectedKind] = useState<KindFilter>("skill");
+  const [selectedKind, setSelectedKind] = useState<KindFilter>("all");
   const [selectedAssistant, setSelectedAssistant] = useState<AssistantFilter>("all");
   const [selectedResource, setSelectedResource] = useState<SelectedResource | null>(null);
   const [copied, setCopied] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingResource, setEditingResource] = useState<SelectedResource | null>(null);
   const [draft, setDraft] = useState<ResourceDraft>(() => createEmptyDraft("skill"));
+  const [initialDraft, setInitialDraft] = useState<ResourceDraft | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [rollbackVersion, setRollbackVersion] = useState<number | null>(null);
 
@@ -155,7 +179,7 @@ export function AgentSkillsView() {
       payload,
     }: {
       resource: SelectedResource;
-      payload: Pick<CreateAgentResourcePayload, "title" | "description" | "body" | "change_note">;
+      payload: Pick<CreateAgentResourcePayload, "title" | "description" | "body" | "metadata" | "change_note">;
     }) => updateAgentResource(resource.kind, resource.assistant, resource.name, payload),
     onSuccess: (resource) => {
       finishSave(resource);
@@ -164,8 +188,15 @@ export function AgentSkillsView() {
 
   const rollbackMutation = useMutation({
     mutationKey: ["agent-resources", "rollback"],
-    mutationFn: ({ resource, version }: { resource: SelectedResource; version: number }) =>
-      rollbackAgentResource(resource.kind, resource.assistant, resource.name, version),
+    mutationFn: ({
+      resource,
+      version,
+      changeNote,
+    }: {
+      resource: SelectedResource;
+      version: number;
+      changeNote?: string;
+    }) => rollbackAgentResource(resource.kind, resource.assistant, resource.name, version, changeNote),
     onSuccess: (resource) => {
       setRollbackVersion(null);
       finishSave(resource, { keepDrawerOpen: false });
@@ -189,11 +220,15 @@ export function AgentSkillsView() {
     const search = searchQuery.trim().toLowerCase();
     return resources.filter((resource) => {
       const matchAssistant = selectedAssistant === "all" || resource.assistant === selectedAssistant;
+      const metadataText = JSON.stringify(resource.metadata ?? {}).toLowerCase();
       const matchSearch =
         search.length === 0 ||
         resource.title.toLowerCase().includes(search) ||
         resource.description.toLowerCase().includes(search) ||
-        resource.name.toLowerCase().includes(search);
+        resource.name.toLowerCase().includes(search) ||
+        resource.filename.toLowerCase().includes(search) ||
+        resourcePath(resource).toLowerCase().includes(search) ||
+        metadataText.includes(search);
       return matchAssistant && matchSearch;
     });
   }, [resources, searchQuery, selectedAssistant]);
@@ -205,6 +240,17 @@ export function AgentSkillsView() {
 
   const formPending = createMutation.isPending || updateMutation.isPending;
   const selectedContent = resourceQuery.data;
+  const hasUnsavedChanges = drawerOpen && initialDraft !== null && draftSignature(draft) !== draftSignature(initialDraft);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return undefined;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   function finishSave(resource: AgentResource, options: { keepDrawerOpen?: boolean } = {}) {
     const selected = pickSelected(resource);
@@ -214,7 +260,7 @@ export function AgentSkillsView() {
       setSelectedAssistant("all");
     }
     if (!options.keepDrawerOpen) {
-      closeDrawer();
+      closeDrawer({ force: true });
     }
     void queryClient.invalidateQueries({ queryKey: ["agent-resources"] });
     void queryClient.invalidateQueries({ queryKey: agentResourceContentKey(selected) });
@@ -222,8 +268,10 @@ export function AgentSkillsView() {
   }
 
   function openCreateDrawer(kind: AgentResourceKind = selectedKind === "all" ? "skill" : selectedKind) {
+    const nextDraft = createEmptyDraft(kind);
     setEditingResource(null);
-    setDraft(createEmptyDraft(kind));
+    setDraft(nextDraft);
+    setInitialDraft(nextDraft);
     setErrors({});
     setDrawerOpen(true);
   }
@@ -231,22 +279,29 @@ export function AgentSkillsView() {
   function openEditDrawer() {
     if (!selectedResource || !selectedContent) return;
     setEditingResource(selectedResource);
-    setDraft({
+    const nextDraft = {
       kind: selectedResource.kind,
       assistant: selectedResource.assistant,
       name: selectedResource.name,
       title: selectedContent.title,
       description: selectedContent.description,
       body: selectedContent.body || defaultBodyTemplates[selectedResource.kind],
+      metadataText: stringifyMetadata(selectedContent.metadata),
       change_note: "",
-    });
+    };
+    setDraft(nextDraft);
+    setInitialDraft(nextDraft);
     setErrors({});
     setDrawerOpen(true);
   }
 
-  function closeDrawer() {
+  function closeDrawer(options: { force?: boolean } = {}) {
+    if (!options.force && hasUnsavedChanges && !window.confirm("Discard unsaved Agent Library changes?")) {
+      return;
+    }
     setDrawerOpen(false);
     setEditingResource(null);
+    setInitialDraft(null);
     setErrors({});
   }
 
@@ -254,9 +309,7 @@ export function AgentSkillsView() {
     setDraft((current) => {
       if (field === "kind") {
         const nextKind = value as AgentResourceKind;
-        const assistant = allowedAssistants(nextKind).includes(current.assistant)
-          ? current.assistant
-          : defaultAssistant(nextKind);
+        const assistant = current.kind === nextKind ? current.assistant : defaultAssistant(nextKind);
         return {
           ...current,
           kind: nextKind,
@@ -276,12 +329,17 @@ export function AgentSkillsView() {
     if (!parsed.payload) return;
 
     if (editingResource) {
-      const updatePayload = {
+      const updatePayload: Pick<CreateAgentResourcePayload, "title" | "description" | "body" | "metadata" | "change_note"> = {
         title: parsed.payload.title,
         description: parsed.payload.description,
         body: parsed.payload.body,
-        ...(parsed.payload.change_note ? { change_note: parsed.payload.change_note } : {}),
       };
+      if (parsed.payload.metadata) {
+        updatePayload.metadata = parsed.payload.metadata;
+      }
+      if (parsed.payload.change_note) {
+        updatePayload.change_note = parsed.payload.change_note;
+      }
       updateMutation.mutate({
         resource: editingResource,
         payload: updatePayload,
@@ -318,10 +376,32 @@ export function AgentSkillsView() {
 
   const handleDelete = () => {
     if (!selectedResource || !selectedContent) return;
-    const confirmed = window.confirm(`Delete ${selectedContent.title}? This removes all versions.`);
+    const confirmed = window.confirm(
+      `Delete ${selectedContent.title}? This permanently removes the current ${singularKindLabel(selectedContent.kind).toLowerCase()} and all version snapshots. Rollback history will not be available after deletion.`,
+    );
     if (confirmed) {
       deleteMutation.mutate(selectedResource);
     }
+  };
+
+  const handleRollback = (version: number) => {
+    if (!selectedResource || !selectedContent) return;
+    const confirmed = window.confirm(
+      `Restore ${selectedContent.title} to v${version}? This creates a new version and keeps the existing history intact.`,
+    );
+    if (!confirmed) return;
+    const suggestedNote = `restore ${selectedContent.name} to v${version}`;
+    const changeNote = window.prompt("Optional change note for the new rollback version:", suggestedNote);
+    setRollbackVersion(version);
+    const rollbackPayload: { resource: SelectedResource; version: number; changeNote?: string } = {
+      resource: selectedResource,
+      version,
+    };
+    const trimmedChangeNote = changeNote?.trim();
+    if (trimmedChangeNote) {
+      rollbackPayload.changeNote = trimmedChangeNote;
+    }
+    rollbackMutation.mutate(rollbackPayload);
   };
 
   return (
@@ -424,7 +504,11 @@ export function AgentSkillsView() {
                     </div>
                   </div>
                   <p className="line-clamp-2 text-xs leading-relaxed text-ink/65">{resource.description}</p>
-                  <span className="text-[11px] font-medium text-ink/45">{assistantLabel(resource.assistant)}</span>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-ink/45">
+                    <span>{assistantLabel(resource.assistant)}</span>
+                    <span>Updated {formatDate(resource.updated_at)}</span>
+                    <ResourceSourceBadge metadata={resource.metadata} />
+                  </div>
                 </button>
               );
             })}
@@ -518,6 +602,32 @@ export function AgentSkillsView() {
               </div>
 
               <aside className="border-t border-line bg-soft/20 p-4 lg:border-l lg:border-t-0">
+                {selectedContent ? (
+                  <div className="mb-5 rounded-md border border-line bg-white p-3 text-xs text-ink/65">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <KindBadge kind={selectedContent.kind} />
+                      <Badge variant="muted">{assistantLabel(selectedContent.assistant)}</Badge>
+                      <ResourceSourceBadge metadata={selectedContent.metadata} />
+                    </div>
+                    <dl className="mt-3 grid gap-2">
+                      <div>
+                        <dt className="font-medium uppercase text-ink/40">Path</dt>
+                        <dd className="mt-1 break-all font-mono text-[11px] text-ink/70">{resourcePath(selectedContent)}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-medium uppercase text-ink/40">Updated</dt>
+                        <dd className="mt-1">{formatDate(selectedContent.updated_at)}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-medium uppercase text-ink/40">Metadata</dt>
+                        <dd className="thin-scrollbar mt-1 max-h-28 overflow-auto rounded border border-line bg-soft/30 p-2 font-mono text-[11px] text-ink/70">
+                          {stringifyMetadata(selectedContent.metadata)}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                ) : null}
+
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-sm font-semibold text-ink">
                     <History className="h-4 w-4 text-accent" aria-hidden="true" />
@@ -552,11 +662,7 @@ export function AgentSkillsView() {
                             variant="secondary"
                             size="sm"
                             className="mt-3 w-full"
-                            onClick={() => {
-                              if (!selectedResource) return;
-                              setRollbackVersion(version.version);
-                              rollbackMutation.mutate({ resource: selectedResource, version: version.version });
-                            }}
+                            onClick={() => handleRollback(version.version)}
                             disabled={rollbackMutation.isPending}
                           >
                             {rollbackMutation.isPending && rollbackVersion === version.version ? (
@@ -595,7 +701,7 @@ export function AgentSkillsView() {
                   {editingResource ? `${singularKindLabel(draft.kind)} / ${draft.name}` : singularKindLabel(draft.kind)}
                 </p>
               </div>
-              <Button type="button" variant="ghost" size="icon" aria-label="Close" onClick={closeDrawer}>
+              <Button type="button" variant="ghost" size="icon" aria-label="Close" onClick={() => closeDrawer()}>
                 <X className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
@@ -662,7 +768,17 @@ export function AgentSkillsView() {
                 />
               </Field>
 
-              <Field label="Change Note" helpText="Optional note for this version." error={errors.change_note}>
+              <Field label="Metadata" helpText="JSON object stored with this resource. Use it for source, default, owner, tags, or compatibility hints." error={errors.metadataText}>
+                <textarea
+                  value={draft.metadataText}
+                  onChange={(event) => updateDraft("metadataText", event.target.value)}
+                  rows={6}
+                  className="min-h-32 rounded-md border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  spellCheck={false}
+                />
+              </Field>
+
+              <Field label="Change Note" helpText={editingResource ? "Recommended for update history." : "Optional note for the first version."} error={errors.change_note}>
                 <Input
                   value={draft.change_note}
                   onChange={(event) => updateDraft("change_note", event.target.value)}
@@ -683,7 +799,7 @@ export function AgentSkillsView() {
               </div>
 
               <div className="flex justify-end gap-2 border-t border-line pt-4">
-                <Button type="button" variant="secondary" onClick={closeDrawer}>
+                <Button type="button" variant="secondary" onClick={() => closeDrawer()}>
                   Cancel
                 </Button>
                 <Button type="submit" disabled={formPending}>
@@ -761,6 +877,7 @@ function createEmptyDraft(kind: AgentResourceKind): ResourceDraft {
     title: "",
     description: "",
     body: defaultBodyTemplates[kind],
+    metadataText: "{}",
     change_note: "",
   };
 }
@@ -774,7 +891,9 @@ function validateDraft(
   const title = draft.title.trim();
   const description = draft.description.trim();
   const body = draft.body.trim();
+  const metadataText = draft.metadataText.trim() || "{}";
   const changeNote = draft.change_note.trim();
+  let metadata: Record<string, JsonValue> = {};
 
   if (!editing && !resourceNamePattern.test(name)) {
     errors.name = "Start with a lowercase letter and use only letters, digits, underscores, or hyphens.";
@@ -791,6 +910,16 @@ function validateDraft(
   if (body.length === 0 || body.length > 100_000) {
     errors.body = "Enter 1-100000 characters of markdown.";
   }
+  try {
+    const parsedMetadata = JSON.parse(metadataText) as unknown;
+    if (!isMetadataRecord(parsedMetadata)) {
+      errors.metadataText = "Metadata must be a JSON object.";
+    } else {
+      metadata = parsedMetadata;
+    }
+  } catch {
+    errors.metadataText = "Enter valid JSON metadata.";
+  }
   if (changeNote.length > 500) {
     errors.change_note = "Use 500 characters or fewer.";
   }
@@ -806,6 +935,7 @@ function validateDraft(
     title,
     description,
     body,
+    metadata,
   };
   if (changeNote) {
     payload.change_note = changeNote;
@@ -880,8 +1010,52 @@ function resourcePath(resource: Pick<AgentResourceSummary, "kind" | "assistant" 
   if (resource.kind === "skill" && (resource.assistant === "claude" || resource.assistant === "gemini")) {
     return `.${resource.assistant}/skills/${resource.filename}`;
   }
-  const base = resource.assistant === "generic" ? "agent-library" : `.${resource.assistant}`;
-  return `${base}/${kindLabel(resource.kind).toLowerCase()}/${resource.filename}`;
+  return `agent-library/${resource.assistant}/${kindLabel(resource.kind).toLowerCase()}/${resource.filename}`;
+}
+
+function ResourceSourceBadge({ metadata }: { metadata: Record<string, JsonValue> }) {
+  const label = resourceSourceLabel(metadata);
+  return (
+    <Badge variant={label === "Custom" ? "muted" : "green"} className="px-1.5 py-0 text-[10px] font-medium">
+      {label}
+    </Badge>
+  );
+}
+
+function resourceSourceLabel(metadata: Record<string, JsonValue>): string {
+  if (metadata.default === true || metadata.seeded === true) {
+    return "Default";
+  }
+  if (typeof metadata.source === "string" && metadata.source.trim().length > 0) {
+    return metadata.source.trim();
+  }
+  return "Custom";
+}
+
+function stringifyMetadata(metadata: Record<string, JsonValue> | undefined): string {
+  return JSON.stringify(metadata ?? {}, null, 2);
+}
+
+function isMetadataRecord(value: unknown): value is Record<string, JsonValue> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function draftSignature(draft: ResourceDraft): string {
+  return JSON.stringify({
+    ...draft,
+    metadataText: normalizeMetadataText(draft.metadataText),
+  });
+}
+
+function normalizeMetadataText(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "{}";
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return isMetadataRecord(parsed) ? JSON.stringify(parsed) : trimmed;
+  } catch {
+    return trimmed;
+  }
 }
 
 function titlePlaceholder(kind: AgentResourceKind): string {
@@ -938,6 +1112,8 @@ function formatDate(value: string): string {
     minute: "2-digit",
   });
 }
+
+export const AgentSkillsView = AgentLibraryView;
 
 interface MarkdownRendererProps {
   content: string;
