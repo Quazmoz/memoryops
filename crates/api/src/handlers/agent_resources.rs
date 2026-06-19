@@ -1,8 +1,11 @@
 use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
 use common::{
-    audit::spawn_audit_log, auth::AuthContext, error::AppResult, models::AuditAction, AppError,
-    AppState,
+    audit::{write_audit, AuditEvent, RequestContext},
+    auth::AuthContext,
+    error::AppResult,
+    models::AuditAction,
+    AppError, AppState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -555,6 +558,7 @@ pub async fn get_agent_resource(
 pub async fn create_agent_resource(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Json(request): Json<CreateAgentResourceRequest>,
 ) -> AppResult<Json<AgentResource>> {
     let kind = AgentResourceKind::parse(&request.kind)?;
@@ -613,20 +617,25 @@ pub async fn create_agent_resource(
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    spawn_audit_log(
-        state.db.clone(),
+    let event = AuditEvent::new(
         auth.workspace_id,
-        actor,
         AuditAction::AgentResourceCreated,
         resource.id,
         "agent_resource",
-        Some(json!({
-            "kind": resource.kind,
-            "assistant": resource.assistant,
-            "name": resource.name,
-            "version": resource.version,
-        })),
-    );
+    )
+    .actor_api_key(&auth)
+    .target_name(resource.name.clone())
+    .target_version(resource.version)
+    .metadata(json!({
+        "kind": resource.kind,
+        "assistant": resource.assistant,
+        "name": resource.name,
+        "version": resource.version,
+    }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(resource))
 }
@@ -635,6 +644,7 @@ pub async fn create_agent_resource(
 pub async fn update_agent_resource(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((kind, assistant, name)): Path<(String, String, String)>,
     Json(request): Json<UpdateAgentResourceRequest>,
 ) -> AppResult<Json<AgentResource>> {
@@ -738,21 +748,26 @@ pub async fn update_agent_resource(
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    spawn_audit_log(
-        state.db.clone(),
+    let event = AuditEvent::new(
         auth.workspace_id,
-        actor,
         AuditAction::AgentResourceUpdated,
         resource.id,
         "agent_resource",
-        Some(json!({
-            "kind": resource.kind,
-            "assistant": resource.assistant,
-            "name": resource.name,
-            "version": resource.version,
-            "change_note": change_note,
-        })),
-    );
+    )
+    .actor_api_key(&auth)
+    .target_name(resource.name.clone())
+    .target_version(resource.version)
+    .metadata(json!({
+        "kind": resource.kind,
+        "assistant": resource.assistant,
+        "name": resource.name,
+        "version": resource.version,
+        "change_note": change_note,
+    }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(resource))
 }
@@ -761,6 +776,7 @@ pub async fn update_agent_resource(
 pub async fn delete_agent_resource(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((kind, assistant, name)): Path<(String, String, String)>,
 ) -> AppResult<Json<Value>> {
     let kind = AgentResourceKind::parse(&kind)?;
@@ -806,19 +822,23 @@ pub async fn delete_agent_resource(
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    spawn_audit_log(
-        state.db.clone(),
+    let event = AuditEvent::new(
         auth.workspace_id,
-        auth.actor(),
         AuditAction::AgentResourceDeleted,
         resource_id,
         "agent_resource",
-        Some(json!({
-            "kind": kind.as_str(),
-            "assistant": assistant,
-            "name": name,
-        })),
-    );
+    )
+    .actor_api_key(&auth)
+    .target_name(name.to_owned())
+    .metadata(json!({
+        "kind": kind.as_str(),
+        "assistant": assistant,
+        "name": name,
+    }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(json!({ "deleted": true })))
 }
@@ -898,6 +918,7 @@ pub async fn get_agent_resource_version(
 pub async fn rollback_agent_resource(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((kind, assistant, name, version)): Path<(String, String, String, i32)>,
     Json(request): Json<RollbackAgentResourceRequest>,
 ) -> AppResult<Json<AgentResource>> {
@@ -980,21 +1001,26 @@ pub async fn rollback_agent_resource(
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    spawn_audit_log(
-        state.db.clone(),
+    let event = AuditEvent::new(
         auth.workspace_id,
-        actor,
         AuditAction::AgentResourceRolledBack,
         resource.id,
         "agent_resource",
-        Some(json!({
-            "kind": resource.kind,
-            "assistant": resource.assistant,
-            "name": resource.name,
-            "version": resource.version,
-            "rolled_back_to": version,
-        })),
-    );
+    )
+    .actor_api_key(&auth)
+    .target_name(resource.name.clone())
+    .target_version(resource.version)
+    .metadata(json!({
+        "kind": resource.kind,
+        "assistant": resource.assistant,
+        "name": resource.name,
+        "version": resource.version,
+        "rolled_back_to": version,
+    }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(resource))
 }
@@ -1524,6 +1550,7 @@ mod tests {
         let skill = create_agent_resource(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Json(CreateAgentResourceRequest {
                 kind: "skill".to_owned(),
                 assistant: Some("claude".to_owned()),
@@ -1562,6 +1589,7 @@ mod tests {
                 let created = create_agent_resource(
                     State(state.clone()),
                     Extension(auth.clone()),
+                    None,
                     Json(CreateAgentResourceRequest {
                         kind: kind.to_owned(),
                         assistant: Some(assistant.to_owned()),
@@ -1591,6 +1619,7 @@ mod tests {
         let duplicate = create_agent_resource(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Json(CreateAgentResourceRequest {
                 kind: "skill".to_owned(),
                 assistant: Some("claude".to_owned()),
@@ -1610,6 +1639,7 @@ mod tests {
         let metadata_only = update_agent_resource(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Path((
                 "prompt".to_owned(),
                 "generic".to_owned(),
@@ -1634,6 +1664,7 @@ mod tests {
         let content_only = update_agent_resource(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Path((
                 "prompt".to_owned(),
                 "generic".to_owned(),
@@ -1661,6 +1692,7 @@ mod tests {
         let rolled_back = rollback_agent_resource(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Path((
                 "prompt".to_owned(),
                 "generic".to_owned(),
@@ -1709,6 +1741,7 @@ mod tests {
         let _ = delete_agent_resource(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Path((
                 "skill".to_owned(),
                 "claude".to_owned(),
@@ -1732,6 +1765,7 @@ mod tests {
         let _ = create_agent_resource(
             State(state.clone()),
             Extension(other_auth.clone()),
+            None,
             Json(CreateAgentResourceRequest {
                 kind: "prompt".to_owned(),
                 assistant: Some("generic".to_owned()),

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
 use common::{
-    audit::spawn_audit_log,
+    audit::{write_audit, AuditEvent, RequestContext},
     auth::AuthContext,
     error::AppResult,
     models::AuditAction,
@@ -249,6 +249,7 @@ pub struct ToolSecretResponse {
 pub async fn create_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path(id): Path<Uuid>,
     Json(request): Json<CreateToolRequest>,
 ) -> AppResult<Json<ToolResponse>> {
@@ -311,15 +312,15 @@ pub async fn create_tool(
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::ToolCreated,
-        tool.id,
-        "workspace_tool",
-        Some(json!({ "name": tool.name, "version": tool.version })),
-    );
+    let event = AuditEvent::new(id, AuditAction::ToolCreated, tool.id, "workspace_tool")
+        .actor_api_key(&auth)
+        .target_name(tool.name.clone())
+        .target_version(tool.version)
+        .metadata(json!({ "name": tool.name, "version": tool.version }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(tool))
 }
@@ -378,6 +379,7 @@ pub async fn get_tool(
 pub async fn update_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((id, name)): Path<(Uuid, String)>,
     Json(request): Json<UpdateToolRequest>,
 ) -> AppResult<Json<ToolResponse>> {
@@ -397,6 +399,7 @@ pub async fn update_tool(
         .as_deref()
         .and_then(|value| normalized_optional_text(Some(value)));
     let auth_secret_enc = encrypted_secret(&state, request.auth_secret.as_deref())?;
+    let secret_changed = auth_secret_enc.is_some();
     let change_note = normalized_optional_text(request.change_note.as_deref());
 
     enforce_change_note_for_compliance(&state, id, change_note.as_deref()).await?;
@@ -467,19 +470,20 @@ pub async fn update_tool(
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::ToolUpdated,
-        tool.id,
-        "workspace_tool",
-        Some(json!({
+    let event = AuditEvent::new(id, AuditAction::ToolUpdated, tool.id, "workspace_tool")
+        .actor_api_key(&auth)
+        .target_name(tool.name.clone())
+        .target_version(tool.version)
+        .metadata(json!({
             "name": tool.name,
             "version": tool.version,
             "change_note": change_note,
-        })),
-    );
+            "secret_changed": secret_changed,
+        }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(tool))
 }
@@ -488,6 +492,7 @@ pub async fn update_tool(
 pub async fn delete_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((id, name)): Path<(Uuid, String)>,
 ) -> AppResult<Json<Value>> {
     require_workspace(&auth, id)?;
@@ -505,15 +510,14 @@ pub async fn delete_tool(
         });
     };
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::ToolDeleted,
-        tool_id,
-        "workspace_tool",
-        Some(json!({ "name": name })),
-    );
+    let event = AuditEvent::new(id, AuditAction::ToolDeleted, tool_id, "workspace_tool")
+        .actor_api_key(&auth)
+        .target_name(name.clone())
+        .metadata(json!({ "name": name }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(json!({ "deleted": true })))
 }
@@ -522,6 +526,7 @@ pub async fn delete_tool(
 pub async fn get_tool_secret(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((id, name)): Path<(Uuid, String)>,
 ) -> AppResult<Json<ToolSecretResponse>> {
     require_workspace(&auth, id)?;
@@ -551,15 +556,24 @@ pub async fn get_tool_secret(
         decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), &ciphertext)?;
     persist_migrated_ciphertext(&state.db, id, &name, &decrypted).await?;
 
-    spawn_audit_log(
-        state.db.clone(),
+    // Secret reveal is critical and required: persist the audit row BEFORE the
+    // plaintext is returned, so a secret is never revealed without a durable
+    // audit trail. `auth_header` is the header *name* (e.g. "Authorization"),
+    // never the secret value.
+    let event = AuditEvent::new(
         id,
-        auth.actor(),
         AuditAction::ToolSecretRevealed,
         row.id,
         "workspace_tool",
-        Some(json!({ "name": name, "auth_header": row.auth_header.as_deref() })),
-    );
+    )
+    .actor_api_key(&auth)
+    .target_name(name.clone())
+    .reason("tool auth secret revealed")
+    .metadata(json!({ "name": name, "auth_header": row.auth_header.as_deref() }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(ToolSecretResponse {
         auth_header: row.auth_header,
@@ -689,6 +703,7 @@ pub async fn get_tool_version(
 pub async fn rollback_tool_version(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((id, name, version)): Path<(Uuid, String, i32)>,
     Json(request): Json<RollbackToolRequest>,
 ) -> AppResult<Json<ToolResponse>> {
@@ -781,19 +796,19 @@ pub async fn rollback_tool_version(
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::ToolRolledBack,
-        tool.id,
-        "workspace_tool",
-        Some(json!({
+    let event = AuditEvent::new(id, AuditAction::ToolRolledBack, tool.id, "workspace_tool")
+        .actor_api_key(&auth)
+        .target_name(tool.name.clone())
+        .target_version(tool.version)
+        .metadata(json!({
             "name": tool.name,
             "version": tool.version,
             "rolled_back_to": version,
-        })),
-    );
+        }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(tool))
 }
@@ -1234,6 +1249,7 @@ async fn import_one_tool(
         let _ = update_tool(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Path((workspace_id, item.name.clone())),
             Json(update_request),
         )
@@ -1258,6 +1274,7 @@ async fn import_one_tool(
         let _ = create_tool(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Path(workspace_id),
             Json(create_request),
         )

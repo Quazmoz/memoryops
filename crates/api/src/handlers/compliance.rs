@@ -1,8 +1,12 @@
 use anyhow::anyhow;
 use axum::{extract::Path, extract::State, Extension, Json};
 use common::{
-    audit::spawn_audit_log, auth::AuthContext, error::AppResult, models::AuditAction,
-    services::WorkspaceConfigService, AppError, AppState,
+    audit::{write_audit, AuditEvent, RequestContext},
+    auth::AuthContext,
+    error::AppResult,
+    models::AuditAction,
+    services::WorkspaceConfigService,
+    AppError, AppState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -28,6 +32,7 @@ pub struct ForgetUserResponse {
 pub async fn forget_user_data(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path(path): Path<ForgetUserPath>,
 ) -> AppResult<Json<ForgetUserResponse>> {
     require_workspace(&auth, path.workspace_id)?;
@@ -68,19 +73,25 @@ pub async fn forget_user_data(
     )
     .await?;
 
-    spawn_audit_log(
-        state.db.clone(),
+    // User erasure is a required compliance audit event.
+    let event = AuditEvent::new(
         path.workspace_id,
-        auth.actor(),
         AuditAction::UserErasure,
         path.workspace_id,
         "workspace",
-        Some(json!({
-            "user_id": path.user_id.clone(),
-            "memories_purged": memories_purged,
-            "raw_events_purged": raw_events_purged
-        })),
-    );
+    )
+    .actor_api_key(&auth)
+    .reason(format!("erase user {}", path.user_id))
+    .metadata(json!({
+        "user_id": path.user_id.clone(),
+        "mode": mode,
+        "memories_purged": memories_purged,
+        "raw_events_purged": raw_events_purged
+    }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(ForgetUserResponse {
         user_id: path.user_id,

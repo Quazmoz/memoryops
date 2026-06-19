@@ -65,6 +65,19 @@ pub fn protected_router() -> Router<AppState> {
         )
         .route("/v1/workspaces/{id}/audit", get(audit::list_audit))
         .route(
+            "/v1/workspaces/{id}/audit/actions",
+            get(audit::list_audit_actions),
+        )
+        .route("/v1/workspaces/{id}/audit/export", get(audit::export_audit))
+        .route(
+            "/v1/workspaces/{id}/audit/verify",
+            axum::routing::post(audit::verify_audit),
+        )
+        .route(
+            "/v1/workspaces/{id}/audit/{audit_id}",
+            get(audit::get_audit_entry),
+        )
+        .route(
             "/v1/workspaces/{workspace_id}/forget/user/{user_id}",
             axum::routing::delete(compliance::forget_user_data),
         )

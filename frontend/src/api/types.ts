@@ -402,6 +402,8 @@ export type ApiKeySummary = {
   revoked: boolean;
 };
 
+export type AuditSeverity = "info" | "notice" | "warning" | "critical";
+
 export type AuditEvent = {
   id: string;
   workspace_id: string;
@@ -409,8 +411,54 @@ export type AuditEvent = {
   action: string;
   target_id: string;
   target_type: string;
-  diff?: JsonValue | null;
   occurred_at: string;
+  severity: AuditSeverity | string;
+  success: boolean;
+  category?: string | null;
+  request_id?: string | null;
+  correlation_id?: string | null;
+  actor_type?: string | null;
+  actor_id?: string | null;
+  actor_display?: string | null;
+  api_key_id?: string | null;
+  api_key_prefix?: string | null;
+  source_ip?: string | null;
+  user_agent?: string | null;
+  route?: string | null;
+  method?: string | null;
+  status_code?: number | null;
+  reason?: string | null;
+  target_name?: string | null;
+  target_version?: number | null;
+  error_code?: string | null;
+  diff?: JsonValue | null;
+  before?: JsonValue | null;
+  after?: JsonValue | null;
+  metadata?: JsonValue | null;
+  seq?: number | null;
+  prev_hash?: string | null;
+  hash?: string | null;
+};
+
+export type AuditActionInfo = {
+  name: string;
+  category: string;
+  default_severity: AuditSeverity | string;
+  required: boolean;
+};
+
+export type AuditActionsResponse = {
+  actions: AuditActionInfo[];
+  severities: string[];
+  categories: string[];
+};
+
+export type AuditChainVerification = {
+  enabled: boolean;
+  verified: boolean;
+  checked: number;
+  first_broken_seq?: number | null;
+  message: string;
 };
 
 export type AuditResponse = {

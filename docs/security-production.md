@@ -173,6 +173,7 @@ Do not expose MCP publicly without a strong network access policy and monitoring
 - Tool/webhook secrets are encrypted with `APP_SECRET_KEY`.
 - Tool secret reveal is sensitive and audited as `tool_secret_revealed`; the audit diff records metadata only, not the secret value.
 - Export/list endpoints should not include plaintext tool secrets.
+- Audit logging, redaction, tamper-evidence (`AUDIT_SIGNING_KEY`), and retention (`AUDIT_RETENTION_DAYS`) are documented in [docs/audit.md](audit.md). Security-sensitive actions use reliable (synchronous) audit writes; secret values are redacted before persistence.
 
 `APP_SECRET_KEY` rotation caveat: rotating it requires re-encrypting stored tool and webhook secrets or keeping the old key available for a migration. Do not rotate it casually until a migration plan exists.
 

@@ -1558,6 +1558,38 @@ paths:
                       $ref: '#/components/schemas/IntegrationHealth'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/integrations/{source}/sync:
+    post:
+      tags: [Workspaces]
+      operationId: startConnectorSync
+      summary: Start a connector sync
+      description: Triggers an API-based connector sync/backfill for the given integration source.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: source
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Source'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '202':
+          description: Sync started
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v1/workspaces/{id}/integrations/{source}:
     delete:
       tags: [Workspaces]
@@ -1652,11 +1684,31 @@ paths:
       tags: [Audit]
       operationId: listAuditLog
       summary: List audit entries
-      description: Returns cursor-paginated audit entries for workspace state changes.
+      description: >-
+        Returns cursor-paginated audit entries for workspace state changes.
+        Supports stable ordering by (occurred_at, id) and a rich set of
+        investigation filters. Payloads are redacted on read.
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
         - $ref: '#/components/parameters/After'
         - $ref: '#/components/parameters/Limit'
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 }, description: Legacy offset pagination; prefer cursor (after). }
+        - { name: actor, in: query, schema: { type: string } }
+        - { name: action, in: query, schema: { type: string }, description: Single action filter (back-compatible). }
+        - { name: actions, in: query, schema: { type: string }, description: Comma-separated list of actions. }
+        - { name: target_type, in: query, schema: { type: string } }
+        - { name: target_id, in: query, schema: { type: string, format: uuid } }
+        - { name: target_name, in: query, schema: { type: string } }
+        - { name: request_id, in: query, schema: { type: string } }
+        - { name: correlation_id, in: query, schema: { type: string } }
+        - { name: source_ip, in: query, schema: { type: string } }
+        - { name: severity, in: query, schema: { type: string }, description: Comma-separated severities. }
+        - { name: category, in: query, schema: { type: string }, description: Comma-separated categories. }
+        - { name: success, in: query, schema: { type: boolean } }
+        - { name: since, in: query, schema: { type: string, format: date-time }, description: Inclusive lower bound (alias of from). }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: q, in: query, schema: { type: string }, description: Free-text search across actor/target/request id/reason. }
       responses:
         '200':
           description: Audit entries
@@ -1666,6 +1718,91 @@ paths:
                 $ref: '#/components/schemas/AuditListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/audit/actions:
+    get:
+      tags: [Audit]
+      operationId: listAuditActions
+      summary: List known audit actions
+      description: Returns the catalog of audit actions, their categories, default severities, and whether each is a required (reliable) event.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Audit action catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditActionsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/audit/export:
+    get:
+      tags: [Audit]
+      operationId: exportAuditLog
+      summary: Export audit entries
+      description: >-
+        Exports filtered, redacted audit entries as JSONL (default) or CSV. The
+        same filters as the list endpoint apply. Results are bounded; if the cap
+        is hit the response carries `x-audit-export-truncated: true` and the
+        caller should narrow the date range. Exporting is itself audited.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - { name: format, in: query, schema: { type: string, enum: [jsonl, csv], default: jsonl } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: actions, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: severity, in: query, schema: { type: string } }
+        - { name: actor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Exported audit data
+          content:
+            application/x-ndjson:
+              schema: { type: string }
+            text/csv:
+              schema: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/audit/verify:
+    post:
+      tags: [Audit]
+      operationId: verifyAuditLog
+      summary: Verify audit hash chain
+      description: Recomputes and verifies the per-workspace tamper-evident HMAC hash chain.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditChainVerification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/audit/{audit_id}:
+    get:
+      tags: [Audit]
+      operationId: getAuditEntry
+      summary: Get a single audit entry
+      description: Returns one redacted audit entry by id within the workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - { name: audit_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Audit entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/workspaces/{id}/dlq:
     get:
       tags: [DLQ]
@@ -2209,13 +2346,42 @@ components:
         - memory_unpinned
         - memory_promoted
         - memory_merged
+        - memory_embedded
+        - memory_hard_deleted
+        - memory_imported
+        - memory_exported
         - importance_overridden
         - key_created
         - key_revoked
+        - config_updated
         - workspace_config_updated
         - publish
+        - workspace.promote
+        - workspace_created
+        - workspace_bootstrap
+        - workspace_deleted
+        - workspace_reindexed
         - integration_added
+        - integration_updated
         - integration_removed
+        - integration_webhook_secret_changed
+        - contradiction_resolved
+        - contradiction_dismissed
+        - retrieval_feedback
+        - observation_ingested
+        - user_erasure
+        - tool_created
+        - tool_updated
+        - tool_deleted
+        - tool_rolled_back
+        - tool_invoked
+        - tool_secret_revealed
+        - agent_resource_created
+        - agent_resource_updated
+        - agent_resource_deleted
+        - agent_resource_rolled_back
+        - auth_failed
+        - audit_exported
     IntegrationStatus:
       type: string
       enum: [active, degraded, failing]
@@ -3677,7 +3843,11 @@ components:
           format: date-time
     AuditEntry:
       type: object
-      required: [id, workspace_id, actor, action, target_id, target_type, occurred_at]
+      required: [id, workspace_id, actor, action, target_id, target_type, occurred_at, severity, success]
+      description: >-
+        A single audit record. All JSON payload fields (diff/before/after/metadata)
+        are recursively redacted and size-bounded before persistence and again on
+        read, so secret values are never present.
       properties:
         id:
           type: string
@@ -3694,22 +3864,131 @@ components:
           format: uuid
         target_type:
           type: string
-        diff:
-          type: [object, 'null']
-          additionalProperties: true
         occurred_at:
           type: string
           format: date-time
+        severity:
+          type: string
+          enum: [info, notice, warning, critical]
+        success:
+          type: boolean
+        category:
+          type: [string, 'null']
+        request_id:
+          type: [string, 'null']
+        correlation_id:
+          type: [string, 'null']
+        actor_type:
+          type: [string, 'null']
+        actor_id:
+          type: [string, 'null']
+        actor_display:
+          type: [string, 'null']
+        api_key_id:
+          type: [string, 'null']
+          format: uuid
+        api_key_prefix:
+          type: [string, 'null']
+        source_ip:
+          type: [string, 'null']
+        user_agent:
+          type: [string, 'null']
+        route:
+          type: [string, 'null']
+        method:
+          type: [string, 'null']
+        status_code:
+          type: [integer, 'null']
+        reason:
+          type: [string, 'null']
+        target_name:
+          type: [string, 'null']
+        target_version:
+          type: [integer, 'null']
+        error_code:
+          type: [string, 'null']
+        diff:
+          type: [object, 'null']
+          additionalProperties: true
+        before:
+          type: [object, 'null']
+          additionalProperties: true
+        after:
+          type: [object, 'null']
+          additionalProperties: true
+        metadata:
+          type: [object, 'null']
+          additionalProperties: true
+        seq:
+          type: [integer, 'null']
+          format: int64
+          description: Per-workspace hash-chain sequence number (null for legacy rows).
+        prev_hash:
+          type: [string, 'null']
+        hash:
+          type: [string, 'null']
+          description: HMAC-SHA256 over the canonical row + prev_hash (tamper-evidence).
     AuditListResponse:
       type: object
-      required: [items]
+      required: [items, limit, offset]
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/AuditEntry'
+        limit:
+          type: integer
+        offset:
+          type: integer
         next_cursor:
           type: [string, 'null']
+    AuditActionInfo:
+      type: object
+      required: [name, category, default_severity, required]
+      properties:
+        name:
+          type: string
+        category:
+          type: string
+        default_severity:
+          type: string
+          enum: [info, notice, warning, critical]
+        required:
+          type: boolean
+          description: Whether this action uses the reliable (synchronous) write path.
+    AuditActionsResponse:
+      type: object
+      required: [actions, severities, categories]
+      properties:
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditActionInfo'
+        severities:
+          type: array
+          items:
+            type: string
+        categories:
+          type: array
+          items:
+            type: string
+    AuditChainVerification:
+      type: object
+      required: [enabled, verified, checked, message]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the tamper-evident hash chain is active (signing key configured).
+        verified:
+          type: boolean
+        checked:
+          type: integer
+          format: int64
+        first_broken_seq:
+          type: [integer, 'null']
+          format: int64
+        message:
+          type: string
     DlqJob:
       type: object
       required: [job_id, payload_summary, error, retry_count, failed_at]

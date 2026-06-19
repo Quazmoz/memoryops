@@ -75,9 +75,9 @@ pub async fn handle_create(
     let agent_id = normalize_scope_value(req.agent_id);
     let user_id = normalize_scope_value(req.user_id);
     let repo = normalize_scope_value(req.repo);
-    let scope_visibility = req
-        .scope_visibility
-        .unwrap_or_else(|| default_scope_visibility(agent_id.as_ref(), user_id.as_ref(), repo.as_ref()));
+    let scope_visibility = req.scope_visibility.unwrap_or_else(|| {
+        default_scope_visibility(agent_id.as_ref(), user_id.as_ref(), repo.as_ref())
+    });
     let scope = json!({
         "workspace_id": workspace_id,
         "agent_id": agent_id,

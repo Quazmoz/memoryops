@@ -43,6 +43,9 @@ async fn main() -> anyhow::Result<()> {
     let state = build_state(config.clone(), app_secret_key).await?;
     processor::start_workers(state.clone()).await?;
     tokio::spawn(processor::scheduler::run_scheduler(state.clone()));
+    tokio::spawn(processor::scheduler::run_audit_outbox_drainer(
+        state.clone(),
+    ));
 
     let address = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&address).await?;
@@ -99,6 +102,12 @@ fn router(state: AppState) -> Router {
         .merge(observation_router)
         .merge(retrieval_router)
         .merge(protected_api_router)
+        // request_context runs just inside request_id so it sees the resolved
+        // x-request-id header; request_id is the outermost layer.
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::request_context::request_context,
+        ))
         .layer(axum_middleware::from_fn(middleware::request_id::request_id))
         .with_state(state)
 }
@@ -1212,5 +1221,97 @@ mod tests {
             Err(error) => panic!("bulk delete request should respond: {error}"),
         };
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Creating an API key must produce a reliable audit row that carries the
+    /// authenticated actor + API key context, and the audit list must filter by
+    /// action. Exercises the reliable write path, request-context middleware, and
+    /// the action filter together.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn key_creation_is_audited_with_actor_context(pool: PgPool) {
+        let app = router(test_state(pool.clone()).await);
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+
+        let create = app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                format!("/v1/workspaces/{workspace_id}/keys"),
+                Some(&api_key),
+                json!({ "name": "ci-key" }),
+            ))
+            .await
+            .expect("create key responds");
+        assert_eq!(create.status(), StatusCode::OK);
+
+        let response = app
+            .oneshot(request(
+                Method::GET,
+                format!("/v1/workspaces/{workspace_id}/audit?action=key_created"),
+                Some(&api_key),
+                json!(null),
+            ))
+            .await
+            .expect("audit list responds");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let items = body
+            .get("items")
+            .and_then(Value::as_array)
+            .expect("items array");
+        assert!(!items.is_empty(), "key_created audit row should exist");
+        let entry = &items[0];
+        assert_eq!(entry["action"], json!("key_created"));
+        assert!(entry["actor"]
+            .as_str()
+            .is_some_and(|actor| actor.starts_with("api_key:")));
+        assert!(
+            entry.get("api_key_id").and_then(Value::as_str).is_some(),
+            "audit row should record api_key_id context"
+        );
+    }
+
+    /// Audit payloads must never persist secret values, even when a handler is
+    /// handed one. Updating workspace config with a secret-bearing field and
+    /// reading it back through the audit API must show `[REDACTED]`.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn audit_redacts_secrets_in_config_diff(pool: PgPool) {
+        let app = router(test_state(pool.clone()).await);
+        let workspace_id = insert_workspace(&pool).await;
+        let api_key = insert_api_key(&pool, workspace_id, false).await;
+
+        let patch = app
+            .clone()
+            .oneshot(request(
+                Method::PATCH,
+                format!("/v1/workspaces/{workspace_id}/config"),
+                Some(&api_key),
+                json!({ "llm_api_key_env": "OPENAI_API_KEY" }),
+            ))
+            .await
+            .expect("config patch responds");
+        assert_eq!(patch.status(), StatusCode::OK);
+
+        let response = app
+            .oneshot(request(
+                Method::GET,
+                format!("/v1/workspaces/{workspace_id}/audit?category=workspace"),
+                Some(&api_key),
+                json!(null),
+            ))
+            .await
+            .expect("audit list responds");
+        assert_eq!(response.status(), StatusCode::OK);
+        let raw = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("audit body");
+        let text = String::from_utf8_lossy(&raw);
+        // The env-var *name* contains "key", so the policy redacts it: the audit
+        // log proves a key-related field changed without storing its value.
+        assert!(
+            text.contains("[REDACTED]"),
+            "expected a redacted key-like field in audit output: {text}"
+        );
     }
 }

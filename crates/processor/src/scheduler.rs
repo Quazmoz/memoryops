@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Timelike, Utc, Weekday};
 use common::{
-    audit::spawn_audit_log,
+    audit::{drain_audit_outbox, prune_audit_log, spawn_audit_log},
     build_embedding_provider_for_workspace, build_llm_provider_for_workspace,
     error::AppResult,
     models::{
@@ -28,6 +28,10 @@ const MAX_PRUNING_THRESHOLD: f32 = 0.50;
 const MIN_SKILL_VERSION_RETENTION_DAYS: u32 = 1;
 const MAX_SKILL_VERSION_RETENTION_DAYS: u32 = 3650;
 const SECONDS_PER_DAY: f64 = 86_400.0;
+/// How often the durable audit outbox is drained into `audit_log`.
+const AUDIT_OUTBOX_DRAIN_INTERVAL_SECS: u64 = 60;
+/// Max outbox rows processed per drain tick.
+const AUDIT_OUTBOX_DRAIN_BATCH: i64 = 500;
 
 #[derive(Debug, Clone, Copy, FromRow)]
 struct MemoryIdentity {
@@ -84,6 +88,7 @@ pub async fn run_scheduler(state: AppState) {
             if let Err(error) = run_compliance_retention_purge(&state).await {
                 tracing::error!(error = ?error, "compliance retention purge failed");
             }
+            run_audit_retention_pass(&state).await;
         }
 
         let is_sunday_promotion = now.weekday() == Weekday::Sun && now.hour() == decay_hour;
@@ -92,6 +97,52 @@ pub async fn run_scheduler(state: AppState) {
                 tracing::error!(error = ?error, "promotion pass failed");
             }
         }
+    }
+}
+
+/// Background loop that drains the durable audit outbox into `audit_log`.
+///
+/// Best-effort audit writes that failed their direct insert are parked in
+/// `audit_outbox`; this loop retries them on a short interval so operational
+/// audit events are eventually persisted without ever being silently dropped.
+/// It runs independently of the daily maintenance window.
+pub async fn run_audit_outbox_drainer(state: AppState) {
+    let interval = std::time::Duration::from_secs(AUDIT_OUTBOX_DRAIN_INTERVAL_SECS);
+    loop {
+        tokio::time::sleep(interval).await;
+        match drain_audit_outbox(&state.db, AUDIT_OUTBOX_DRAIN_BATCH).await {
+            Ok(0) => {}
+            Ok(written) => tracing::info!(written, "drained audit outbox"),
+            Err(error) => tracing::warn!(error = ?error, "audit outbox drain failed"),
+        }
+    }
+}
+
+/// Read `AUDIT_RETENTION_DAYS` from the environment. Returns `None` (no pruning)
+/// when unset, empty, zero, or invalid — pruning is never destructive by default.
+fn audit_retention_days() -> Option<i32> {
+    std::env::var("AUDIT_RETENTION_DAYS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<i32>().ok())
+        .filter(|days| *days > 0)
+}
+
+/// Daily audit retention pass. No-op unless `AUDIT_RETENTION_DAYS` is set, so the
+/// default behaviour never deletes audit history.
+async fn run_audit_retention_pass(state: &AppState) {
+    let Some(retention_days) = audit_retention_days() else {
+        return;
+    };
+    match prune_audit_log(&state.db, retention_days).await {
+        Ok(0) => {}
+        Ok(deleted) => {
+            tracing::info!(
+                deleted,
+                retention_days,
+                "pruned audit_log past retention window"
+            )
+        }
+        Err(error) => tracing::error!(error = ?error, "audit retention prune failed"),
     }
 }
 

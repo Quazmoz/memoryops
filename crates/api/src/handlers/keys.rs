@@ -4,7 +4,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use common::{
-    audit::spawn_audit_log,
+    audit::{write_audit, AuditEvent, RequestContext},
     auth::{invalidate_api_key_cache, AuthContext},
     error::AppResult,
     models::AuditAction,
@@ -93,6 +93,7 @@ async fn insert_key_record(
 pub async fn create_key(
     State(state): State<AppState>,
     auth: Option<Extension<AuthContext>>,
+    ctx: Option<Extension<RequestContext>>,
     Path(id): Path<Uuid>,
     Json(request): Json<CreateKeyRequest>,
 ) -> AppResult<Json<CreateKeyResponse>> {
@@ -101,29 +102,32 @@ pub async fn create_key(
     }
 
     let name = request.name.trim().to_owned();
-    let (actor, plaintext, created) = match auth.as_ref() {
+    let (plaintext, created) = match auth.as_ref() {
         Some(auth) => {
             require_workspace(&auth.0, id)?;
-            let (plaintext, created) = insert_key(&state.db, id, &name).await?;
-            (auth.0.actor(), plaintext, created)
+            insert_key(&state.db, id, &name).await?
         }
         None => {
             let mut tx = ensure_first_key_bootstrap(&state, id).await?;
             let (plaintext, created) = insert_key_record(&mut tx, id, &name).await?;
             tx.commit().await.map_err(AppError::Database)?;
-            ("bootstrap".to_owned(), plaintext, created)
+            (plaintext, created)
         }
     };
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        actor,
-        AuditAction::KeyCreated,
-        created.id,
-        "api_key",
-        Some(json!({ "name": created.name, "prefix": created.prefix })),
-    );
+    // KeyCreated is a required audit event: write it reliably and fail the
+    // request if it cannot be persisted.
+    let event = AuditEvent::new(id, AuditAction::KeyCreated, created.id, "api_key")
+        .target_name(created.name.clone())
+        .metadata(json!({ "name": created.name, "prefix": created.prefix }))
+        .maybe_request_context(ctx.as_deref());
+    let event = match auth.as_ref() {
+        Some(auth) => event.actor_api_key(&auth.0),
+        None => event.actor_string("bootstrap").actor_type("bootstrap"),
+    };
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(CreateKeyResponse {
         id: created.id,
@@ -213,6 +217,7 @@ pub async fn list_keys(
 pub async fn revoke_key(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((id, key_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<Json<ApiKeySummary>> {
     require_workspace(&auth, id)?;
@@ -246,15 +251,15 @@ pub async fn revoke_key(
         );
     }
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::KeyRevoked,
-        key_id,
-        "api_key",
-        Some(json!({ "prefix": revoked.prefix })),
-    );
+    // KeyRevoked is a required audit event.
+    let event = AuditEvent::new(id, AuditAction::KeyRevoked, key_id, "api_key")
+        .actor_api_key(&auth)
+        .target_name(revoked.name.clone())
+        .metadata(json!({ "prefix": revoked.prefix }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(revoked))
 }

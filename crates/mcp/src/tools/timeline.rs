@@ -89,7 +89,8 @@ pub async fn run(
         .load(workspace_id)
         .await?;
     request.apply_workspace_config(&workspace_config);
-    let results = hybrid::hybrid_search_with_config(state, &request, limit, &workspace_config).await?;
+    let results =
+        hybrid::hybrid_search_with_config(state, &request, limit, &workspace_config).await?;
     let memories = retrieve::pack_results(
         results,
         0.0,
@@ -118,7 +119,10 @@ mod tests {
     #[test]
     fn definition_exposes_scope_properties() {
         let schema = definition().input_schema;
-        let Some(properties) = schema.get("properties").and_then(serde_json::Value::as_object) else {
+        let Some(properties) = schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+        else {
             panic!("properties should exist");
         };
 
