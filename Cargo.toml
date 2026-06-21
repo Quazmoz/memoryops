@@ -41,7 +41,7 @@ axum = { version = "0.8", features = ["macros"] }
 tower-http = { version = "0.6", features = ["cors", "request-id", "set-header", "timeout", "trace"] }
 
 # Tokio is the async runtime used by axum, sqlx, Redis, and service workers.
-tokio = { version = "1.44", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1.52", features = ["macros", "net", "rt-multi-thread", "signal"] }
 
 # Serialization, validation, IDs, and time are shared by API payloads and DB models.
 chrono = { version = "0.4", features = ["clock", "serde"] }
@@ -50,10 +50,10 @@ serde_json = "1.0"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tiktoken-rs = "0.6"
 toml = "0.8"
-uuid = { version = "1.16", features = ["serde", "v5", "v7"] }
+uuid = { version = "1.23", features = ["serde", "v5", "v7"] }
 validator = { version = "0.20", features = ["derive"] }
 async-stream = "0.3"
-bytes = "1.9"
+bytes = "1.10"
 futures-util = "0.3"
 
 # sqlx provides parameterized Postgres access and migration embedding.
@@ -77,7 +77,7 @@ subtle = "2"
 zeroize = "1"
 
 # Qdrant is the required vector search backend and is held in shared AppState.
-qdrant-client = "1.13"
+qdrant-client = "1.18"
 
 # Structured logs are the foundation for request tracing and later OTEL export wiring.
 tracing = "0.1"
