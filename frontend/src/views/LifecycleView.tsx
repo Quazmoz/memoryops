@@ -183,7 +183,7 @@ export function LifecycleView() {
 
         {semantic.isLoading ? <Skeleton className="h-48 w-full" /> : null}
         {semantic.isError ? <InlineError title="Semantic memories unavailable" message={semantic.error.message} /> : null}
-        {!semantic.isLoading && !semantic.isError && (semantic.data?.items.length ?? 0) === 0 ? (
+        {!semantic.isLoading && !semantic.isError && (semantic.data?.items?.length ?? 0) === 0 ? (
           <EmptyState title="No semantic memories yet" message="Promotion output will appear here after episodic clusters qualify." />
         ) : null}
         {!semantic.isLoading && semantic.data && semantic.data.items.length > 0 ? (

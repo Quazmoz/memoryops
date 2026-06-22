@@ -5,7 +5,7 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, SaltString},
     Argon2, PasswordHasher, PasswordVerifier,
 };
-use rand::TryRngCore;
+use rand::TryRng;
 use redis::aio::ConnectionLike;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -47,7 +47,7 @@ pub fn generate_api_key(workspace_id: Uuid) -> AppResult<(String, String)> {
     let workspace_simple = workspace_id.simple().to_string();
     let workspace_prefix = &workspace_simple[..WORKSPACE_PREFIX_LEN];
     let mut random_bytes = [0_u8; RANDOM_BYTES_LEN];
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut random_bytes)
         .map_err(|error| {
             AppError::Internal(anyhow!("OS random number generator failed: {error}"))

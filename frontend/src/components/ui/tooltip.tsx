@@ -56,16 +56,17 @@ export function HelpTooltip({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
-          type="button"
+        <span
+          role="button"
+          tabIndex={0}
           aria-label={`Help: ${label}`}
           className={cn(
-            "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-ink/45 transition hover:text-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+            "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-ink/45 transition hover:text-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent cursor-pointer",
             className,
           )}
         >
           <CircleHelp className={cn("h-3.5 w-3.5", iconClassName)} aria-hidden="true" />
-        </button>
+        </span>
       </TooltipTrigger>
       <TooltipContent side={side} align={align} className={contentClassName}>
         <p>{children}</p>
