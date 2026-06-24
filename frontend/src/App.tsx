@@ -15,28 +15,37 @@ import { GuideView } from "./views/GuideView";
 import { SettingsView } from "./views/SettingsView";
 import { ToolsView } from "./views/ToolsView";
 import { AgentSkillsView } from "./views/AgentSkillsView";
+import { AdminView } from "./views/AdminView";
 
 export default function App() {
   return (
-    <FirstRunGate>
-      <AppShell>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/memory" element={<MemoryExplorer />} />
-          <Route path="/memory/:id" element={<MemoryDetail />} />
-          <Route path="/ingest" element={<Ingest />} />
-          <Route path="/settings" element={<SettingsView />} />
-          <Route path="/trace" element={<RetrievalTraceView />} />
-          <Route path="/lifecycle" element={<LifecycleView />} />
-          <Route path="/integrations" element={<IntegrationsView />} />
-          <Route path="/tools" element={<ToolsView />} />
-          <Route path="/agent-skills" element={<AgentSkillsView />} />
-          <Route path="/contradictions" element={<ContradictionsView />} />
-          <Route path="/audit" element={<AuditView />} />
-          <Route path="/guide" element={<GuideView />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </AppShell>
-    </FirstRunGate>
+    <Routes>
+      <Route path="/admin" element={<AdminView />} />
+      <Route
+        path="/*"
+        element={
+          <FirstRunGate>
+            <AppShell>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/memory" element={<MemoryExplorer />} />
+                <Route path="/memory/:id" element={<MemoryDetail />} />
+                <Route path="/ingest" element={<Ingest />} />
+                <Route path="/settings" element={<SettingsView />} />
+                <Route path="/trace" element={<RetrievalTraceView />} />
+                <Route path="/lifecycle" element={<LifecycleView />} />
+                <Route path="/integrations" element={<IntegrationsView />} />
+                <Route path="/tools" element={<ToolsView />} />
+                <Route path="/agent-skills" element={<AgentSkillsView />} />
+                <Route path="/contradictions" element={<ContradictionsView />} />
+                <Route path="/audit" element={<AuditView />} />
+                <Route path="/guide" element={<GuideView />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </AppShell>
+          </FirstRunGate>
+        }
+      />
+    </Routes>
   );
 }

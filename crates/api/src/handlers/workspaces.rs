@@ -172,7 +172,7 @@ pub async fn create_workspace(
         tracing::warn!("rejected workspace creation because WORKSPACE_CREATION_ENABLED=false");
         return Err(AppError::Forbidden);
     }
-    authorize_workspace_creation(&headers)?;
+    authorize_workspace_creation(&state, &headers).await?;
     // Build a minimal Request so we can reuse the shared IP resolver.
     let created_from_ip = {
         let mut builder = Request::builder();
@@ -810,10 +810,7 @@ fn merge_workspace_config(
     Ok(())
 }
 
-fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
-    let expected_secret = std::env::var("WORKSPACE_CREATION_SECRET")
-        .map_err(|_| AppError::Internal(anyhow!("WORKSPACE_CREATION_SECRET is not configured")))?;
-
+async fn authorize_workspace_creation(state: &AppState, headers: &HeaderMap) -> AppResult<()> {
     let Some(provided_header) = headers.get(&X_ADMIN_TOKEN_HEADER) else {
         return Err(AppError::Forbidden);
     };
@@ -822,7 +819,13 @@ fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
         return Err(AppError::Forbidden);
     };
 
-    if bool::from(provided_secret.as_bytes().ct_eq(expected_secret.as_bytes())) {
+    if let Ok(expected_secret) = std::env::var("WORKSPACE_CREATION_SECRET") {
+        if bool::from(provided_secret.as_bytes().ct_eq(expected_secret.as_bytes())) {
+            return Ok(());
+        }
+    }
+
+    if super::admin::verify_root_password(state, provided_secret).await? {
         Ok(())
     } else {
         Err(AppError::Forbidden)

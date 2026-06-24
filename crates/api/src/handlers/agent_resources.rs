@@ -1888,6 +1888,13 @@ async fn ensure_default_agent_resources(
     Ok(())
 }
 
+pub async fn seed_all_default_agent_resources(
+    state: &AppState,
+    workspace_id: Uuid,
+) -> AppResult<()> {
+    ensure_default_agent_resources(state, workspace_id, None).await
+}
+
 async fn seed_default_agent_resource(
     db: &PgPool,
     workspace_id: Uuid,

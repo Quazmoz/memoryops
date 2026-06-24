@@ -1,7 +1,7 @@
 FROM node:26-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 COPY . .
 # VITE_API_BASE_URL is baked in at build time (safe — it's a path, not a secret).
 # VITE_MEMORYOPS_WORKSPACE_ID is kept as a dev fallback only; the production
@@ -26,7 +26,8 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 RUN rm -f /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY entrypoint.sh /docker-entrypoint.d/10-runtime-config.sh
-RUN chmod +x /docker-entrypoint.d/10-runtime-config.sh \
+RUN sed -i 's/\r$//' /docker-entrypoint.d/10-runtime-config.sh \
+    && chmod +x /docker-entrypoint.d/10-runtime-config.sh \
     && chown -R nginx:nginx /usr/share/nginx/html \
     && echo "MemoryOps frontend image configured for port 8080"
 USER nginx

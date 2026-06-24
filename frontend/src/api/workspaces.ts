@@ -1,4 +1,4 @@
-import { ApiError, apiUrl, extractDetail, parseResponse, queryString, requestHeaders } from "./client";
+import { ApiError, apiRequest, apiUrl, extractDetail, parseResponse, queryString, requestHeaders } from "./client";
 import { apiContractRequest, operationMethod, resolveOperationPath } from "./generated/contract";
 import type {
   ApiKeySummary,
@@ -46,6 +46,38 @@ export async function createWorkspace(name: string, adminToken: string): Promise
   }
 
   return result;
+}
+
+export async function getDefaultWorkspace(): Promise<WorkspaceSummary> {
+  const response = await apiRequest<CreateWorkspaceResponse>("/v1/default-workspace", {
+    auth: false,
+  });
+  const id = response.id ?? response.workspace_id;
+
+  if (!id || !response.api_key) {
+    throw new Error("Default workspace response did not include credentials");
+  }
+
+  return {
+    id,
+    name: response.name ?? "Capsule Corp Memory Lab",
+    api_key: response.api_key,
+  };
+}
+
+export async function loginAdmin(password: string): Promise<boolean> {
+  const trimmedPassword = password.trim();
+  if (trimmedPassword.length === 0) {
+    throw new Error("Root password is required");
+  }
+
+  const response = await apiRequest<{ ok: boolean }>("/v1/admin/session", {
+    method: "POST",
+    auth: false,
+    body: { password: trimmedPassword },
+  });
+
+  return response.ok;
 }
 
 export async function createApiKey(workspaceId: string, name: string): Promise<CreatedApiKey> {

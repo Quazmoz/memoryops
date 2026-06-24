@@ -34,9 +34,7 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
     crate::security::validate_secret_key(app_secret_key.as_str())
         .map_err(|_| anyhow!("APP_SECRET_KEY is missing or invalid -- cannot start"))?;
-    if handlers::workspaces::workspace_creation_enabled_from_env() {
-        workspace_creation_secret_from_env()?;
-    } else {
+    if !handlers::workspaces::workspace_creation_enabled_from_env() {
         tracing::warn!("workspace creation endpoint disabled by WORKSPACE_CREATION_ENABLED=false");
     }
     validate_production_secrets()?;
@@ -146,7 +144,7 @@ async fn build_state(
     let embedding_provider = build_embedding_provider(&config);
     let llm_provider = build_llm_provider(&config);
 
-    Ok(AppState {
+    let state = AppState {
         db,
         redis,
         qdrant,
@@ -158,7 +156,16 @@ async fn build_state(
         config: Arc::new(config),
         app_secret_key: Arc::new(app_secret_key),
         trusted_proxy_cidrs,
-    })
+    };
+
+    handlers::admin::ensure_root_password(&state)
+        .await
+        .map_err(|error| anyhow::anyhow!("failed to ensure root password: {error}"))?;
+    handlers::default_workspace::ensure_default_workspace(&state)
+        .await
+        .map_err(|error| anyhow::anyhow!("failed to ensure default workspace: {error}"))?;
+
+    Ok(state)
 }
 
 async fn ensure_tool_secret_configuration(db: &sqlx::PgPool) -> anyhow::Result<()> {
@@ -215,17 +222,11 @@ fn validate_production_secrets() -> anyhow::Result<()> {
         }
     }
 
-    if handlers::workspaces::workspace_creation_enabled_from_env() {
-        match std::env::var("WORKSPACE_CREATION_SECRET") {
-            Ok(value) if !value.trim().is_empty() && value.trim() != DEV_PLACEHOLDER => {}
-            Ok(value) if value.trim() == DEV_PLACEHOLDER => {
-                errors.push(
-                    "WORKSPACE_CREATION_SECRET is set to the dev-placeholder value; set a real secret for production or disable workspace creation".to_owned(),
-                );
-            }
-            _ => errors.push(
-                "WORKSPACE_CREATION_SECRET must be set in production when workspace creation is enabled".to_owned(),
-            ),
+    if let Ok(value) = std::env::var("WORKSPACE_CREATION_SECRET") {
+        if value.trim() == DEV_PLACEHOLDER {
+            errors.push(
+                "WORKSPACE_CREATION_SECRET is set to the dev-placeholder value; remove it or set a real secret for production".to_owned(),
+            );
         }
     }
 
@@ -315,13 +316,6 @@ fn parse_trusted_proxy_cidrs() -> Vec<(std::net::IpAddr, u8)> {
             }
         })
         .collect()
-}
-
-fn workspace_creation_secret_from_env() -> anyhow::Result<String> {
-    match std::env::var("WORKSPACE_CREATION_SECRET") {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(anyhow::anyhow!("WORKSPACE_CREATION_SECRET must be set")),
-    }
 }
 
 async fn health() -> Json<Value> {

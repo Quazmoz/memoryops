@@ -2,11 +2,13 @@ use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use uuid::Uuid;
 
+pub mod admin;
 pub mod agent_resources;
 pub mod agent_skills;
 pub mod audit;
 pub mod compliance;
 pub mod contradictions;
+pub mod default_workspace;
 pub mod export;
 pub mod integration_dlq;
 pub mod integration_sync;
@@ -18,10 +20,16 @@ pub mod tools;
 pub mod workspaces;
 
 pub fn bootstrap_router() -> Router<AppState> {
-    Router::new().route(
-        "/v1/workspaces",
-        axum::routing::post(workspaces::create_workspace),
-    )
+    Router::new()
+        .route(
+            "/v1/workspaces",
+            axum::routing::post(workspaces::create_workspace),
+        )
+        .route(
+            "/v1/default-workspace",
+            get(default_workspace::get_default_workspace),
+        )
+        .route("/v1/admin/session", axum::routing::post(admin::login))
 }
 
 pub fn protected_router() -> Router<AppState> {
