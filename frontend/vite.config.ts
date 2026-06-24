@@ -12,6 +12,11 @@ export default defineConfig({
         target: backendTarget,
         changeOrigin: true,
       },
+      "/api": {
+        target: backendTarget,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
       "/health": {
         target: backendTarget,
         changeOrigin: true,

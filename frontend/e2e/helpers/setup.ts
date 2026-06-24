@@ -5,9 +5,13 @@ const API_BASE = process.env.E2E_API_BASE ?? 'http://localhost:5173';
 
 export async function createTestWorkspace(): Promise<{ workspaceId: string; apiKey: string }> {
   // 1. Create workspace
+  const adminToken = process.env.WORKSPACE_CREATION_SECRET ?? process.env.X_ADMIN_TOKEN;
   const wsRes = await fetch(`${API_BASE}/v1/workspaces`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(adminToken ? { 'x-admin-token': adminToken } : {}),
+    },
     body: JSON.stringify({ name: `e2e-test-${Date.now()}-${Math.floor(Math.random() * 10000)}` }),
   });
 
@@ -16,28 +20,32 @@ export async function createTestWorkspace(): Promise<{ workspaceId: string; apiK
     throw new Error(`Failed to create workspace: ${wsRes.status} — ${detail}`);
   }
 
-  const wsData = (await wsRes.json()) as { id?: string; workspace_id?: string };
-  const workspaceId = wsData.id ?? wsData.workspace_id;
+  const wsData = (await wsRes.json()) as { id?: string; workspace_id?: string; api_key?: string };
+  const workspaceId = wsData.workspace_id ?? wsData.id;
+  const apiKey = wsData.api_key;
   if (!workspaceId) {
     throw new Error('Workspace response did not include an id');
   }
-
-  // 2. Create API key
-  const keyRes = await fetch(`${API_BASE}/v1/workspaces/${workspaceId}/keys`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'e2e-default' }),
-  });
-
-  if (!keyRes.ok) {
-    const detail = await keyRes.text();
-    throw new Error(`Failed to create API key: ${keyRes.status} — ${detail}`);
+  if (!apiKey) {
+    throw new Error('Workspace response did not include an api_key');
   }
 
-  const keyData = (await keyRes.json()) as { plaintext_key?: string; key?: string };
-  const apiKey = keyData.plaintext_key ?? keyData.key;
-  if (!apiKey) {
-    throw new Error('API key response did not include a plaintext key');
+  // 2. Create github integration with dev-placeholder secret so webhooks succeed
+  const integrationRes = await fetch(`${API_BASE}/v1/workspaces/${workspaceId}/integrations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+    },
+    body: JSON.stringify({
+      source: 'github',
+      webhook_secret: 'dev-placeholder',
+    }),
+  });
+
+  if (!integrationRes.ok) {
+    const detail = await integrationRes.text();
+    throw new Error(`Failed to create integration: ${integrationRes.status} — ${detail}`);
   }
 
   return { workspaceId, apiKey };

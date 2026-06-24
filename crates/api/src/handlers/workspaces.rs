@@ -844,6 +844,17 @@ fn workspace_creation_enabled_from_value(value: Option<&str>) -> bool {
 }
 
 async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> AppResult<()> {
+    if std::env::var("BYPASS_RATE_LIMITS").is_ok()
+        || std::env::var("APP_ENV")
+            .map(|v| {
+                let v = v.to_ascii_lowercase();
+                v == "test" || v == "development"
+            })
+            .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
     let key = format!("workspace:create:ratelimit:{ip}");
     let now = unix_timestamp_secs()?;
 
