@@ -511,12 +511,12 @@ pub async fn rollback_agent_skill_version(
     let resource = sqlx::query_as::<_, super::agent_resources::AgentResource>(
         r#"
         UPDATE agent_resources
-        SET filename = $5,
-            title = $6,
-            description = $7,
-            body = $8,
-            content = $9,
-            metadata = $10,
+        SET filename = $4,
+            title = $5,
+            description = $6,
+            body = $7,
+            content = $8,
+            metadata = $9,
             version = version + 1,
             updated_at = NOW()
         WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
@@ -945,6 +945,7 @@ mod tests {
         let rolled_back = rollback_agent_skill_version(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             AxumPath(("claude".to_owned(), "release_notes".to_owned(), 1)),
             Json(rollback_req),
         )
