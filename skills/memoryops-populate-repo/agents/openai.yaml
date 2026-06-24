@@ -1,0 +1,6 @@
+interface:
+  display_name: "MemoryOps Repo Setup"
+  short_description: "Configure a repo to use MemoryOps agents"
+  default_prompt: "Use $memoryops-populate-repo to configure this repository for MemoryOps retrieval, observation, MCP, and agent resources."
+policy:
+  allow_implicit_invocation: true

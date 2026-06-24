@@ -50,8 +50,9 @@ cp .env.example .env
 #   APP_SECRET_KEY=<any-random-string>
 #   WORKSPACE_CREATION_SECRET=<any-random-string>
 
-# 2. Start everything
-docker compose up -d
+# 2. Build and start everything using the current source
+# This ensures the local code is compiled into the Docker images before startup.
+docker compose build --no-cache api mcp frontend && docker compose up -d
 
 # 3. Bootstrap a workspace
 WORKSPACE_CREATION_SECRET=<your-secret> node scripts/bootstrap.mjs
@@ -354,6 +355,18 @@ MemoryOps exposes MCP tools via HTTP Streamable or stdio transport.
 | External Agents / CLI Scripts | [docs/agent-integration.md](docs/agent-integration.md) (Agent Library, MCP, and CLI integration guide) |
 
 See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport reference and HTTP Streamable session lifecycle.
+
+### Portable Agent Bootstrap Skill
+
+MemoryOps includes a portable skill that an agent can copy into any repository and run to populate that repo with MemoryOps connection profiles, agent instructions, Claude/Gemini skill files, and MCP client config:
+
+```bash
+node skills/memoryops-populate-repo/scripts/setup-memoryops-repo.mjs
+```
+
+Run the command from the repository you want to configure, or ask an agent to use [skills/memoryops-populate-repo/SKILL.md](skills/memoryops-populate-repo/SKILL.md). The skill asks for the MemoryOps API URL or server DNS/IP, MCP URL, workspace ID, API key, agent ID, repo scope, target clients, and inheritance preferences before writing local files.
+
+When an API key is available, the helper can sync skills, prompts, agents, and instructions from the MemoryOps Agent Library through `/v1/agent-resources`. It does not persist API keys by default; if you explicitly allow plaintext local config, it writes only to gitignored files such as `.memoryops.local.json`, `.mcp.json`, or `.vscode/mcp.json`.
 
 ---
 
