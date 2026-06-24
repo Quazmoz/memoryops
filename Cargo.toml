@@ -64,13 +64,13 @@ redis = { version = "0.27", features = ["connection-manager", "tokio-comp"] }
 deadpool-redis = { version = "0.18", features = ["rt_tokio_1"] }
 
 # Webhook signatures and future API key hashing use the crypto primitives pinned for the workspace.
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 hex = "0.4"
 argon2 = "0.5"
 aes-gcm = "0.10"
 base64 = "0.22"
-hkdf = "0.12"
+hkdf = "0.13"
 bs58 = "0.5"
 rand = "0.10"
 subtle = "2"

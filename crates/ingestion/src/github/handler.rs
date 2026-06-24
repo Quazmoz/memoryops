@@ -149,7 +149,7 @@ mod tests {
         providers::{EmbeddingProvider, LlmProvider},
         ProviderError,
     };
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use qdrant_client::Qdrant;
     use serde_json::json;
     use sha2::Sha256;

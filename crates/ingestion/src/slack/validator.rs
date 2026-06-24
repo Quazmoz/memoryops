@@ -1,7 +1,7 @@
 use axum::http::HeaderMap;
 use chrono::Utc;
 use common::AppError;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 const SIGNATURE_HEADER: &str = "x-slack-signature";

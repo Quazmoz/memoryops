@@ -1,6 +1,6 @@
 use axum::http::HeaderMap;
 use common::AppError;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 const SIGNATURE_HEADER: &str = "x-hub-signature";
