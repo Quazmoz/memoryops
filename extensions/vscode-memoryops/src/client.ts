@@ -211,6 +211,21 @@ export interface SkillVersion {
   created_at?: string;
 }
 
+export interface ToolInvocation {
+  id: number;
+  tool_id: string;
+  workspace_id: string;
+  tool_name: string;
+  tool_version: number;
+  actor: string;
+  source: string;
+  status_code: number;
+  latency_ms: number;
+  error: string | null;
+  occurred_at: string;
+  [key: string]: unknown;
+}
+
 export interface SkillCreateInput {
   name: string;
   description: string;
@@ -250,6 +265,7 @@ export interface AgentSkill {
   assistant: string;
   title: string;
   description: string;
+  version: number;
 }
 
 export interface AgentSkillContent {
@@ -260,6 +276,23 @@ export interface AgentSkillContent {
   description: string;
   instructions: string;
   content: string;
+  version: number;
+}
+
+export interface AgentSkillVersion {
+  id: string;
+  agent_skill_id: string;
+  workspace_id: string;
+  name: string;
+  version: number;
+  assistant: string;
+  title: string;
+  description: string;
+  instructions: string;
+  content: string;
+  change_note: string | null;
+  created_by: string | null;
+  created_at: string;
 }
 
 export interface AgentSkillCreateInput {
@@ -268,12 +301,43 @@ export interface AgentSkillCreateInput {
   title: string;
   description: string;
   instructions: string;
+  change_note?: string;
 }
 
 export interface AgentSkillUpdateInput {
   title: string;
   description: string;
   instructions: string;
+  change_note?: string;
+}
+
+export interface ContradictionMemoryRef {
+  id: string;
+  content_preview: string;
+  created_at: string;
+}
+
+export interface ContradictionItem {
+  id: string;
+  workspace_id: string;
+  memory_a: ContradictionMemoryRef;
+  memory_b: ContradictionMemoryRef;
+  similarity: number;
+  conflict_score: number;
+  resolution: string;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  notes: string | null;
+  kept_memory_id: string | null;
+  discarded_memory_id: string | null;
+  created_at: string;
+}
+
+export type ContradictionResolution = "accepted" | "dismissed" | "keep_a" | "keep_b";
+
+export interface ContradictionListResponse {
+  items: ContradictionItem[];
+  next_cursor: string | null;
 }
 
 export class MemoryOpsClient {
@@ -616,12 +680,12 @@ export class MemoryOpsClient {
     };
   }
 
-  async listSkillInvocations(name: string, limit = 50): Promise<unknown[]> {
+  async listSkillInvocations(name: string, limit = 50): Promise<ToolInvocation[]> {
     const response = await this.request(
       `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/tools/${encodeURIComponent(name)}/invocations?limit=${limit}`,
       { method: "GET", authenticated: true, idempotent: true },
     );
-    return Array.isArray(response) ? response : [];
+    return Array.isArray(response) ? response.filter(isRecord).map(normalizeToolInvocation) : [];
   }
 
   async listAgentSkills(): Promise<AgentSkill[]> {
@@ -669,6 +733,97 @@ export class MemoryOpsClient {
       throw new Error("MemoryOps returned an unexpected agent skill response.");
     }
     return normalizeAgentSkillContent(response);
+  }
+
+  async listAgentSkillVersions(assistant: string, name: string): Promise<AgentSkillVersion[]> {
+    const response = await this.request(
+      `/v1/agent-skills/${encodeURIComponent(assistant)}/${encodeURIComponent(name)}/versions`,
+      { method: "GET", authenticated: true, idempotent: true },
+    );
+    return Array.isArray(response) ? response.filter(isRecord).map(normalizeAgentSkillVersion) : [];
+  }
+
+  async rollbackAgentSkillVersion(
+    assistant: string,
+    name: string,
+    version: number,
+    changeNote?: string,
+  ): Promise<AgentSkillContent> {
+    const response = await this.request(
+      `/v1/agent-skills/${encodeURIComponent(assistant)}/${encodeURIComponent(name)}/versions/${version}/rollback`,
+      {
+        method: "POST",
+        authenticated: true,
+        body: changeNote ? { change_note: changeNote } : {},
+      },
+    );
+    if (!isRecord(response)) {
+      throw new Error("MemoryOps returned an unexpected rollback response.");
+    }
+    return normalizeAgentSkillContent(response);
+  }
+
+  async listContradictions(status?: string, after?: string): Promise<ContradictionListResponse> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/contradictions${queryString({
+        status,
+        after,
+        limit: 20,
+      })}`,
+      { method: "GET", authenticated: true, idempotent: true }
+    );
+
+    if (!isRecord(response)) {
+      return { items: [], next_cursor: null };
+    }
+
+    const items = Array.isArray(response.items) ? response.items.filter(isRecord).map(normalizeContradictionItem) : [];
+    return {
+      items,
+      next_cursor: typeof response.next_cursor === "string" ? response.next_cursor : null,
+    };
+  }
+
+  async resolveContradiction(flagId: string, resolution: ContradictionResolution, notes?: string): Promise<ContradictionItem> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/contradictions/${encodeURIComponent(flagId)}/resolve`,
+      {
+        method: "POST",
+        authenticated: true,
+        body: { resolution, notes: notes ?? null },
+      }
+    );
+    return expectContradictionItem(response, "MemoryOps returned an unexpected contradiction resolution response.");
+  }
+
+  async bulkDismissContradictions(flagIds: string[], notes?: string): Promise<{ dismissed: number }> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/contradictions/bulk-dismiss`,
+      {
+        method: "POST",
+        authenticated: true,
+        body: { flag_ids: flagIds, notes: notes ?? null },
+      }
+    );
+    if (!isRecord(response)) {
+      return { dismissed: 0 };
+    }
+    return {
+      dismissed: numberOrDefault(response.dismissed, 0),
+    };
+  }
+
+  async getContradictionCount(): Promise<{ open: number }> {
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(this.config.workspaceId)}/contradictions/count`,
+      { method: "GET", authenticated: true, idempotent: true }
+    );
+    if (!isRecord(response)) {
+      return { open: 0 };
+    }
+    return {
+      open: numberOrDefault(response.open, 0),
+    };
   }
 
   private async request(path: string, options: {
@@ -1092,6 +1247,7 @@ function normalizeAgentSkill(value: Record<string, unknown>): AgentSkill {
     assistant: stringOrUndefined(value.assistant) ?? "",
     title: stringOrUndefined(value.title) ?? "",
     description: stringOrUndefined(value.description) ?? "",
+    version: numberOrDefault(value.version, 1),
   };
 }
 
@@ -1104,5 +1260,76 @@ function normalizeAgentSkillContent(value: Record<string, unknown>): AgentSkillC
     description: stringOrUndefined(value.description) ?? "",
     instructions: stringOrUndefined(value.instructions) ?? "",
     content: stringOrUndefined(value.content) ?? "",
+    version: numberOrDefault(value.version, 1),
   };
+}
+
+function normalizeAgentSkillVersion(value: Record<string, unknown>): AgentSkillVersion {
+  return {
+    id: stringOrUndefined(value.id) ?? "",
+    agent_skill_id: stringOrUndefined(value.agent_skill_id) ?? "",
+    workspace_id: stringOrUndefined(value.workspace_id) ?? "",
+    name: stringOrUndefined(value.name) ?? "",
+    version: numberOrDefault(value.version, 1),
+    assistant: stringOrUndefined(value.assistant) ?? "",
+    title: stringOrUndefined(value.title) ?? "",
+    description: stringOrUndefined(value.description) ?? "",
+    instructions: stringOrUndefined(value.instructions) ?? "",
+    content: stringOrUndefined(value.content) ?? "",
+    change_note: stringOrNullOrUndefined(value.change_note) ?? null,
+    created_by: stringOrNullOrUndefined(value.created_by) ?? null,
+    created_at: stringOrUndefined(value.created_at) ?? "",
+  };
+}
+
+function normalizeToolInvocation(value: Record<string, unknown>): ToolInvocation {
+  return {
+    id: numberOrDefault(value.id, 0),
+    tool_id: stringOrUndefined(value.tool_id) ?? "",
+    workspace_id: stringOrUndefined(value.workspace_id) ?? "",
+    tool_name: stringOrUndefined(value.tool_name) ?? "",
+    tool_version: numberOrDefault(value.tool_version, 1),
+    actor: stringOrUndefined(value.actor) ?? "",
+    source: stringOrUndefined(value.source) ?? "",
+    status_code: numberOrDefault(value.status_code, 0),
+    latency_ms: numberOrDefault(value.latency_ms, 0),
+    error: stringOrNullOrUndefined(value.error) ?? null,
+    occurred_at: stringOrUndefined(value.occurred_at) ?? "",
+  };
+}
+
+function normalizeContradictionItem(value: Record<string, unknown>): ContradictionItem {
+  return {
+    id: stringOrUndefined(value.id) ?? "",
+    workspace_id: stringOrUndefined(value.workspace_id) ?? "",
+    memory_a: normalizeContradictionMemoryRef(value.memory_a),
+    memory_b: normalizeContradictionMemoryRef(value.memory_b),
+    similarity: numberOrDefault(value.similarity, 0),
+    conflict_score: numberOrDefault(value.conflict_score, 0),
+    resolution: stringOrUndefined(value.resolution) ?? "open",
+    resolved_by: stringOrNullOrUndefined(value.resolved_by) ?? null,
+    resolved_at: stringOrNullOrUndefined(value.resolved_at) ?? null,
+    notes: stringOrNullOrUndefined(value.notes) ?? null,
+    kept_memory_id: stringOrNullOrUndefined(value.kept_memory_id) ?? null,
+    discarded_memory_id: stringOrNullOrUndefined(value.discarded_memory_id) ?? null,
+    created_at: stringOrUndefined(value.created_at) ?? "",
+  };
+}
+
+function normalizeContradictionMemoryRef(value: unknown): ContradictionMemoryRef {
+  if (!isRecord(value)) {
+    return { id: "", content_preview: "", created_at: "" };
+  }
+  return {
+    id: stringOrUndefined(value.id) ?? "",
+    content_preview: stringOrUndefined(value.content_preview) ?? "",
+    created_at: stringOrUndefined(value.created_at) ?? "",
+  };
+}
+
+function expectContradictionItem(value: unknown, errorMsg: string): ContradictionItem {
+  if (!isRecord(value)) {
+    throw new Error(errorMsg);
+  }
+  return normalizeContradictionItem(value);
 }

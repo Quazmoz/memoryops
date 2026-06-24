@@ -622,6 +622,84 @@ test("listAgentSkills, getAgentSkill, createAgentSkill, and updateAgentSkill fun
   }
 });
 
+test("invokeSkill accepts body and version and normalizes the response", async () => {
+  let receivedUrl = "";
+  let receivedMethod = "";
+  let receivedBody: Record<string, unknown> | null = null;
+
+  const restoreFetch = mockFetch(async (url, init) => {
+    receivedUrl = url;
+    receivedMethod = init?.method ?? "GET";
+    receivedBody = init?.body ? JSON.parse(init.body as string) : null;
+    return jsonResponse({
+      status: 200,
+      latency_ms: 45,
+      body: { success: true },
+    });
+  });
+
+  try {
+    const client = new MemoryOpsClient(CONFIG);
+    const result = await client.invokeSkill("slack_post", { message: "hello" }, 2);
+
+    assert.equal(receivedMethod, "POST");
+    assert.equal(receivedUrl, "https://memoryops.test/v1/workspaces/workspace-123/tools/slack_post/invoke");
+    assert.deepEqual(receivedBody, { body: { message: "hello" }, version: 2 });
+    assert.deepEqual(result, {
+      status: 200,
+      latency_ms: 45,
+      body: { success: true },
+    });
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("listSkillInvocations gets invocations for a tool and normalizes them", async () => {
+  let receivedUrl = "";
+  const restoreFetch = mockFetch(async (url) => {
+    receivedUrl = url;
+    return jsonResponse([
+      {
+        id: 42,
+        tool_id: "tool-1",
+        workspace_id: "workspace-123",
+        tool_name: "slack_post",
+        tool_version: 2,
+        actor: "vscode",
+        source: "http",
+        status_code: 200,
+        latency_ms: 45,
+        error: null,
+        occurred_at: "2026-06-09T17:00:00Z",
+      },
+    ]);
+  });
+
+  try {
+    const client = new MemoryOpsClient(CONFIG);
+    const invocations = await client.listSkillInvocations("slack_post", 10);
+
+    assert.equal(receivedUrl, "https://memoryops.test/v1/workspaces/workspace-123/tools/slack_post/invocations?limit=10");
+    assert.equal(invocations.length, 1);
+    assert.deepEqual(invocations[0], {
+      id: 42,
+      tool_id: "tool-1",
+      workspace_id: "workspace-123",
+      tool_name: "slack_post",
+      tool_version: 2,
+      actor: "vscode",
+      source: "http",
+      status_code: 200,
+      latency_ms: 45,
+      error: null,
+      occurred_at: "2026-06-09T17:00:00Z",
+    });
+  } finally {
+    restoreFetch();
+  }
+});
+
 function mockFetch(handler: (url: string, init?: RequestInit) => Promise<Response> | Response): () => void {
   const originalFetch = globalThis.fetch;
 

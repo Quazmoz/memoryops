@@ -27,6 +27,7 @@ import {
   type AgentResourceAssistant,
   type AgentResourceKind,
   type AgentResourceSummary,
+  type AgentResourceVersion,
   type CreateAgentResourcePayload,
 } from "../api/agentResources";
 import type { JsonValue } from "../api/types";
@@ -140,6 +141,12 @@ export function AgentLibraryView() {
   const [initialDraft, setInitialDraft] = useState<ResourceDraft | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [rollbackVersion, setRollbackVersion] = useState<number | null>(null);
+  const [comparisonVersions, setComparisonVersions] = useState<number[]>([]);
+
+  // Clear comparison selection whenever selected resource changes
+  useEffect(() => {
+    setComparisonVersions([]);
+  }, [selectedResource]);
 
   const resourcesQuery = useQuery({
     queryKey: agentResourcesKey(selectedKind === "all" ? undefined : selectedKind),
@@ -252,10 +259,26 @@ export function AgentLibraryView() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasUnsavedChanges]);
 
+  const leftComparedVersion = useMemo(() => {
+    if (comparisonVersions.length === 0) return null;
+    return versionsQuery.data?.find((v) => v.version === comparisonVersions[0]) ?? null;
+  }, [comparisonVersions, versionsQuery.data]);
+
+  const rightComparedVersion = useMemo(() => {
+    if (comparisonVersions.length < 2) return null;
+    return versionsQuery.data?.find((v) => v.version === comparisonVersions[1]) ?? null;
+  }, [comparisonVersions, versionsQuery.data]);
+
+  const comparisonDiffEntries = useMemo(() => {
+    if (!leftComparedVersion || !rightComparedVersion) return [];
+    return buildAgentResourceVersionDiffEntries(leftComparedVersion, rightComparedVersion);
+  }, [leftComparedVersion, rightComparedVersion]);
+
   function finishSave(resource: AgentResource, options: { keepDrawerOpen?: boolean } = {}) {
     const selected = pickSelected(resource);
     setSelectedResource(selected);
     setSelectedKind(resource.kind);
+    setComparisonVersions([]);
     if (selectedAssistant !== "all" && selectedAssistant !== resource.assistant) {
       setSelectedAssistant("all");
     }
@@ -594,9 +617,49 @@ export function AgentLibraryView() {
                   ) : null}
 
                   {!resourceQuery.isLoading && selectedContent ? (
-                    <div className="markdown-body select-text">
-                      <MarkdownRenderer content={selectedContent.content} />
-                    </div>
+                    leftComparedVersion && rightComparedVersion ? (
+                      <div className="grid gap-4 select-text">
+                        <div className="flex items-center justify-between border-b border-line pb-3">
+                          <div>
+                            <h3 className="text-base font-semibold text-ink">Version Comparison</h3>
+                            <p className="text-xs text-ink/55">
+                              Comparing v{leftComparedVersion.version} to v{rightComparedVersion.version}
+                            </p>
+                          </div>
+                          <Badge variant="accent">
+                            {comparisonDiffEntries.filter((entry) => entry.changed).length} fields changed
+                          </Badge>
+                        </div>
+                        <div className="grid gap-6 mt-2">
+                          {comparisonDiffEntries.map((entry) => (
+                            <section key={entry.key} className="rounded-lg border border-line bg-soft/15 p-4">
+                              <div className="mb-3 flex items-center justify-between gap-2">
+                                <h4 className="text-xs font-bold uppercase tracking-wider text-ink/60">{entry.label}</h4>
+                                <Badge variant={entry.changed ? "purple" : "muted"}>
+                                  {entry.changed ? "Changed" : "Identical"}
+                                </Badge>
+                              </div>
+                              <div className="grid gap-4 md:grid-cols-2">
+                                <DiffValueCard
+                                  label={`v${leftComparedVersion.version}`}
+                                  value={entry.before}
+                                  code={entry.code}
+                                />
+                                <DiffValueCard
+                                  label={`v${rightComparedVersion.version}`}
+                                  value={entry.after}
+                                  code={entry.code}
+                                />
+                              </div>
+                            </section>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="markdown-body select-text">
+                        <MarkdownRenderer content={selectedContent.content} />
+                      </div>
+                    )
                   ) : null}
                 </div>
               </div>
@@ -628,15 +691,40 @@ export function AgentLibraryView() {
                   </div>
                 ) : null}
 
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-                    <History className="h-4 w-4 text-accent" aria-hidden="true" />
-                    Versions
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+                      <History className="h-4 w-4 text-accent" aria-hidden="true" />
+                      Versions
+                    </div>
+                    {selectedContent ? <Badge variant="accent">v{selectedContent.version}</Badge> : null}
                   </div>
-                  {selectedContent ? <Badge variant="accent">v{selectedContent.version}</Badge> : null}
+
+                  {versionsQuery.data && versionsQuery.data.length > 0 ? (
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink/55 mb-1 mt-0.5">
+                      {comparisonVersions.length === 0 ? (
+                        <span>Select two versions to compare.</span>
+                      ) : (
+                        <span>
+                          Comparing: {comparisonVersions.map((v) => `v${v}`).join(" vs ")}
+                        </span>
+                      )}
+                      {comparisonVersions.length > 0 ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto p-0 text-accent hover:underline"
+                          onClick={() => setComparisonVersions([])}
+                        >
+                          Clear
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
 
-                <div className="mt-4 grid gap-2">
+                <div className="mt-2 grid gap-2">
                   {versionsQuery.isLoading ? (
                     <>
                       <Skeleton className="h-16 w-full" />
@@ -646,6 +734,7 @@ export function AgentLibraryView() {
 
                   {versionsQuery.data?.map((version) => {
                     const isCurrent = selectedContent?.version === version.version;
+                    const isSelectedForCompare = comparisonVersions.includes(version.version);
                     return (
                       <div key={version.id} className="rounded-md border border-line bg-white p-3">
                         <div className="flex items-center justify-between gap-2">
@@ -656,23 +745,45 @@ export function AgentLibraryView() {
                         {version.change_note ? (
                           <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-ink/70">{version.change_note}</p>
                         ) : null}
-                        {!isCurrent ? (
+                        
+                        <div className="mt-3 flex gap-1.5">
                           <Button
                             type="button"
-                            variant="secondary"
+                            variant={isSelectedForCompare ? "secondary" : "ghost"}
                             size="sm"
-                            className="mt-3 w-full"
-                            onClick={() => handleRollback(version.version)}
-                            disabled={rollbackMutation.isPending}
+                            className="flex-1 text-xs"
+                            onClick={() => {
+                              setComparisonVersions((curr) => {
+                                if (curr.includes(version.version)) {
+                                  return curr.filter((val) => val !== version.version);
+                                }
+                                if (curr.length >= 2) {
+                                  return [curr[1] as number, version.version];
+                                }
+                                return [...curr, version.version];
+                              });
+                            }}
                           >
-                            {rollbackMutation.isPending && rollbackVersion === version.version ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                            ) : (
-                              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-                            )}
-                            Restore
+                            {isSelectedForCompare ? "Selected" : "Compare"}
                           </Button>
-                        ) : null}
+                          {!isCurrent ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              className="flex-1 text-xs"
+                              onClick={() => handleRollback(version.version)}
+                              disabled={rollbackMutation.isPending}
+                            >
+                              {rollbackMutation.isPending && rollbackVersion === version.version ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                              ) : (
+                                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                              )}
+                              Restore
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
                     );
                   })}
@@ -786,7 +897,7 @@ export function AgentLibraryView() {
                 />
               </Field>
 
-              <div className="rounded-md border border-line bg-soft/25 px-4 py-3 text-xs text-ink/60">
+              <div className="rounded-md border border-line bg-soft/25 px-4 py-3 text-xs text-ink/65">
                 Saved path:{" "}
                 <code className="rounded bg-white px-1 py-0.5 font-mono text-[11px] text-ink">
                   {resourcePath({
@@ -1034,6 +1145,45 @@ function resourceSourceLabel(metadata: Record<string, JsonValue>): string {
 
 function stringifyMetadata(metadata: Record<string, JsonValue> | undefined): string {
   return JSON.stringify(metadata ?? {}, null, 2);
+}
+
+// Custom side-by-side Diff rendering card
+function DiffValueCard({ label, value, code }: { label: string; value: string; code: boolean }) {
+  return (
+    <div className="grid gap-1 text-left">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-ink/45">{label}</span>
+      {code ? (
+        <pre className="thin-scrollbar max-h-60 overflow-auto rounded-md bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-100/90 whitespace-pre-wrap break-words">{value}</pre>
+      ) : (
+        <div className="rounded-md border border-line bg-white px-3 py-2 text-xs text-ink/75 whitespace-pre-wrap break-words">{value}</div>
+      )}
+    </div>
+  );
+}
+
+interface AgentResourceVersionDiffEntry {
+  key: string;
+  label: string;
+  before: string;
+  after: string;
+  changed: boolean;
+  code: boolean;
+}
+
+function buildAgentResourceVersionDiffEntries(
+  left: AgentResourceVersion,
+  right: AgentResourceVersion,
+): AgentResourceVersionDiffEntry[] {
+  const entries: Array<Omit<AgentResourceVersionDiffEntry, "changed">> = [
+    { key: "title", label: "Title", before: left.title, after: right.title, code: false },
+    { key: "description", label: "Description", before: left.description, after: right.description, code: false },
+    { key: "body", label: "Body", before: left.body, after: right.body, code: true },
+  ];
+
+  return entries.map((entry) => ({
+    ...entry,
+    changed: entry.before !== entry.after,
+  }));
 }
 
 function isMetadataRecord(value: unknown): value is Record<string, JsonValue> {

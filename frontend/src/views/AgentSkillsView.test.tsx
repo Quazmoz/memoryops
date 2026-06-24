@@ -181,6 +181,58 @@ describe("AgentSkillsView", () => {
       }));
     });
   });
+
+  it("allows selecting versions to compare and renders diff side-by-side", async () => {
+    mockListAgentResources.mockResolvedValue([releaseNotesSummary()]);
+    mockGetAgentResource.mockResolvedValue(releaseNotesResource());
+    mockListAgentResourceVersions.mockResolvedValue([
+      {
+        ...releaseNotesResource(),
+        id: "version-2",
+        resource_id: "resource-1",
+        version: 2,
+        title: "Release Notes v2",
+        change_note: "Updated version",
+        created_by: "api_key:test",
+        created_at: "2026-06-18T11:00:00Z",
+      },
+      {
+        ...releaseNotesResource(),
+        id: "version-1",
+        resource_id: "resource-1",
+        version: 1,
+        title: "Release Notes v1",
+        change_note: "Initial version",
+        created_by: "api_key:test",
+        created_at: "2026-06-18T10:00:00Z",
+      },
+    ]);
+
+    renderWithQueryClient(<AgentSkillsView />);
+
+    // Click on the resource to select it
+    fireEvent.click(await screen.findByRole("button", { name: /release notes/i }));
+
+    // Wait for the version list to load
+    await waitFor(() => {
+      expect(screen.queryAllByRole("button", { name: /compare/i })).toHaveLength(2);
+    });
+
+    const compareButtons = screen.getAllByRole("button", { name: /compare/i });
+    
+    // Select version 2
+    fireEvent.click(compareButtons[0]!);
+    // Select version 1
+    fireEvent.click(compareButtons[1]!);
+
+    // Check if the comparison header is shown in the main view
+    expect(await screen.findByText("Version Comparison")).toBeInTheDocument();
+    expect(screen.getByText("Comparing v2 to v1")).toBeInTheDocument();
+    
+    // Check if the diff card displays values for both versions
+    expect(screen.getByText("Release Notes v2")).toBeInTheDocument();
+    expect(screen.getByText("Release Notes v1")).toBeInTheDocument();
+  });
 });
 
 function releaseNotesSummary() {

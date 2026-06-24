@@ -1,4 +1,14 @@
-import { ChevronDown, ChevronRight, Clipboard, Download, ScrollText, Search, ShieldCheck } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Clipboard,
+  Download,
+  ScrollText,
+  Search,
+  ShieldCheck,
+  Shield,
+  Clock,
+} from "lucide-react";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -20,6 +30,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import { HelpTooltip, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { formatDateTime, formatRelativeTime } from "../lib/format";
 import { useAppStore } from "../store/app-store";
+import { cn } from "../lib/utils";
 
 const PAGE_SIZE = 50;
 
@@ -76,6 +87,7 @@ export function AuditView() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [verification, setVerification] = useState<AuditChainVerification | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"activity" | "compliance">("activity");
 
   useEffect(() => {
     setDraft(EMPTY_DRAFT);
@@ -137,190 +149,282 @@ export function AuditView() {
           <p className="text-sm font-medium text-accent-strong">Operations</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">Audit Log</h1>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="muted">{items.length} loaded</Badge>
-          <Button type="button" variant="secondary" size="sm" onClick={() => void runExport("jsonl")} disabled={!authReady}>
-            <Download className="h-4 w-4" aria-hidden="true" /> JSONL
-          </Button>
-          <Button type="button" variant="secondary" size="sm" onClick={() => void runExport("csv")} disabled={!authReady}>
-            <Download className="h-4 w-4" aria-hidden="true" /> CSV
-          </Button>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button type="button" variant="secondary" size="sm" onClick={() => verifyMutation.mutate()} disabled={!authReady || verifyMutation.isPending}>
-                <ShieldCheck className="h-4 w-4" aria-hidden="true" /> Verify
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Recompute and verify the tamper-evident hash chain.</TooltipContent>
-          </Tooltip>
-        </div>
+        {activeTab === "activity" && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="muted">{items.length} loaded</Badge>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void runExport("jsonl")} disabled={!authReady}>
+              <Download className="h-4 w-4" aria-hidden="true" /> JSONL
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void runExport("csv")} disabled={!authReady}>
+              <Download className="h-4 w-4" aria-hidden="true" /> CSV
+            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" variant="secondary" size="sm" onClick={() => verifyMutation.mutate()} disabled={!authReady || verifyMutation.isPending}>
+                  <ShieldCheck className="h-4 w-4" aria-hidden="true" /> Verify
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Recompute and verify the tamper-evident hash chain.</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
       </header>
 
       {verification ? <VerificationBanner result={verification} /> : null}
       {exportError ? <InlineError message={exportError} /> : null}
       {audit.isError ? <InlineError message={audit.error.message} /> : null}
 
-      <Card>
-        <CardContent className="py-4">
-          <form
-            className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setApplied(buildFilters(draft));
-              setExpanded(new Set());
-            }}
-          >
-            <label className="flex flex-col gap-1 text-xs font-medium text-ink/70 lg:col-span-2">
-              Search
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-ink/40" aria-hidden="true" />
-                <Input
-                  className="pl-8"
-                  placeholder="actor, target, request id, reason…"
-                  value={draft.q}
-                  onChange={(event) => setDraft({ ...draft, q: event.target.value })}
-                />
-              </div>
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
-              Action
-              <SelectNative value={draft.action} onChange={(value) => setDraft({ ...draft, action: value })}>
-                <option value="">All actions</option>
-                {actionOptions.map((action) => (
-                  <option key={action.name} value={action.name}>
-                    {action.name}
-                  </option>
-                ))}
-              </SelectNative>
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
-              Category
-              <SelectNative value={draft.category} onChange={(value) => setDraft({ ...draft, category: value })}>
-                <option value="">All categories</option>
-                {categoryOptions.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </SelectNative>
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
-              Severity
-              <SelectNative value={draft.severity} onChange={(value) => setDraft({ ...draft, severity: value })}>
-                <option value="">All severities</option>
-                {severityOptions.map((severity) => (
-                  <option key={severity} value={severity}>
-                    {severity}
-                  </option>
-                ))}
-              </SelectNative>
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
-              Outcome
-              <SelectNative value={draft.success} onChange={(value) => setDraft({ ...draft, success: value })}>
-                <option value="">Any outcome</option>
-                <option value="true">Success</option>
-                <option value="false">Failure</option>
-              </SelectNative>
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
-              Actor
-              <Input placeholder="api_key:…" value={draft.actor} onChange={(event) => setDraft({ ...draft, actor: event.target.value })} />
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
-              Target type
-              <Input placeholder="workspace_tool…" value={draft.targetType} onChange={(event) => setDraft({ ...draft, targetType: event.target.value })} />
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
-              From
-              <Input type="datetime-local" value={draft.from} onChange={(event) => setDraft({ ...draft, from: event.target.value })} />
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
-              To
-              <Input type="datetime-local" value={draft.to} onChange={(event) => setDraft({ ...draft, to: event.target.value })} />
-            </label>
-            <div className="flex items-end gap-2">
-              <Button type="submit" size="sm">
-                Apply
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setDraft(EMPTY_DRAFT);
-                  setApplied({});
+      <div className="flex overflow-x-auto thin-scrollbar border-b border-line" role="tablist" aria-label="Audit sections">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "activity"}
+          onClick={() => setActiveTab("activity")}
+          className={cn(
+            "px-4 py-2 text-sm font-semibold transition-colors border-b-2 outline-none",
+            activeTab === "activity"
+              ? "border-accent text-accent"
+              : "border-transparent text-ink/50 hover:text-ink"
+          )}
+        >
+          Activity
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "compliance"}
+          onClick={() => setActiveTab("compliance")}
+          className={cn(
+            "px-4 py-2 text-sm font-semibold transition-colors border-b-2 outline-none",
+            activeTab === "compliance"
+              ? "border-accent text-accent"
+              : "border-transparent text-ink/50 hover:text-ink"
+          )}
+        >
+          Compliance
+        </button>
+      </div>
+
+      {activeTab === "activity" && (
+        <>
+          <Card>
+            <CardContent className="py-4">
+              <form
+                className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  setApplied(buildFilters(draft));
                   setExpanded(new Set());
                 }}
               >
-                Clear
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="flex items-center gap-1.5">
-            <span>Activity</span>
-            <HelpTooltip label="Activity">
-              Security-sensitive operations are recorded reliably; high-volume operational events are best-effort. Secret values are redacted.
-            </HelpTooltip>
-          </CardTitle>
-          <ScrollText className="h-4 w-4 text-accent-strong" aria-hidden="true" />
-        </CardHeader>
-        <CardContent>
-          {audit.isLoading ? <Skeleton className="h-72 w-full" /> : null}
-          {!audit.isLoading && !audit.isError && items.length === 0 ? (
-            <EmptyState title="No audit events" message="No audit events match the current filters." />
-          ) : null}
-          {!audit.isLoading && items.length > 0 ? (
-            <div className="thin-scrollbar overflow-auto rounded-md border border-line">
-              <table className="w-full min-w-[920px] border-collapse text-left text-sm">
-                <thead className="bg-soft text-xs uppercase text-ink/55">
-                  <tr>
-                    <th className="w-8 px-2 py-2" />
-                    <th className="px-3 py-2 font-medium">Time</th>
-                    <th className="px-3 py-2 font-medium">Severity</th>
-                    <th className="px-3 py-2 font-medium">Action</th>
-                    <th className="px-3 py-2 font-medium">Actor</th>
-                    <th className="px-3 py-2 font-medium">Target</th>
-                    <th className="px-3 py-2 font-medium">Source IP</th>
-                    <th className="px-3 py-2 font-medium">Request</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((event) => (
-                    <AuditRow
-                      key={event.id}
-                      event={event}
-                      expanded={expanded.has(event.id)}
-                      onToggle={() => toggleExpanded(event.id)}
+                <label className="flex flex-col gap-1 text-xs font-medium text-ink/70 lg:col-span-2">
+                  Search
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-ink/40" aria-hidden="true" />
+                    <Input
+                      className="pl-8"
+                      placeholder="actor, target, request id, reason…"
+                      value={draft.q}
+                      onChange={(event) => setDraft({ ...draft, q: event.target.value })}
                     />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
+                  </div>
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
+                  Action
+                  <SelectNative value={draft.action} onChange={(value) => setDraft({ ...draft, action: value })}>
+                    <option value="">All actions</option>
+                    {actionOptions.map((action) => (
+                      <option key={action.name} value={action.name}>
+                        {action.name}
+                      </option>
+                    ))}
+                  </SelectNative>
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
+                  Category
+                  <SelectNative value={draft.category} onChange={(value) => setDraft({ ...draft, category: value })}>
+                    <option value="">All categories</option>
+                    {categoryOptions.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </SelectNative>
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
+                  Severity
+                  <SelectNative value={draft.severity} onChange={(value) => setDraft({ ...draft, severity: value })}>
+                    <option value="">All severities</option>
+                    {severityOptions.map((severity) => (
+                      <option key={severity} value={severity}>
+                        {severity}
+                      </option>
+                    ))}
+                  </SelectNative>
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
+                  Outcome
+                  <SelectNative value={draft.success} onChange={(value) => setDraft({ ...draft, success: value })}>
+                    <option value="">Any outcome</option>
+                    <option value="true">Success</option>
+                    <option value="false">Failure</option>
+                  </SelectNative>
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
+                  Actor
+                  <Input placeholder="api_key:…" value={draft.actor} onChange={(event) => setDraft({ ...draft, actor: event.target.value })} />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
+                  Target type
+                  <Input placeholder="workspace_tool…" value={draft.targetType} onChange={(event) => setDraft({ ...draft, targetType: event.target.value })} />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
+                  From
+                  <Input type="datetime-local" value={draft.from} onChange={(event) => setDraft({ ...draft, from: event.target.value })} />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-ink/70">
+                  To
+                  <Input type="datetime-local" value={draft.to} onChange={(event) => setDraft({ ...draft, to: event.target.value })} />
+                </label>
+                <div className="flex items-end gap-2">
+                  <Button type="submit" size="sm">
+                    Apply
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setDraft(EMPTY_DRAFT);
+                      setApplied({});
+                      setExpanded(new Set());
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
 
-          <div className="mt-4 flex items-center justify-center">
-            {audit.hasNextPage ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => void audit.fetchNextPage()}
-                disabled={audit.isFetchingNextPage}
-              >
-                {audit.isFetchingNextPage ? "Loading…" : "Load more"}
-              </Button>
-            ) : items.length > 0 ? (
-              <span className="text-xs text-ink/50">End of results</span>
-            ) : null}
-          </div>
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="flex items-center gap-1.5">
+                <span>Activity</span>
+                <HelpTooltip label="Activity">
+                  Security-sensitive operations are recorded reliably; high-volume operational events are best-effort. Secret values are redacted.
+                </HelpTooltip>
+              </CardTitle>
+              <ScrollText className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+            </CardHeader>
+            <CardContent>
+              {audit.isLoading ? <Skeleton className="h-72 w-full" /> : null}
+              {!audit.isLoading && !audit.isError && items.length === 0 ? (
+                <EmptyState title="No audit events" message="No audit events match the current filters." />
+              ) : null}
+              {!audit.isLoading && items.length > 0 ? (
+                <div className="thin-scrollbar overflow-auto rounded-md border border-line">
+                  <table className="w-full min-w-[920px] border-collapse text-left text-sm">
+                    <thead className="bg-soft text-xs uppercase text-ink/55">
+                      <tr>
+                        <th className="w-8 px-2 py-2" />
+                        <th className="px-3 py-2 font-medium">Time</th>
+                        <th className="px-3 py-2 font-medium">Severity</th>
+                        <th className="px-3 py-2 font-medium">Action</th>
+                        <th className="px-3 py-2 font-medium">Actor</th>
+                        <th className="px-3 py-2 font-medium">Target</th>
+                        <th className="px-3 py-2 font-medium">Source IP</th>
+                        <th className="px-3 py-2 font-medium">Request</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((event) => (
+                        <AuditRow
+                          key={event.id}
+                          event={event}
+                          expanded={expanded.has(event.id)}
+                          onToggle={() => toggleExpanded(event.id)}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+
+              <div className="mt-4 flex items-center justify-center">
+                {audit.hasNextPage ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void audit.fetchNextPage()}
+                    disabled={audit.isFetchingNextPage}
+                  >
+                    {audit.isFetchingNextPage ? "Loading…" : "Load more"}
+                  </Button>
+                ) : items.length > 0 ? (
+                  <span className="text-xs text-ink/50">End of results</span>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {activeTab === "compliance" && (
+        <Card className="border-line/60 bg-soft/10">
+          <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+            <div>
+              <CardTitle className="flex items-center gap-1.5 text-ink/75">
+                <span>Compliance Deletion Logs</span>
+                <HelpTooltip label="Compliance Logs">GDPR right-to-erasure and automatic data retention logs.</HelpTooltip>
+              </CardTitle>
+              <p className="mt-1 text-xs text-ink/45">Work in Progress — Compliance reporting engine in development</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100/80 px-2 py-0.5 text-[10px] font-semibold text-amber-800 animate-pulse">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                WIP
+              </span>
+              <Shield className="h-4 w-4 text-ink/40" aria-hidden="true" />
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-6">
+            <p className="text-sm text-ink/60 leading-relaxed">
+              Compliance deletion audits are securely logged in the database (`compliance_audit_log` table), including record purges and automatic data retention limits. The upcoming frontend panel will display:
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border border-dashed border-line bg-white/40 p-4 flex flex-col gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Shield className="h-4 w-4 text-ink/50" />
+                  <span className="text-sm font-semibold text-ink/70">GDPR / CCPA Erasure Trail</span>
+                </div>
+                <p className="text-xs text-ink/45 leading-relaxed">
+                  Timestamped records of user data erasure calls (`DELETE /v1/workspaces/:id/forget/user/:user_id`), noting the count of episodic memories and webhook events purged.
+                </p>
+                <div className="mt-auto pt-3 flex justify-between text-[11px] font-mono text-ink/30 border-t border-line/40">
+                  <span>Action Status</span>
+                  <span>PENDING VIEWER</span>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-dashed border-line bg-white/40 p-4 flex flex-col gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Clock className="h-4 w-4 text-ink/50" />
+                  <span className="text-sm font-semibold text-ink/70">Retention Purge Scheduler</span>
+                </div>
+                <p className="text-xs text-ink/45 leading-relaxed">
+                  Daily logs of the automatic background retention agent cleaning up memories older than your configured threshold (e.g. 365 days max age limit).
+                </p>
+                <div className="mt-auto pt-3 flex justify-between text-[11px] font-mono text-ink/30 border-t border-line/40">
+                  <span>Action Status</span>
+                  <span>PENDING VIEWER</span>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

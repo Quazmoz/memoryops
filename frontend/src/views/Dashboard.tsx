@@ -1,4 +1,4 @@
-import { ArrowRight, BarChart2, BookMarked, CheckCircle2, Database, GitCommit, Pin, Search, Send, Settings2, ShieldAlert, TrendingUp } from "lucide-react";
+import { Activity, ArrowRight, Award, BarChart2, BookMarked, CheckCircle2, Database, GitCommit, Pin, Search, Send, Settings2, ShieldAlert, TrendingUp } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -10,7 +10,7 @@ import { StatusPill } from "../components/StatusPill";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Skeleton } from "../components/ui/skeleton";
-import { HelpTooltip, InfoLabel } from "../components/ui/tooltip";
+import { HelpTooltip, InfoLabel, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { formatCount, formatRelativeTime, formatScore } from "../lib/format";
 import { useAppStore } from "../store/app-store";
 import { useReadiness } from "../hooks/use-memory";
@@ -64,13 +64,14 @@ export function Dashboard() {
       {readiness.isError ? <InlineError message={errorMessage(readiness.error)} /> : null}
       {stats.isError ? <InlineError title="Stats unavailable" message={errorMessage(stats.error)} /> : null}
 
-      <section className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
+      <section className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8">
         <MetricCard title="Total memories" helpText="All memories currently stored in this workspace across episodic and semantic units." value={stats.data?.total_memories} loading={stats.isLoading} icon={<Database className="h-4 w-4" />} />
         <MetricCard title="Episodic" helpText="Short-lived event-derived memories from raw activity like commits, PRs, messages, tickets, and agent observations." value={stats.data?.episodic_count} loading={stats.isLoading} icon={<GitCommit className="h-4 w-4" />} />
         <MetricCard title="Semantic" helpText="Durable knowledge promoted from recurring or important episodic memories." value={stats.data?.semantic_count} loading={stats.isLoading} icon={<BookMarked className="h-4 w-4" />} />
         <MetricCard title="Pinned" helpText="Memories protected from normal decay and pruning." value={stats.data?.pinned_count} loading={stats.isLoading} icon={<Pin className="h-4 w-4" />} />
         <MetricCard title="Created 7d" helpText="Memories created in the last seven days so you can gauge how quickly new activity is entering the memory plane." value={stats.data?.memories_created_7d} loading={stats.isLoading} icon={<TrendingUp className="h-4 w-4" />} />
         <ContradictionCountBadge count={contradictionCount.data?.open} loading={contradictionCount.isLoading} />
+        <WipMetricCard title="LOCOMO Score" helpText="Recall quality benchmark score against the LOCOMO dataset. Planned for Milestone M33." icon={<Award className="h-4 w-4" />} />
         <MetricCard
           title="Avg importance"
           helpText="Average priority score used by retrieval, lifecycle, and promotion logic."
@@ -181,6 +182,78 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </section>
+
+      {/* System Metrics & LOCOMO Details (WIP Panels) */}
+      <section className="grid gap-4 md:grid-cols-[1fr_360px]">
+        {/* System Metrics WIP Card */}
+        <Card className="border-line/60 bg-soft/10">
+          <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+            <div>
+              <CardTitle className="flex items-center gap-1.5 text-ink/75">
+                <span>System Metrics</span>
+                <HelpTooltip label="System Metrics">Upcoming process-level telemetry panel. Currently under development.</HelpTooltip>
+              </CardTitle>
+              <p className="mt-1 text-xs text-ink/45">Work in Progress — Telemetry partitioning in development</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100/80 px-2 py-0.5 text-[10px] font-semibold text-amber-800 animate-pulse">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                WIP
+              </span>
+              <Activity className="h-4 w-4 text-ink/40" aria-hidden="true" />
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <p className="text-sm text-ink/60 leading-relaxed">
+              Process-global metrics cannot be safely exposed per-workspace until tenant partitioning is complete (Milestone M22). The upcoming metrics grid will expose:
+            </p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <WipMetricItem label="LLM Summarizer Latency" description="p50/p99 execution time for async slow-path summaries." />
+              <WipMetricItem label="Ingestion Queue Backlog" description="Event backlog count in Redis stream queue." />
+              <WipMetricItem label="Token Packing Efficiency" description="Average percentage of token budget utilized during retrieval." />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* LOCOMO Benchmark WIP Card */}
+        <Card className="border-line/60 bg-soft/10">
+          <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+            <div>
+              <CardTitle className="flex items-center gap-1.5 text-ink/75">
+                <span>LOCOMO Benchmark</span>
+                <HelpTooltip label="LOCOMO Benchmark">Planned retrieval quality benchmarking suite.</HelpTooltip>
+              </CardTitle>
+              <p className="mt-1 text-xs text-ink/45">Planned — Milestone M33</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100/80 px-2 py-0.5 text-[10px] font-semibold text-amber-800 animate-pulse">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                WIP
+              </span>
+              <Award className="h-4 w-4 text-ink/40" aria-hidden="true" />
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <p className="text-sm text-ink/60 leading-relaxed">
+              Automatic retrieval quality evaluation against the LOCOMO dataset to compare workspace configurations.
+            </p>
+            <div className="mt-2 rounded-md border border-line bg-white/50 p-3 text-xs text-ink/45 flex flex-col gap-1.5">
+              <div className="flex justify-between border-b border-line/60 pb-1.5">
+                <span>Recall@K Benchmark</span>
+                <span className="font-mono text-ink/30">—</span>
+              </div>
+              <div className="flex justify-between border-b border-line/60 pb-1.5">
+                <span>Context F1-Score</span>
+                <span className="font-mono text-ink/30">—</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Ranking MRR</span>
+                <span className="font-mono text-ink/30">—</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }
@@ -269,4 +342,49 @@ function formatRatio(numerator: number | null | undefined, denominator: number |
   }
 
   return `${(((numerator ?? 0) / denominator) * 100).toFixed(1)}%`;
+}
+
+export function WipMetricCard({
+  title,
+  helpText,
+  icon,
+}: {
+  title: string;
+  helpText?: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <Card className="border-line/60 bg-soft/10">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+        <CardTitle className="text-sm font-medium text-ink/50">
+          {helpText ? <InfoLabel label={title} tooltip={helpText} /> : title}
+        </CardTitle>
+        <div className="text-ink/40">{icon}</div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xl font-semibold text-ink/45">—</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={0} className="inline-flex items-center gap-1 rounded-full bg-amber-100/80 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 animate-pulse cursor-help">
+                <span className="h-1 w-1 rounded-full bg-amber-500" />
+                WIP
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>This feature is planned for a future milestone.</TooltipContent>
+          </Tooltip>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function WipMetricItem({ label, description }: { label: string; description: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-line bg-white/40 p-3 flex flex-col gap-1">
+      <span className="text-xs font-semibold text-ink/65">{label}</span>
+      <span className="text-[11px] text-ink/45 leading-normal">{description}</span>
+      <span className="mt-2 text-xs font-mono font-semibold text-ink/30">—</span>
+    </div>
+  );
 }

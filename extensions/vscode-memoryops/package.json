@@ -2,7 +2,7 @@
   "name": "memoryops-vscode",
   "displayName": "MemoryOps",
   "description": "Bring governed MemoryOps agent memory into VS Code.",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "publisher": "quazmoz",
   "author": {
     "name": "Quazmoz",
@@ -64,6 +64,12 @@
           "id": "memoryops.skills",
           "name": "Skills",
           "contextualTitle": "MemoryOps Skills"
+        },
+        {
+          "type": "webview",
+          "id": "memoryops.contradictions",
+          "name": "Contradictions",
+          "contextualTitle": "MemoryOps Contradictions"
         }
       ]
     },
@@ -279,10 +285,40 @@
         "icon": "$(sync)"
       },
       {
+        "command": "memoryops.skills.invoke",
+        "title": "MemoryOps: Invoke Skill",
+        "category": "MemoryOps",
+        "icon": "$(play)"
+      },
+      {
+        "command": "memoryops.skills.viewInvocations",
+        "title": "MemoryOps: View Skill Invocations",
+        "category": "MemoryOps",
+        "icon": "$(list-unordered)"
+      },
+      {
         "command": "memoryops.configureFromLocal",
         "title": "MemoryOps: Configure from Local Config File",
         "category": "MemoryOps",
         "icon": "$(gear)"
+      },
+      {
+        "command": "memoryops.agentSkills.viewHistory",
+        "title": "MemoryOps: View Agent Skill Version History",
+        "category": "MemoryOps",
+        "icon": "$(history)"
+      },
+      {
+        "command": "memoryops.agentSkills.rollback",
+        "title": "MemoryOps: Roll Back Agent Skill Version",
+        "category": "MemoryOps",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "memoryops.refreshContradictions",
+        "title": "MemoryOps: Refresh Contradictions",
+        "category": "MemoryOps",
+        "icon": "$(refresh)"
       }
     ],
     "keybindings": [
@@ -353,6 +389,16 @@
           "command": "memoryops.skills.create",
           "when": "view == memoryops.skills",
           "group": "navigation@1"
+        },
+        {
+          "command": "memoryops.skills.syncAgentSkills",
+          "when": "view == memoryops.skills",
+          "group": "navigation@2"
+        },
+        {
+          "command": "memoryops.refreshContradictions",
+          "when": "view == memoryops.contradictions",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -367,14 +413,34 @@
           "group": "inline@2"
         },
         {
+          "command": "memoryops.skills.invoke",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill.enabled/",
+          "group": "inline@3"
+        },
+        {
           "command": "memoryops.skills.viewHistory",
           "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
-          "group": "inline@3"
+          "group": "inline@4"
+        },
+        {
+          "command": "memoryops.skills.viewInvocations",
+          "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
+          "group": "inline@5"
         },
         {
           "command": "memoryops.skills.delete",
           "when": "view == memoryops.skills && viewItem =~ /memoryops.skill/",
-          "group": "inline@4"
+          "group": "inline@6"
+        },
+        {
+          "command": "memoryops.agentSkills.viewHistory",
+          "when": "view == memoryops.skills && viewItem == memoryops.agentSkill",
+          "group": "inline@1"
+        },
+        {
+          "command": "memoryops.agentSkills.rollback",
+          "when": "view == memoryops.skills && viewItem == memoryops.agentSkill",
+          "group": "inline@2"
         }
       ],
       "editor/context": [
@@ -411,7 +477,8 @@
         "memoryops.apiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Fallback MemoryOps workspace API key. **Prefer using the `MemoryOps: Set API Key (Secure)` command**, which stores the key in your OS keychain via VS Code SecretStorage. This setting is only used when no secure key is stored."
+          "markdownDescription": "Fallback MemoryOps workspace API key. **Prefer using the `MemoryOps: Set API Key (Secure)` command**, which stores the key in your OS keychain via VS Code SecretStorage. This setting is only used when no secure key is stored.",
+          "deprecationMessage": "Use the secure 'MemoryOps: Set API Key (Secure)' command instead of setting a raw text key in settings.json to avoid leaking it in git repositories."
         },
         "memoryops.defaultTopK": {
           "type": "number",
@@ -551,9 +618,8 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "vscode:uninstall": "node ./out/lifecycle.js",
     "compile": "tsc -p ./",
-    "test": "npm run compile && node --test out/test/client.test.js out/test/markdown.test.js out/test/cleanup.test.js out/test/webviewProvider.test.js",
+    "test": "npm run compile && node --test out/test/client.test.js out/test/markdown.test.js out/test/webviewProvider.test.js",
     "watch": "tsc -watch -p ./",
     "package": "vsce package"
   },

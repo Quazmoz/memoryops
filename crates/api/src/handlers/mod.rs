@@ -175,6 +175,18 @@ pub fn protected_router() -> Router<AppState> {
             get(agent_skills::get_agent_skill).put(agent_skills::update_agent_skill),
         )
         .route(
+            "/v1/agent-skills/{assistant}/{name}/versions",
+            get(agent_skills::list_agent_skill_versions),
+        )
+        .route(
+            "/v1/agent-skills/{assistant}/{name}/versions/{version}",
+            get(agent_skills::get_agent_skill_version),
+        )
+        .route(
+            "/v1/agent-skills/{assistant}/{name}/versions/{version}/rollback",
+            axum::routing::post(agent_skills::rollback_agent_skill_version),
+        )
+        .route(
             "/v1/workspaces/{id}/integrations",
             axum::routing::post(integrations::create_integration)
                 .get(integrations::list_integrations),

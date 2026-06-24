@@ -54,10 +54,10 @@ export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
     this._onDidChangeCodeLenses.fire();
   }
 
-  public async provideCodeLenses(
+  public provideCodeLenses(
     document: vscode.TextDocument,
     token: vscode.CancellationToken,
-  ): Promise<vscode.CodeLens[]> {
+  ): vscode.CodeLens[] {
     const { client, config, missing } = this.getClient();
     if (!config.enableCodeLens || missing.length > 0) {
       return [];
@@ -71,15 +71,8 @@ export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
       return [];
     }
 
-    let result: FileMemoryCount;
-    try {
-      result = await this.getCountForFile(client, fileName);
-    } catch {
-      // Never surface CodeLens errors inline — fail silent.
-      return [];
-    }
-
-    if (token.isCancellationRequested || result.total === 0) {
+    const result = this.getCountForFile(client, fileName);
+    if (token.isCancellationRequested || !result || result.total === 0) {
       return [];
     }
 
@@ -94,10 +87,10 @@ export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
     ];
   }
 
-  private async getCountForFile(
+  private getCountForFile(
     client: MemoryOpsClient,
     fileName: string,
-  ): Promise<FileMemoryCount> {
+  ): FileMemoryCount | undefined {
     const cached = this.cache.get(fileName);
     if (cached && Date.now() < cached.expiresAt) {
       return cached.value;
@@ -105,7 +98,7 @@ export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
 
     const existing = this.inFlight.get(fileName);
     if (existing) {
-      return existing;
+      return undefined;
     }
 
     const promise = (async () => {
@@ -118,11 +111,10 @@ export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
       return value;
     })().catch((error) => {
       this.inFlight.delete(fileName);
-      throw error;
     });
 
-    this.inFlight.set(fileName, promise);
-    return promise;
+    this.inFlight.set(fileName, promise as any);
+    return undefined;
   }
 
   public dispose(): void {

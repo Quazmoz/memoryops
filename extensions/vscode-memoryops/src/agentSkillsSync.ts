@@ -1,5 +1,3 @@
-import * as fs from "fs";
-import * as path from "path";
 import * as vscode from "vscode";
 import { MemoryOpsClient, AgentSkillContent } from "./client";
 
@@ -57,52 +55,70 @@ function parseMarkdownMetadata(content: string, fallbackName: string): ParsedAge
   return { title, description, instructions };
 }
 
-export async function syncAgentSkills(client: MemoryOpsClient): Promise<void> {
+function composeAgentSkillMarkdown(title: string, description: string, instructions: string): string {
+  const trimmedInstructions = instructions.trim();
+  if (trimmedInstructions === "") {
+    return `# Skill: ${title}\n\n**Description:** ${description}\n`;
+  } else {
+    return `# Skill: ${title}\n\n**Description:** ${description}\n\n${trimmedInstructions}\n`;
+  }
+}
+
+export async function syncAgentSkills(
+  client: MemoryOpsClient,
+  options: { interactive?: boolean } = {}
+): Promise<void> {
+  const interactive = options.interactive ?? false;
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {
     return;
   }
 
   const folder = folders[0];
-  const workspaceRoot = folder.uri.fsPath;
 
   await vscode.window.withProgress(
     {
-      location: vscode.ProgressLocation.Notification,
+      location: interactive ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window,
       title: "Syncing MemoryOps agent skills...",
       cancellable: false,
     },
     async (progress) => {
       try {
-        // 1. Fetch remote skills
+        let conflictDetected = false;
+
+        // 1. Fetch remote skills in parallel
         progress.report({ message: "Listing remote agent skills..." });
         const remoteSkillsSummary = await client.listAgentSkills();
         const remoteSkillsMap = new Map<string, AgentSkillContent>();
 
-        for (const skill of remoteSkillsSummary) {
-          const content = await client.getAgentSkill(skill.assistant, skill.name);
-          remoteSkillsMap.set(`${skill.assistant}/${skill.name}`, content);
-        }
+        await Promise.all(
+          remoteSkillsSummary.map(async (skill) => {
+            const content = await client.getAgentSkill(skill.assistant, skill.name);
+            remoteSkillsMap.set(`${skill.assistant}/${skill.name}`, content);
+          })
+        );
 
-        // 2. Scan local skills
+        // 2. Scan local skills using vscode.workspace.fs
         progress.report({ message: "Scanning local agent skills..." });
         const assistants = ["gemini", "claude"];
         const localSkillsMap = new Map<string, { content: string; parsed: ParsedAgentSkill }>();
 
         for (const assistant of assistants) {
-          const dir = path.join(workspaceRoot, `.${assistant}`, "skills");
-          if (!fs.existsSync(dir)) {
-            continue;
-          }
-          const files = fs.readdirSync(dir);
-          for (const file of files) {
-            if (file.endsWith(".md")) {
-              const name = path.basename(file, ".md");
-              const filePath = path.join(dir, file);
-              const content = fs.readFileSync(filePath, "utf8");
-              const parsed = parseMarkdownMetadata(content, name);
-              localSkillsMap.set(`${assistant}/${name}`, { content, parsed });
+          const dirUri = vscode.Uri.joinPath(folder.uri, `.${assistant}`, "skills");
+          try {
+            const entries = await vscode.workspace.fs.readDirectory(dirUri);
+            for (const [nameWithExt, type] of entries) {
+              if (type === vscode.FileType.File && nameWithExt.endsWith(".md")) {
+                const name = nameWithExt.substring(0, nameWithExt.length - 3);
+                const fileUri = vscode.Uri.joinPath(dirUri, nameWithExt);
+                const rawContent = await vscode.workspace.fs.readFile(fileUri);
+                const content = Buffer.from(rawContent).toString("utf8");
+                const parsed = parseMarkdownMetadata(content, name);
+                localSkillsMap.set(`${assistant}/${name}`, { content, parsed });
+              }
             }
+          } catch {
+            // Directory doesn't exist, ignore
           }
         }
 
@@ -121,13 +137,23 @@ export async function syncAgentSkills(client: MemoryOpsClient): Promise<void> {
               title: localSkill.parsed.title,
               description: localSkill.parsed.description,
               instructions: localSkill.parsed.instructions,
+              change_note: "Synced via VS Code (initial upload)",
             });
           } else {
-            // Compare content
-            const localNorm = localSkill.content.replace(/\r\n/g, "\n").trim();
+            // Compare content using normalized markdown representation
+            const localNormalized = composeAgentSkillMarkdown(
+              localSkill.parsed.title,
+              localSkill.parsed.description,
+              localSkill.parsed.instructions
+            ).replace(/\r\n/g, "\n").trim();
             const remoteNorm = remoteSkill.content.replace(/\r\n/g, "\n").trim();
 
-            if (localNorm !== remoteNorm) {
+            if (localNormalized !== remoteNorm) {
+              if (!interactive) {
+                conflictDetected = true;
+                continue;
+              }
+
               // Conflict! Ask user
               const choice = await vscode.window.showWarningMessage(
                 `Agent skill '${key}' has conflicting changes. Which version would you like to keep?`,
@@ -142,12 +168,14 @@ export async function syncAgentSkills(client: MemoryOpsClient): Promise<void> {
                   title: localSkill.parsed.title,
                   description: localSkill.parsed.description,
                   instructions: localSkill.parsed.instructions,
+                  change_note: "Synced via VS Code (manual upload)",
                 });
               } else if (choice === "Keep Remote (Overwrite Local)") {
                 progress.report({ message: `Downloading remote skill: ${key}...` });
-                const dir = path.join(workspaceRoot, `.${assistant}`, "skills");
-                fs.mkdirSync(dir, { recursive: true });
-                fs.writeFileSync(path.join(dir, `${name}.md`), remoteSkill.content, "utf8");
+                const dirUri = vscode.Uri.joinPath(folder.uri, `.${assistant}`, "skills");
+                const fileUri = vscode.Uri.joinPath(dirUri, `${name}.md`);
+                await vscode.workspace.fs.createDirectory(dirUri);
+                await vscode.workspace.fs.writeFile(fileUri, Buffer.from(remoteSkill.content, "utf8"));
               }
             }
           }
@@ -158,13 +186,27 @@ export async function syncAgentSkills(client: MemoryOpsClient): Promise<void> {
           if (!localSkillsMap.has(key)) {
             const [assistant, name] = key.split("/");
             progress.report({ message: `Downloading new remote skill: ${key}...` });
-            const dir = path.join(workspaceRoot, `.${assistant}`, "skills");
-            fs.mkdirSync(dir, { recursive: true });
-            fs.writeFileSync(path.join(dir, `${name}.md`), remoteSkill.content, "utf8");
+            const dirUri = vscode.Uri.joinPath(folder.uri, `.${assistant}`, "skills");
+            const fileUri = vscode.Uri.joinPath(dirUri, `${name}.md`);
+            await vscode.workspace.fs.createDirectory(dirUri);
+            await vscode.workspace.fs.writeFile(fileUri, Buffer.from(remoteSkill.content, "utf8"));
           }
         }
 
-        void vscode.window.showInformationMessage("MemoryOps agent skills sync complete!");
+        if (conflictDetected) {
+          void vscode.window
+            .showWarningMessage(
+              "MemoryOps: Some agent skills have conflicting changes.",
+              "Resolve Sync Conflicts"
+            )
+            .then((action) => {
+              if (action === "Resolve Sync Conflicts") {
+                void vscode.commands.executeCommand("memoryops.skills.syncAgentSkills");
+              }
+            });
+        } else if (interactive) {
+          void vscode.window.showInformationMessage("MemoryOps agent skills sync complete!");
+        }
       } catch (err: any) {
         void vscode.window.showErrorMessage(`Agent skills sync failed: ${err.message}`);
       }

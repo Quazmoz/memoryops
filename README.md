@@ -21,6 +21,61 @@ This is the **control plane for what AI agents remember**.
 
 ---
 
+## Prerequisites
+
+**For the Quick Start (containerized):**
+- [Docker](https://www.docker.com/) + Docker Compose
+- [sqlx-cli](https://github.com/sqlx-rs/sqlx/tree/master/sqlx-cli) (runs migrations against the Postgres container):
+  ```bash
+  cargo install sqlx-cli --no-default-features --features rustls,postgres
+  ```
+
+**Only needed for local development (non-containerized):**
+- [Rust](https://rustup.rs/) stable (1.88.0+)
+- [Node.js](https://nodejs.org/) 20+
+- [Ollama](https://ollama.com/) (optional, for local LLM): `ollama pull llama3`
+
+---
+
+## Quick Start
+
+Get MemoryOps running with a pre-configured workspace.
+
+```bash
+# 1. Clone and configure
+git clone https://github.com/Quazmoz/memoryops.git
+cd memoryops
+cp .env.example .env
+# Set these two required secrets in .env:
+#   APP_SECRET_KEY=<any-random-string>
+#   WORKSPACE_CREATION_SECRET=<any-random-string>
+
+# 2. Start everything
+docker compose up -d
+
+# 3. Bootstrap a workspace
+WORKSPACE_CREATION_SECRET=<your-secret> node scripts/bootstrap.mjs
+# Save the returned workspace_id and api_key securely
+
+# 4. Populate demo data for testing
+API_KEY=<your-returned-api-key> WORKSPACE_ID=<your-returned-workspace-id> node scripts/seed.mjs
+
+# 5. Access the UI
+open http://localhost:5173
+```
+
+You now have a running MemoryOps instance with:
+- API server on `http://localhost:8080`
+- Frontend UI on `http://localhost:5173`
+- Postgres, Redis, and Qdrant running in containers
+
+> [!IMPORTANT]
+> When spinning up a local test in Docker, it is highly recommended to populate the demo data using `scripts/seed.mjs`. This provides initial memories (episodic, semantic, pinned) and tools to verify that search, retrieval, and UI components are functioning properly.
+
+**Note:** First-time Docker builds may take several minutes on cold machines. Subsequent starts are instant.
+
+---
+
 ## The Problem
 
 AI agents today:
@@ -187,60 +242,6 @@ Both approaches are valid. MemoryOps is optimized for teams that need governed, 
 
 ---
 
-## Prerequisites
-
-**For the Quick Start (containerized):**
-- [Docker](https://www.docker.com/) + Docker Compose
-- [sqlx-cli](https://github.com/sqlx-rs/sqlx/tree/master/sqlx-cli) (runs migrations against the Postgres container):
-  ```bash
-  cargo install sqlx-cli --no-default-features --features rustls,postgres
-  ```
-
-**Only needed for local development (non-containerized):**
-- [Rust](https://rustup.rs/) stable (1.88.0+)
-- [Node.js](https://nodejs.org/) 20+
-- [Ollama](https://ollama.com/) (optional, for local LLM): `ollama pull llama3`
-
----
-
-## Quick Start
-
-Get MemoryOps running with a pre-configured workspace.
-
-```bash
-# 1. Clone and configure
-git clone https://github.com/Quazmoz/memoryops.git
-cd memoryops
-cp .env.example .env
-# Set these two required secrets in .env:
-#   APP_SECRET_KEY=<any-random-string>
-#   WORKSPACE_CREATION_SECRET=<any-random-string>
-
-# 2. Start everything
-docker compose up -d
-
-# 3. Bootstrap a workspace
-WORKSPACE_CREATION_SECRET=<your-secret> node scripts/bootstrap.mjs
-# Save the returned workspace_id and api_key securely
-
-# 4. Populate demo data for testing
-API_KEY=<your-returned-api-key> WORKSPACE_ID=<your-returned-workspace-id> node scripts/seed.mjs
-
-# 5. Access the UI
-open http://localhost:5173
-```
-
-You now have a running MemoryOps instance with:
-- API server on `http://localhost:8080`
-- Frontend UI on `http://localhost:5173`
-- Postgres, Redis, and Qdrant running in containers
-
-> [!IMPORTANT]
-> When spinning up a local test in Docker, it is highly recommended to populate the demo data using `scripts/seed.mjs`. This provides initial memories (episodic, semantic, pinned) and tools to verify that search, retrieval, and UI components are functioning properly.
-
-**Note:** First-time Docker builds may take several minutes on cold machines. Subsequent starts are instant.
-
----
 
 ## Full Setup (15 minutes)
 
