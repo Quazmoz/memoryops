@@ -2,6 +2,8 @@
 
 MemoryOps MCP supports multiple transports.
 
+MCP is a privileged control surface: authenticated clients can read/write memories and invoke workspace tools. Keep HTTP/SSE transports on loopback or private networks. For remote access, prefer VPN, Tailscale/WireGuard, or an SSH tunnel instead of a public listener.
+
 ## Client Quick-Reference
 
 | Client | Config format | Transport | Guide |
@@ -43,9 +45,9 @@ the authenticated MCP session and is never a tool parameter.
 
 ## Configuration
 
-> **Warning:** The `mcp` service in `docker-compose.yml` defaults to
-> `MCP_TRANSPORT: "sse"`, which is the deprecated transport. Always override
-> it when starting the MCP container:
+> **Warning:** The `mcp` service is loopback-bound in compose and is not intended
+> to be internet-facing. If you run it outside compose, bind it to localhost or a
+> private interface:
 >
 > ```bash
 > docker compose --profile mcp run --rm --service-ports \

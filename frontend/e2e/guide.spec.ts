@@ -11,20 +11,30 @@ test('Guide page shows all 14 TOC sections and nav link is present', async ({ pa
   await page.getByTestId('nav-guide').click();
   await expect(page).toHaveURL('/guide');
 
-  // All 14 TOC anchor links must be visible in the sidebar
+  // All 24 TOC anchor links must be visible in the sidebar
   const expectedLabels = [
     'Overview',
-    'Authentication',
-    'VSCode Extension',
-    'Claude Desktop',
-    'OpenWebUI',
-    'Direct API',
+    'Mental Model',
+    'App Map',
+    'Dashboard',
+    'Memory Explorer',
+    'Memory Detail',
+    'Retrieval Trace',
     'Ingest Memories',
-    'Search & Retrieve',
-    'Skills',
+    'Integrations',
+    'Tools',
+    'Agent Library',
     'Contradictions',
     'Lifecycle & Decay',
-    'Workspace Config',
+    'Audit',
+    'Settings',
+    'Authentication',
+    'VS Code Extension',
+    'Claude Desktop',
+    'Agent Observations',
+    'OpenWebUI',
+    'Direct API',
+    'Backend Architecture',
     'Export & Import',
     'Troubleshooting',
   ];
@@ -46,7 +56,8 @@ test('Guide page shows all 14 TOC sections and nav link is present', async ({ pa
 test('Guide page substitutes API key in code blocks when authenticated', async ({ page }) => {
   const { workspaceId, apiKey } = await createTestWorkspace();
   await authenticateApp(page, workspaceId, apiKey);
-  await page.goto('/guide');
+  await page.getByTestId('nav-guide').click();
+  await expect(page).toHaveURL('/guide');
 
   // The workspace ID should appear in at least one code block
   const firstCodeBlock = page.locator('[data-testid="code-block"]').first();
@@ -56,17 +67,27 @@ test('Guide page substitutes API key in code blocks when authenticated', async (
 function sectionId(label: string): string {
   const map: Record<string, string> = {
     'Overview': 'overview',
-    'Authentication': 'authentication',
-    'VSCode Extension': 'vscode',
-    'Claude Desktop': 'claude-desktop',
-    'OpenWebUI': 'openwebui',
-    'Direct API': 'direct-api',
+    'Mental Model': 'mental-model',
+    'App Map': 'app-map',
+    'Dashboard': 'dashboard',
+    'Memory Explorer': 'memory-explorer',
+    'Memory Detail': 'memory-detail',
+    'Retrieval Trace': 'retrieval-trace',
     'Ingest Memories': 'ingest',
-    'Search & Retrieve': 'retrieve',
-    'Skills': 'skills',
+    'Integrations': 'integrations',
+    'Tools': 'tools',
+    'Agent Library': 'agent-skills',
     'Contradictions': 'contradictions',
     'Lifecycle & Decay': 'lifecycle',
-    'Workspace Config': 'config',
+    'Audit': 'audit',
+    'Settings': 'settings',
+    'Authentication': 'authentication',
+    'VS Code Extension': 'vscode',
+    'Claude Desktop': 'claude-desktop',
+    'Agent Observations': 'agent-observations',
+    'OpenWebUI': 'openwebui',
+    'Direct API': 'direct-api',
+    'Backend Architecture': 'backend-architecture',
     'Export & Import': 'export-import',
     'Troubleshooting': 'troubleshooting',
   };

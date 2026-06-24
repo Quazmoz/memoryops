@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use axum::{extract::Path, extract::Query, extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
 use common::{
-    audit::spawn_audit_log,
+    audit::{write_audit, AuditEvent, RequestContext},
     auth::AuthContext,
     error::AppResult,
     models::AuditAction,
@@ -249,14 +249,15 @@ pub struct ToolSecretResponse {
 pub async fn create_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path(id): Path<Uuid>,
     Json(request): Json<CreateToolRequest>,
 ) -> AppResult<Json<ToolResponse>> {
     require_workspace(&auth, id)?;
     validate_name(&request.name)?;
     validate_description(&request.description)?;
-    validate_endpoint_url(&request.endpoint_url)?;
-    validate_endpoint_url_dns(&request.endpoint_url).await?;
+    validate_endpoint_url(&request.endpoint_url, state.config.server.allow_private_ips)?;
+    validate_endpoint_url_dns(&request.endpoint_url, state.config.server.allow_private_ips).await?;
     validate_schema(request.input_schema.as_ref(), "input_schema")?;
     validate_schema(request.output_schema.as_ref(), "output_schema")?;
     let auth_header = normalized_optional_text(request.auth_header.as_deref());
@@ -311,15 +312,15 @@ pub async fn create_tool(
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::ToolCreated,
-        tool.id,
-        "workspace_tool",
-        Some(json!({ "name": tool.name, "version": tool.version })),
-    );
+    let event = AuditEvent::new(id, AuditAction::ToolCreated, tool.id, "workspace_tool")
+        .actor_api_key(&auth)
+        .target_name(tool.name.clone())
+        .target_version(tool.version)
+        .metadata(json!({ "name": tool.name, "version": tool.version }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(tool))
 }
@@ -378,6 +379,7 @@ pub async fn get_tool(
 pub async fn update_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((id, name)): Path<(Uuid, String)>,
     Json(request): Json<UpdateToolRequest>,
 ) -> AppResult<Json<ToolResponse>> {
@@ -386,8 +388,8 @@ pub async fn update_tool(
         validate_description(description)?;
     }
     if let Some(endpoint_url) = &request.endpoint_url {
-        validate_endpoint_url(endpoint_url)?;
-        validate_endpoint_url_dns(endpoint_url).await?;
+        validate_endpoint_url(endpoint_url, state.config.server.allow_private_ips)?;
+        validate_endpoint_url_dns(endpoint_url, state.config.server.allow_private_ips).await?;
     }
     validate_schema(request.input_schema.as_ref(), "input_schema")?;
     validate_schema(request.output_schema.as_ref(), "output_schema")?;
@@ -397,6 +399,7 @@ pub async fn update_tool(
         .as_deref()
         .and_then(|value| normalized_optional_text(Some(value)));
     let auth_secret_enc = encrypted_secret(&state, request.auth_secret.as_deref())?;
+    let secret_changed = auth_secret_enc.is_some();
     let change_note = normalized_optional_text(request.change_note.as_deref());
 
     enforce_change_note_for_compliance(&state, id, change_note.as_deref()).await?;
@@ -467,19 +470,20 @@ pub async fn update_tool(
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::ToolUpdated,
-        tool.id,
-        "workspace_tool",
-        Some(json!({
+    let event = AuditEvent::new(id, AuditAction::ToolUpdated, tool.id, "workspace_tool")
+        .actor_api_key(&auth)
+        .target_name(tool.name.clone())
+        .target_version(tool.version)
+        .metadata(json!({
             "name": tool.name,
             "version": tool.version,
             "change_note": change_note,
-        })),
-    );
+            "secret_changed": secret_changed,
+        }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(tool))
 }
@@ -488,6 +492,7 @@ pub async fn update_tool(
 pub async fn delete_tool(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((id, name)): Path<(Uuid, String)>,
 ) -> AppResult<Json<Value>> {
     require_workspace(&auth, id)?;
@@ -505,15 +510,14 @@ pub async fn delete_tool(
         });
     };
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::ToolDeleted,
-        tool_id,
-        "workspace_tool",
-        Some(json!({ "name": name })),
-    );
+    let event = AuditEvent::new(id, AuditAction::ToolDeleted, tool_id, "workspace_tool")
+        .actor_api_key(&auth)
+        .target_name(name.clone())
+        .metadata(json!({ "name": name }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(json!({ "deleted": true })))
 }
@@ -522,18 +526,20 @@ pub async fn delete_tool(
 pub async fn get_tool_secret(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((id, name)): Path<(Uuid, String)>,
 ) -> AppResult<Json<ToolSecretResponse>> {
     require_workspace(&auth, id)?;
 
     #[derive(Debug, sqlx::FromRow)]
     struct SecretRow {
+        id: Uuid,
         auth_header: Option<String>,
         auth_secret_enc: Option<String>,
     }
 
     let row = sqlx::query_as::<_, SecretRow>(
-        "SELECT auth_header, auth_secret_enc FROM workspace_tools WHERE workspace_id = $1 AND name = $2",
+        "SELECT id, auth_header, auth_secret_enc FROM workspace_tools WHERE workspace_id = $1 AND name = $2",
     )
     .bind(id)
     .bind(&name)
@@ -549,6 +555,25 @@ pub async fn get_tool_secret(
     let decrypted =
         decrypt_secret_legacy_or_current(state.app_secret_key.as_ref().as_str(), &ciphertext)?;
     persist_migrated_ciphertext(&state.db, id, &name, &decrypted).await?;
+
+    // Secret reveal is critical and required: persist the audit row BEFORE the
+    // plaintext is returned, so a secret is never revealed without a durable
+    // audit trail. `auth_header` is the header *name* (e.g. "Authorization"),
+    // never the secret value.
+    let event = AuditEvent::new(
+        id,
+        AuditAction::ToolSecretRevealed,
+        row.id,
+        "workspace_tool",
+    )
+    .actor_api_key(&auth)
+    .target_name(name.clone())
+    .reason("tool auth secret revealed")
+    .metadata(json!({ "name": name, "auth_header": row.auth_header.as_deref() }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(ToolSecretResponse {
         auth_header: row.auth_header,
@@ -678,6 +703,7 @@ pub async fn get_tool_version(
 pub async fn rollback_tool_version(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((id, name, version)): Path<(Uuid, String, i32)>,
     Json(request): Json<RollbackToolRequest>,
 ) -> AppResult<Json<ToolResponse>> {
@@ -720,8 +746,15 @@ pub async fn rollback_tool_version(
     })?;
 
     // Validate the snapshot's URL at rollback time (defends against newly-blocked hosts).
-    validate_endpoint_url(&snapshot.endpoint_url)?;
-    validate_endpoint_url_dns(&snapshot.endpoint_url).await?;
+    validate_endpoint_url(
+        &snapshot.endpoint_url,
+        state.config.server.allow_private_ips,
+    )?;
+    validate_endpoint_url_dns(
+        &snapshot.endpoint_url,
+        state.config.server.allow_private_ips,
+    )
+    .await?;
 
     let tool = sqlx::query_as::<_, ToolResponse>(&format!(
         r#"
@@ -763,19 +796,19 @@ pub async fn rollback_tool_version(
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::ToolRolledBack,
-        tool.id,
-        "workspace_tool",
-        Some(json!({
+    let event = AuditEvent::new(id, AuditAction::ToolRolledBack, tool.id, "workspace_tool")
+        .actor_api_key(&auth)
+        .target_name(tool.name.clone())
+        .target_version(tool.version)
+        .metadata(json!({
             "name": tool.name,
             "version": tool.version,
             "rolled_back_to": version,
-        })),
-    );
+        }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(tool))
 }
@@ -814,7 +847,7 @@ fn validate_description(value: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn validate_endpoint_url(value: &str) -> AppResult<()> {
+fn validate_endpoint_url(value: &str, allow_private_ips: bool) -> AppResult<()> {
     let url = reqwest::Url::parse(value.trim())
         .map_err(|_| AppError::Validation("tool endpoint_url is not a valid URL".to_owned()))?;
 
@@ -834,7 +867,9 @@ fn validate_endpoint_url(value: &str) -> AppResult<()> {
         .host_str()
         .ok_or_else(|| AppError::Validation("tool endpoint_url must have a host".to_owned()))?;
 
-    reject_forbidden_host(host)?;
+    if !allow_private_ips {
+        reject_forbidden_host(host)?;
+    }
 
     Ok(())
 }
@@ -875,6 +910,8 @@ fn reject_forbidden_ip(ip: std::net::IpAddr) -> AppResult<()> {
                 || v4.is_link_local()
                 || v4.is_broadcast()
                 || v4.is_documentation()
+                || is_ipv4_shared_address(v4)
+                || is_ipv4_this_network(v4)
                 || v4.is_unspecified()
                 || v4.is_multicast()
             {
@@ -884,7 +921,13 @@ fn reject_forbidden_ip(ip: std::net::IpAddr) -> AppResult<()> {
             }
         }
         std::net::IpAddr::V6(v6) => {
-            if v6.is_loopback() || v6.is_multicast() || v6.is_unspecified() {
+            if v6.is_loopback()
+                || v6.is_multicast()
+                || v6.is_unspecified()
+                || is_ipv6_unique_local(v6)
+                || is_ipv6_unicast_link_local(v6)
+                || is_ipv6_documentation(v6)
+            {
                 return Err(AppError::Validation(
                     "tool endpoint_url resolves to a forbidden address".to_owned(),
                 ));
@@ -898,10 +941,35 @@ fn reject_forbidden_ip(ip: std::net::IpAddr) -> AppResult<()> {
     Ok(())
 }
 
+fn is_ipv4_shared_address(ip: std::net::Ipv4Addr) -> bool {
+    let [first, second, _, _] = ip.octets();
+    first == 100 && (64..=127).contains(&second)
+}
+
+fn is_ipv4_this_network(ip: std::net::Ipv4Addr) -> bool {
+    ip.octets()[0] == 0
+}
+
+fn is_ipv6_unique_local(ip: std::net::Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xfe00) == 0xfc00
+}
+
+fn is_ipv6_unicast_link_local(ip: std::net::Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xffc0) == 0xfe80
+}
+
+fn is_ipv6_documentation(ip: std::net::Ipv6Addr) -> bool {
+    ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8
+}
+
 /// Resolve the hostname of `url` via DNS and reject any address in a forbidden
 /// range.  This prevents SSRF via DNS rebinding (the URL passes the syntax
 /// check but resolves to an internal address at call time).
-async fn validate_endpoint_url_dns(url: &str) -> AppResult<()> {
+async fn validate_endpoint_url_dns(url: &str, allow_private_ips: bool) -> AppResult<()> {
+    if allow_private_ips {
+        return Ok(());
+    }
+
     let parsed = reqwest::Url::parse(url)
         .map_err(|_| AppError::Validation("invalid endpoint URL".to_owned()))?;
 
@@ -1141,8 +1209,8 @@ async fn import_one_tool(
 ) -> AppResult<Option<bool>> {
     validate_name(&item.name)?;
     validate_description(&item.description)?;
-    validate_endpoint_url(&item.endpoint_url)?;
-    validate_endpoint_url_dns(&item.endpoint_url).await?;
+    validate_endpoint_url(&item.endpoint_url, state.config.server.allow_private_ips)?;
+    validate_endpoint_url_dns(&item.endpoint_url, state.config.server.allow_private_ips).await?;
     validate_schema(item.input_schema.as_ref(), "input_schema")?;
     validate_schema(item.output_schema.as_ref(), "output_schema")?;
 
@@ -1181,6 +1249,7 @@ async fn import_one_tool(
         let _ = update_tool(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Path((workspace_id, item.name.clone())),
             Json(update_request),
         )
@@ -1205,6 +1274,7 @@ async fn import_one_tool(
         let _ = create_tool(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Path(workspace_id),
             Json(create_request),
         )
@@ -1213,6 +1283,9 @@ async fn import_one_tool(
     }
 }
 
+// Thin wrapper that forwards the full invocation context to
+// `invoke_workspace_skill` (which carries the same argument list and allow).
+#[allow(clippy::too_many_arguments)]
 pub async fn invoke_tool_core(
     state: &AppState,
     workspace_id: Uuid,
@@ -1327,75 +1400,98 @@ mod tests {
 
     #[test]
     fn validate_url_rejects_http_scheme() {
-        assert!(validate_endpoint_url("http://example.com/api").is_err());
+        assert!(validate_endpoint_url("http://example.com/api", false).is_err());
     }
 
     #[test]
     fn validate_url_rejects_non_url() {
-        assert!(validate_endpoint_url("not-a-url").is_err());
+        assert!(validate_endpoint_url("not-a-url", false).is_err());
     }
 
     #[test]
     fn validate_url_rejects_credentials() {
-        assert!(validate_endpoint_url("https://user:pass@example.com/api").is_err());
-        assert!(validate_endpoint_url("https://user@example.com/api").is_err());
+        assert!(validate_endpoint_url("https://user:pass@example.com/api", false).is_err());
+        assert!(validate_endpoint_url("https://user@example.com/api", false).is_err());
     }
 
     #[test]
     fn validate_url_rejects_localhost() {
-        assert!(validate_endpoint_url("https://localhost/api").is_err());
-        assert!(validate_endpoint_url("https://localhost:8080/api").is_err());
-        assert!(validate_endpoint_url("https://foo.localhost/api").is_err());
+        assert!(validate_endpoint_url("https://localhost/api", false).is_err());
+        assert!(validate_endpoint_url("https://localhost:8080/api", false).is_err());
+        assert!(validate_endpoint_url("https://foo.localhost/api", false).is_err());
     }
 
     #[test]
     fn validate_url_rejects_loopback_ipv4() {
-        assert!(validate_endpoint_url("https://127.0.0.1/api").is_err());
-        assert!(validate_endpoint_url("https://127.1.2.3/api").is_err());
+        assert!(validate_endpoint_url("https://127.0.0.1/api", false).is_err());
+        assert!(validate_endpoint_url("https://127.1.2.3/api", false).is_err());
     }
 
     #[test]
     fn validate_url_rejects_loopback_ipv6() {
-        assert!(validate_endpoint_url("https://[::1]/api").is_err());
+        assert!(validate_endpoint_url("https://[::1]/api", false).is_err());
     }
 
     #[test]
     fn validate_url_rejects_private_ipv4_10_block() {
-        assert!(validate_endpoint_url("https://10.0.0.1/api").is_err());
-        assert!(validate_endpoint_url("https://10.255.255.255/api").is_err());
+        assert!(validate_endpoint_url("https://10.0.0.1/api", false).is_err());
+        assert!(validate_endpoint_url("https://10.255.255.255/api", false).is_err());
     }
 
     #[test]
     fn validate_url_rejects_private_ipv4_172_block() {
-        assert!(validate_endpoint_url("https://172.16.0.1/api").is_err());
-        assert!(validate_endpoint_url("https://172.31.255.255/api").is_err());
+        assert!(validate_endpoint_url("https://172.16.0.1/api", false).is_err());
+        assert!(validate_endpoint_url("https://172.31.255.255/api", false).is_err());
     }
 
     #[test]
     fn validate_url_rejects_private_ipv4_192_168_block() {
-        assert!(validate_endpoint_url("https://192.168.1.1/api").is_err());
+        assert!(validate_endpoint_url("https://192.168.1.1/api", false).is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_shared_and_this_network_ipv4() {
+        assert!(validate_endpoint_url("https://100.64.0.1/api", false).is_err());
+        assert!(validate_endpoint_url("https://100.127.255.254/api", false).is_err());
+        assert!(validate_endpoint_url("https://0.1.2.3/api", false).is_err());
     }
 
     #[test]
     fn validate_url_rejects_link_local_metadata() {
         // AWS/GCP/Azure instance metadata endpoint
-        assert!(validate_endpoint_url("https://169.254.169.254/latest/meta-data/").is_err());
+        assert!(validate_endpoint_url("https://169.254.169.254/latest/meta-data/", false).is_err());
         // Generic link-local
-        assert!(validate_endpoint_url("https://169.254.0.1/").is_err());
+        assert!(validate_endpoint_url("https://169.254.0.1/", false).is_err());
     }
 
     #[test]
     fn validate_url_rejects_ipv4_mapped_ipv6_private() {
         // ::ffff:10.0.0.1 — IPv4-mapped private
-        assert!(validate_endpoint_url("https://[::ffff:10.0.0.1]/api").is_err());
+        assert!(validate_endpoint_url("https://[::ffff:10.0.0.1]/api", false).is_err());
         // ::ffff:127.0.0.1 — IPv4-mapped loopback
-        assert!(validate_endpoint_url("https://[::ffff:127.0.0.1]/api").is_err());
+        assert!(validate_endpoint_url("https://[::ffff:127.0.0.1]/api", false).is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_internal_ipv6_ranges() {
+        assert!(validate_endpoint_url("https://[fc00::1]/api", false).is_err());
+        assert!(validate_endpoint_url("https://[fd12:3456:789a::1]/api", false).is_err());
+        assert!(validate_endpoint_url("https://[fe80::1]/api", false).is_err());
+        assert!(validate_endpoint_url("https://[2001:db8::1]/api", false).is_err());
+    }
+
+    #[test]
+    fn validate_url_private_escape_hatch_allows_internal_hosts_but_not_http_or_credentials() {
+        assert!(validate_endpoint_url("https://127.0.0.1/api", true).is_ok());
+        assert!(validate_endpoint_url("https://[fd12:3456:789a::1]/api", true).is_ok());
+        assert!(validate_endpoint_url("http://127.0.0.1/api", true).is_err());
+        assert!(validate_endpoint_url("https://user:pass@127.0.0.1/api", true).is_err());
     }
 
     #[test]
     fn validate_url_accepts_public_https() {
         // No real network call — just validates the syntax and IP-range checks pass.
-        assert!(validate_endpoint_url("https://api.example.com/v1/hook").is_ok());
-        assert!(validate_endpoint_url("https://hooks.example.org/callback").is_ok());
+        assert!(validate_endpoint_url("https://api.example.com/v1/hook", false).is_ok());
+        assert!(validate_endpoint_url("https://hooks.example.org/callback", false).is_ok());
     }
 }

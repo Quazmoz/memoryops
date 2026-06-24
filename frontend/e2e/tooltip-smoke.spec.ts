@@ -9,8 +9,9 @@ test("dashboard help tooltip opens on hover", async ({ page }) => {
 
   await page.getByTestId("nav-dashboard").click();
   await page.getByLabel("Help: Memory health").hover();
+  await page.getByLabel("Help: Memory health").focus();
 
   await expect(
-    page.getByText("Shows decay, deletion, and age signals so you can understand whether the workspace memory pool is stale, noisy, or healthy."),
+    page.getByText("Shows decay, deletion, and age signals so you can understand whether the workspace memory pool is stale, noisy, or healthy.").first(),
   ).toBeVisible();
 });

@@ -5,7 +5,9 @@ use chrono::Utc;
 use common::{
     audit::spawn_audit_log,
     error::AppResult,
-    models::{AuditAction, ContradictionMode, MemoryScope, MemoryType, MemoryUnit, WorkspaceConfig},
+    models::{
+        AuditAction, ContradictionMode, MemoryScope, MemoryType, MemoryUnit, WorkspaceConfig,
+    },
     AppError, AppState,
 };
 use qdrant_client::qdrant::{
@@ -84,7 +86,8 @@ pub async fn check_contradictions(
         let (resolution, resolved_by, resolved_at) = match config.contradiction_mode {
             ContradictionMode::Quarantine => ("open", None, None),
             ContradictionMode::AutoResolve if conflict_score >= AUTO_RESOLVE_MIN_CONFIDENCE => {
-                let discarded_id = choose_auto_resolve_discarded_memory(new_memory, existing_memory);
+                let discarded_id =
+                    choose_auto_resolve_discarded_memory(new_memory, existing_memory);
                 soft_delete_memory_by_id(&state.db, new_memory.workspace_id, discarded_id).await?;
                 ("auto_resolved", Some("auto".to_owned()), Some(Utc::now()))
             }
@@ -207,7 +210,9 @@ fn related_similarity_floor(contradiction_threshold: f32) -> f32 {
 }
 
 fn contradiction_confidence_floor(contradiction_threshold: f32) -> f32 {
-    contradiction_threshold.clamp(0.20, 0.95).max(DEFAULT_CONFIDENCE_FLOOR)
+    contradiction_threshold
+        .clamp(0.20, 0.95)
+        .max(DEFAULT_CONFIDENCE_FLOOR)
 }
 
 fn contradiction_confidence(left: &str, right: &str, similarity: f32) -> Option<f32> {
@@ -329,7 +334,9 @@ fn extract_numbers(text: &str) -> Vec<String> {
     let mut current = String::new();
 
     for ch in text.chars() {
-        if ch.is_ascii_digit() || (ch == '.' && current.chars().any(|existing| existing.is_ascii_digit())) {
+        if ch.is_ascii_digit()
+            || (ch == '.' && current.chars().any(|existing| existing.is_ascii_digit()))
+        {
             current.push(ch);
         } else if !current.is_empty() {
             push_number_token(&mut numbers, &mut current);
@@ -422,7 +429,10 @@ fn is_stop_word(word: &str) -> bool {
     )
 }
 
-fn choose_auto_resolve_discarded_memory(new_memory: &MemoryUnit, existing_memory: &MemoryUnit) -> Uuid {
+fn choose_auto_resolve_discarded_memory(
+    new_memory: &MemoryUnit,
+    existing_memory: &MemoryUnit,
+) -> Uuid {
     let new_score = memory_trust_score(new_memory);
     let existing_score = memory_trust_score(existing_memory);
 
@@ -558,6 +568,7 @@ pub async fn fetch_workspace_config(db: &PgPool, workspace_id: Uuid) -> AppResul
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

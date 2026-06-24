@@ -60,7 +60,7 @@ export function HelpTooltip({
           type="button"
           aria-label={`Help: ${label}`}
           className={cn(
-            "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-ink/45 transition hover:text-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+            "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-ink/45 transition hover:text-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent cursor-pointer",
             className,
           )}
         >

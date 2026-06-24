@@ -1,127 +1,160 @@
 # External Agent Integration Guide
 
-This guide explains how to connect and configure AI agents (e.g. Claude Code, Cursor, VS Code, or custom scripts) running in **other repositories** to interact with your running MemoryOps instance.
+This guide explains how Claude Code, Gemini, OpenAI custom agents, Cursor, VS Code, and custom scripts can use a running MemoryOps instance.
 
----
-
-## 1. Zero-Dependency REST CLI Client
-
-If you want a lightweight integration without configuring MCP, you can copy the helper client script from this repository into the other repo:
+Use placeholders in examples:
 
 ```bash
-# From the root of your other repository:
+export MEMORYOPS_API_KEY="YOUR_MEMORYOPS_API_KEY"
+export MEMORYOPS_WORKSPACE_ID="YOUR_WORKSPACE_ID"
+export MEMORYOPS_API_URL="http://localhost:8080"
+```
+
+Do not commit API keys, `.mcp.json` files containing credentials, or downloaded local config files.
+
+## Agent Library Model
+
+MemoryOps stores reusable agent assets in the canonical, versioned Agent Library tables:
+
+- `agent_resources`: current resource state.
+- `agent_resource_versions`: immutable version snapshots.
+
+Each resource has:
+
+- `kind`: `skill`, `agent`, `prompt`, or `instruction`.
+- `assistant`: `generic`, `openai`, `claude`, or `gemini`.
+- `name`: stable lowercase identifier used in API paths.
+- `title` and `description`: single-line UI and markdown summaries.
+- `body`: editable markdown source.
+- `content`: rendered/exportable markdown. If omitted, MemoryOps renders it from kind, title, description, and body.
+- `metadata`: JSON object for source, default/custom status, tags, owners, or runtime hints.
+- `version`: current version number. Every update and rollback creates a new version.
+
+Skills are intentionally limited to `claude` and `gemini` targets because the legacy skill sync directories are `.claude/skills` and `.gemini/skills`. Agents, prompts, and instructions can target `generic`, `openai`, `claude`, or `gemini`.
+
+## Canonical vs Legacy APIs
+
+Prefer `/v1/agent-resources` for new integrations. It supports all four resource kinds, metadata, version listing, version reads, rollback, and canonical delete behavior.
+
+The legacy `/v1/agent-skills` API remains available for existing Claude/Gemini skill sync workflows. It is backed by canonical `agent_resources` rows where `kind = skill`, and writes through the legacy API are mirrored into the versioned Agent Library.
+
+## Lightweight REST Client
+
+For simple repository-local automation, copy the helper client into another repo:
+
+```bash
 cp /path/to/memoryops/scripts/memoryops-client.js ./scripts/
 chmod +x ./scripts/memoryops-client.js
 ```
 
-### Configuration (Environment Variables)
-In the other repository, set the following environment variables (usually in a local `.env` or in your terminal session) to authenticate against the local MemoryOps instance:
+Then configure the target repository:
 
 ```bash
-export MEMORYOPS_API_KEY="mops_019e8d27_HoKjZ2mh1nyeTeRnMGRVEvZZ2bJaK6dG7xkb99RJvmtA"
-export MEMORYOPS_WORKSPACE_ID="019e8d27-2242-7310-a62d-5124996ad146"
-export MEMORYOPS_API_URL="http://localhost:8080" # Default is http://localhost:8080
+export MEMORYOPS_API_KEY="YOUR_MEMORYOPS_API_KEY"
+export MEMORYOPS_WORKSPACE_ID="YOUR_WORKSPACE_ID"
+export MEMORYOPS_API_URL="http://localhost:8080"
 ```
 
-### Command Reference
+Common commands:
 
-#### Retrieve Context (Query Vector DB)
 ```bash
-node scripts/memoryops-client.js retrieve "Qdrant configuration details"
+node scripts/memoryops-client.js retrieve "Qdrant configuration decisions"
+node scripts/memoryops-client.js store "Moved Qdrant gRPC clients to port 6334 for container networking" qdrant docker
+node scripts/memoryops-client.js observe "API container saw connection timeout while resolving qdrant service" qdrant networking
+node scripts/memoryops-client.js sync-skills
 ```
 
-#### Directly Store a Decision (Immediate)
+## Agent Resource API Examples
+
+List all resources:
+
 ```bash
-node scripts/memoryops-client.js store "Configured loopback interface restrictions to prevent SSRF in skill endpoint URLs" security dns config
+curl -s "$MEMORYOPS_API_URL/v1/agent-resources" \
+  -H "X-API-Key: $MEMORYOPS_API_KEY" | jq
 ```
 
-#### Submit a Raw Observation (Async Queue)
+Create a prompt:
+
 ```bash
-node scripts/memoryops-client.js observe "Spotted connection timeout when calling Ollama from inside Docker container api-1" ollama networking
+curl -s -X POST "$MEMORYOPS_API_URL/v1/agent-resources" \
+  -H "X-API-Key: $MEMORYOPS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "kind": "prompt",
+    "assistant": "generic",
+    "name": "release_brief",
+    "title": "Release Brief Prompt",
+    "description": "Drafts concise release notes from merged changes.",
+    "body": "## Prompt\nSummarize the release impact, risks, and verification evidence.\n\n## Output\nReturn five bullets and one rollback note.",
+    "metadata": { "default": false, "owner": "release" },
+    "change_note": "Initial prompt"
+  }' | jq
 ```
 
-#### List Workspace Skills
+Create an instruction:
+
 ```bash
-node scripts/memoryops-client.js skills
+curl -s -X POST "$MEMORYOPS_API_URL/v1/agent-resources" \
+  -H "X-API-Key: $MEMORYOPS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "kind": "instruction",
+    "assistant": "generic",
+    "name": "no_secret_output",
+    "title": "No Secret Output",
+    "description": "Prevents agents from printing or storing sensitive values.",
+    "body": "## Instruction\nNever print, store, or commit plaintext credentials. Replace examples with obvious placeholders.\n\n## Applies When\nAny task involves auth headers, tokens, keys, or webhook secrets."
+  }' | jq
 ```
 
----
-
-## 2. Setting Up Agent Skill definitions
-
-For agents that support custom skill directories (like `.claude/skills` or `.gemini/skills`), you need to populate those skill files into your repository. This teaches the agent when and how to query MemoryOps for context, or when to save memories.
-
-### Option A — Copying from Local Clone
-If you have the MemoryOps repository cloned locally on the same machine, run the following from the root of your target repository:
+Create an agent profile:
 
 ```bash
-# For Claude Code:
+curl -s -X POST "$MEMORYOPS_API_URL/v1/agent-resources" \
+  -H "X-API-Key: $MEMORYOPS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "kind": "agent",
+    "assistant": "openai",
+    "name": "production_reviewer",
+    "title": "Production Code Review Agent",
+    "description": "Reviews code for correctness, safety, migrations, and missing tests.",
+    "body": "## Role\nAct as a risk-first production reviewer.\n\n## Operating Rules\nLead with bugs, regressions, data safety issues, and missing tests. Include file and line references."
+  }' | jq
+```
+
+Download a Claude skill:
+
+```bash
 mkdir -p .claude/skills
-cp /path/to/memoryops/.claude/skills/*.md .claude/skills/
-
-# For Gemini / Antigravity:
-mkdir -p .gemini/skills
-cp /path/to/memoryops/.gemini/skills/*.md .gemini/skills/
+curl -s "$MEMORYOPS_API_URL/v1/agent-resources/skill/claude/use_memoryops" \
+  -H "X-API-Key: $MEMORYOPS_API_KEY" \
+  | jq -r .content > .claude/skills/use_memoryops.md
 ```
 
-### Option B — Downloading Directly via MemoryOps API
-If you don't have the source repository locally, you can pull the skills directly from the running MemoryOps instance.
+Roll back a bad resource version:
 
-First, list all available agent skills:
 ```bash
-curl -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills
+curl -s -X POST "$MEMORYOPS_API_URL/v1/agent-resources/prompt/generic/release_brief/versions/1/rollback" \
+  -H "X-API-Key: $MEMORYOPS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"change_note": "Restore stable release brief"}' | jq
 ```
 
-Then, download the skills using `jq` or `Node.js` directly into your folders:
+## Runtime Setup
 
-#### Using `jq`:
+### Claude Code
+
+For skill files:
+
 ```bash
-# Download Gemini skills
-mkdir -p .gemini/skills
-curl -s -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills/gemini/use_memoryops | jq -r .content > .gemini/skills/use_memoryops.md
-curl -s -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills/gemini/manage_contradictions | jq -r .content > .gemini/skills/manage_contradictions.md
-
-# Download Claude skills
 mkdir -p .claude/skills
-curl -s -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/v1/agent-skills/claude/use_memoryops | jq -r .content > .claude/skills/use_memoryops.md
+curl -s "$MEMORYOPS_API_URL/v1/agent-resources/skill/claude/use_memoryops" \
+  -H "X-API-Key: $MEMORYOPS_API_KEY" \
+  | jq -r .content > .claude/skills/use_memoryops.md
 ```
 
-#### Using `Node.js` (No external dependencies):
-```bash
-node -e "
-const fs = require('fs');
-const apiKey = 'YOUR_API_KEY';
-const baseUrl = 'http://localhost:8080/v1/agent-skills';
-
-async function download(assistant, skillName) {
-  const res = await fetch(\`\${baseUrl}/\${assistant}/\${skillName}\`, { headers: { 'X-API-Key': apiKey } });
-  const data = await res.json();
-  const dir = \`.\${assistant}/skills\`;
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(\`\${dir}/\${data.filename}\`, data.content);
-  console.log(\`Downloaded \${assistant} skill: \${skillName}\`);
-}
-
-download('gemini', 'use_memoryops');
-download('gemini', 'manage_contradictions');
-download('claude', 'use_memoryops');
-"
-```
-
-Once populated, the agent in your repository will automatically detect these instructions and use the `memoryops-client.js` script to pull workspace context at the start of a task or to save key decisions.
-
----
-
-## 3. Direct MCP Integration (HTTP Transport)
-
-If the agent runner supports Model Context Protocol (MCP) directly, it can interact with MemoryOps over the HTTP streamable transport without needing any local scripts.
-
-The local MCP server is running on:
-- **Endpoint**: `http://localhost:3003/mcp`
-- **Authentication**: `Authorization: Bearer <YOUR_API_KEY>`
-
-### A. Claude Code Setup (Project-level)
-Add a `.mcp.json` file in the root of the other repository:
+For MCP, add project-local `.mcp.json` and keep it out of git:
 
 ```json
 {
@@ -130,17 +163,44 @@ Add a `.mcp.json` file in the root of the other repository:
       "type": "http",
       "url": "http://localhost:3003/mcp",
       "headers": {
-        "Authorization": "Bearer YOUR_API_KEY"
+        "Authorization": "Bearer YOUR_MEMORYOPS_API_KEY"
       }
     }
   }
 }
 ```
 
-*Be sure to add `.mcp.json` to your `.gitignore` to prevent leaking your key.*
+### Gemini
 
-### B. Cursor / VS Code Setup (via Continue.dev extension)
-Add the MCP server provider to your global `~/.continue/config.json`:
+Download Gemini-targeted skill files:
+
+```bash
+mkdir -p .gemini/skills
+curl -s "$MEMORYOPS_API_URL/v1/agent-resources/skill/gemini/use_memoryops" \
+  -H "X-API-Key: $MEMORYOPS_API_KEY" \
+  | jq -r .content > .gemini/skills/use_memoryops.md
+```
+
+Use `agent-library/gemini/prompts`, `agent-library/gemini/agents`, and `agent-library/gemini/instructions` as portable export folders for non-skill resources.
+
+### OpenAI And Generic Agents
+
+OpenAI and generic agents should consume prompts, agent profiles, and reusable instructions from `/v1/agent-resources`. A common local folder convention is:
+
+```text
+agent-library/openai/agents/
+agent-library/openai/prompts/
+agent-library/openai/instructions/
+agent-library/generic/agents/
+agent-library/generic/prompts/
+agent-library/generic/instructions/
+```
+
+Use the `content` field as the copy-ready markdown export. Keep `metadata` with the export when your runtime supports sidecar JSON.
+
+### Cursor And VS Code
+
+Use the HTTP MCP transport when the client supports it:
 
 ```json
 {
@@ -150,7 +210,7 @@ Add the MCP server provider to your global `~/.continue/config.json`:
       "options": {
         "url": "http://localhost:3003/mcp",
         "headers": {
-          "Authorization": "Bearer YOUR_API_KEY"
+          "Authorization": "Bearer YOUR_MEMORYOPS_API_KEY"
         }
       }
     }
@@ -158,72 +218,26 @@ Add the MCP server provider to your global `~/.continue/config.json`:
 }
 ```
 
-### C. Claude Desktop Setup
-Configure the global `claude_desktop_config.json` (located at `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+The VS Code extension can continue using the legacy Agent Skills sync command for Claude/Gemini skills while the Control Center manages the broader Agent Library.
 
-```json
-{
-  "mcpServers": {
-    "memoryops": {
-      "command": "curl",
-      "args": [
-        "-sS",
-        "-X", "POST",
-        "http://localhost:3003/mcp",
-        "-H", "Authorization: Bearer YOUR_API_KEY",
-        "-H", "Content-Type: application/json",
-        "-d", "{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{}}"
-      ]
-    }
-  }
-}
-```
+## Recommended Agent Memory Rules
 
-### D. Docker Stdio Setup (For Stdio-Compatible CLI Clients)
-If your agent client runs locally and you want to use the stdio transport with the Docker container directly, configure it like this:
-
-```json
-{
-  "mcpServers": {
-    "memoryops": {
-      "type": "stdio",
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "--network", "memoryops_default",
-        "-e", "DATABASE_URL=postgres://memoryops:memoryops@postgres:5432/memoryops",
-        "-e", "REDIS_URL=redis://redis:6379",
-        "-e", "QDRANT_URL=http://qdrant:6334",
-        "-e", "APP_SECRET_KEY=YOUR_APP_SECRET_KEY",
-        "memoryops-mcp",
-        "mcp"
-      ]
-    }
-  }
-}
-```
-
----
-
-## 4. Custom Agent Instructions (Prompting the Agent)
-
-To ensure that your AI agent actively utilizes the MemoryOps MCP server to retrieve context and log new decisions, add the following prompt rules to your agent's configuration (e.g., inside `.claudeprompt`, `.cursorrules`, `.github/copilot-instructions.md`, or your agent's system prompt settings):
+Add these rules to custom agents that cannot consume skill files directly:
 
 ```markdown
-# Agent Memory Guidelines (MemoryOps)
+# MemoryOps Rules
 
-You have access to the `memoryops` MCP tools (such as `memory_retrieve`, `memory_store`, and `memory_observe`) to interact with the workspace memory registry. Follow these guidelines strictly:
-
-1. **Task Startup (Retrieve)**:
-   - At the beginning of any task, plan, or research phase, search the memory database using `memory_retrieve` with queries relevant to the task (e.g., "auth configuration", "known database limits").
-   - Do NOT make assumptions about system design or past decisions; always retrieve memories first to ensure alignment.
-
-2. **Task Progress (Observe)**:
-   - If you encounter interesting bugs, workarounds, or configuration details during implementation, capture them using `memory_observe`.
-
-3. **Task Completion (Store)**:
-   - Upon completing a feature, refactor, or configuration change, document the final non-obvious engineering decisions using `memory_store`.
-   - Provide a concise `content` explaining *why* the change was made, assign relevant `tags`, and set an appropriate `importance_score` (between 0.0 and 1.0).
+1. Retrieve MemoryOps context before project-specific code changes, incident triage, migrations, or release decisions.
+2. Use retrieved memories only when they match the current workspace, repository, service, and time horizon.
+3. Treat conflicting memories as evidence to reconcile, not facts to silently choose between.
+4. Store only durable outcomes: decisions, root causes, stable preferences, migration notes, and reusable workflow rules.
+5. Use observations for raw logs or partial evidence.
+6. Never store secrets, credentials, private reasoning, or transient task steps.
 ```
+
+## Troubleshooting
+
+- `401 unauthorized`: verify `X-API-Key` or `Authorization: Bearer YOUR_MEMORYOPS_API_KEY`.
+- `400 validation_error`: check the resource name pattern `^[a-z][a-z0-9_-]{0,63}$`, body/content length, and metadata object shape.
+- `409 conflict`: another resource already uses the same `(kind, assistant, name)` in this workspace.
+- Missing skill after delete: default skills may be re-seeded when a workspace has no skill resources; create a custom replacement or keep at least one skill resource.

@@ -18,7 +18,7 @@ describe("integrations api", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
     fetchMock.mockReset();
-    useAppStore.setState({ workspaceId: WORKSPACE_ID, apiKey: "mops_test_key" });
+    useAppStore.setState({ workspaceId: WORKSPACE_ID, apiKey: "test-api-key" });
   });
 
   afterEach(() => {
@@ -77,7 +77,7 @@ describe("integrations api", () => {
 
     await createIntegration(WORKSPACE_ID, {
       source: "github",
-      api_token: "  ghp_test  ",
+      api_token: "  test-github-token  ",
       api_sync_enabled: true,
       sync_config: { repo: "Quazmoz/memoryops" },
     });
@@ -85,7 +85,7 @@ describe("integrations api", () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({
       source: "github",
-      api_token: "ghp_test",
+      api_token: "test-github-token",
       api_sync_enabled: true,
       sync_config: { repo: "Quazmoz/memoryops" },
     });

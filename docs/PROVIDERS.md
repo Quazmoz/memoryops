@@ -44,7 +44,7 @@ model = "gpt-4o-mini"
 
 ```bash
 # .env
-OPENAI_API_KEY=sk-...
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
 ```
 
 ---
@@ -59,7 +59,7 @@ model = "claude-3-5-haiku-20241022"
 
 ```bash
 # .env
-ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=YOUR_ANTHROPIC_API_KEY
 ```
 
 ---
@@ -77,7 +77,7 @@ api_key_env = "GEMINI_API_KEY"
 
 ```bash
 # .env
-GEMINI_API_KEY=AIza...
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 ```
 
 Gemini uses Google's native REST API (`generativelanguage.googleapis.com`), not the OpenAI shim.
@@ -105,7 +105,7 @@ api_key_env = "OPENROUTER_API_KEY"
 
 ```bash
 # .env
-OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_API_KEY=<openrouter-api-key>
 ```
 
 OpenRouter uses the OpenAI-compatible `/chat/completions` endpoint internally.
@@ -126,7 +126,7 @@ api_key_env = "HF_API_KEY"
 
 ```bash
 # .env
-HF_API_KEY=hf_...
+HF_API_KEY=<huggingface-api-key>
 ```
 
 ---
@@ -142,7 +142,7 @@ model = "your-model-name"
 base_url = "https://your-endpoint.example.com/v1"
 
 [llm.openai_compatible]
-api_key_env = "YOUR_API_KEY_ENV_VAR"  # or omit if the endpoint requires no auth
+api_key_env = "YOUR_PROVIDER_API_KEY_ENV_VAR"  # or omit if the endpoint requires no auth
 
 # Optional extra headers
 [llm.openai_compatible.headers]
@@ -177,7 +177,7 @@ model = "text-embedding-3-small"
 
 ```bash
 # .env
-OPENAI_API_KEY=sk-...
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
 ```
 
 ---

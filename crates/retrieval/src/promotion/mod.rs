@@ -1,7 +1,7 @@
 pub mod decay;
 pub mod eligibility;
 
-use common::{services::WorkspaceConfigService, AppState};
+use common::AppState;
 use uuid::Uuid;
 
 use crate::{access, store};

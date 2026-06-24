@@ -145,7 +145,7 @@ MemoryOps is designed for:
 
 
 | **Feedback** | Per-memory ratings bias future retrieval via rolling relevance scores | System improves from agent and operator feedback over time |
-| **Governance** | Retrieval traces, audit log, pin/delete/merge, skills registry | Operators can inspect, control, and understand what agents remember |
+| **Governance** | Retrieval traces, audit log, pin/delete/merge, versioned agent library | Operators can inspect, control, and understand what agents remember |
 | **MCP/API** | Native Model Context Protocol server + REST API | Agents retrieve and store memory without HTTP glue code |
 | **Control UI** | Memory explorer, workspace settings, DLQ retry, health dashboard | Operators manage memory without touching the database |
 
@@ -211,7 +211,7 @@ Both approaches are valid. MemoryOps is optimized for teams that need governed, 
 - **Hybrid retrieval** — Semantic + BM25 + token-aware packing with Reciprocal Rank Fusion
 - **Feedback loop** — Per-memory ratings bias future retrieval via rolling relevance scores
 - **Retrieval traces** — Per-component scoring explains why each memory was selected
-- **Control UI** — Memory explorer, pin/delete/merge, audit log, and skills registry
+- **Control UI** — Memory explorer, pin/delete/merge, audit log, and versioned agent library
 - **MCP server** — Native Model Context Protocol server for Claude Code, VS Code, Open WebUI
 
 <p align="center">
@@ -351,7 +351,7 @@ MemoryOps exposes MCP tools via HTTP Streamable or stdio transport.
 | Claude Code | [docs/integrations/claude-code.md](docs/integrations/claude-code.md) |
 | GitHub Copilot / Continue.dev | [docs/integrations/vscode.md](docs/integrations/vscode.md) |
 | VS Code Extension | [docs/integrations/vscode-extension.md](docs/integrations/vscode-extension.md) (Early local scaffold, not Marketplace-published) |
-| External Agents / CLI Scripts | [docs/agent-integration.md](docs/agent-integration.md) (Includes skill copying and API downloading guide) |
+| External Agents / CLI Scripts | [docs/agent-integration.md](docs/agent-integration.md) (Agent Library, MCP, and CLI integration guide) |
 
 See [docs/mcp-transport.md](docs/mcp-transport.md) for the full transport reference and HTTP Streamable session lifecycle.
 
@@ -379,6 +379,7 @@ Copy `.env.example` to `.env`. All required variables must be set before startin
 | `APP_PORT` | `8080` | API listen port |
 | `APP_ENV` | `development` | `development` or `production` |
 | `CONFIG_PATH` | `config.toml` | Path to TOML config file |
+| `WORKSPACE_CREATION_ENABLED` | `true` locally, `false` in production overlay | Disable `POST /v1/workspaces` after bootstrap |
 | `RUST_LOG` | `info` | Log level (`trace`/`debug`/`info`/`warn`/`error`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP endpoint, e.g. `http://localhost:4317` |
 
@@ -428,7 +429,7 @@ curl -X POST http://localhost:8080/v1/workspaces \
   -H 'Content-Type: application/json' \
   -H 'x-admin-token: <your-WORKSPACE_CREATION_SECRET>' \
   -d '{"name": "acme-engineering"}'
-# {"workspace_id": "018f...", "api_key": "mops_018f..._..."}
+# {"workspace_id": "YOUR_WORKSPACE_ID", "api_key": "YOUR_MEMORYOPS_API_KEY"}
 ```
 
 The bootstrap API key is returned **once**. Store it securely.
@@ -436,11 +437,11 @@ The bootstrap API key is returned **once**. Store it securely.
 ### Create an additional API key
 
 ```bash
-curl -X POST http://localhost:8080/v1/workspaces/018f.../keys \
-  -H 'X-API-Key: mops_018f...' \
+curl -X POST http://localhost:8080/v1/workspaces/YOUR_WORKSPACE_ID/keys \
+  -H 'X-API-Key: YOUR_MEMORYOPS_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"name": "coding-agent"}'
-# {"key": "mops_acme_3xK9m..."}  ← returned once, store it
+# {"key": "YOUR_NEW_MEMORYOPS_API_KEY"}  ← returned once, store it
 ```
 
 ### Register a GitHub webhook
@@ -455,11 +456,11 @@ Set the secret to the GitHub integration secret registered for that workspace.
 
 ```bash
 curl -X POST http://localhost:8080/v1/retrieve \
-  -H 'X-API-Key: mops_acme_3xK9m...' \
+  -H 'X-API-Key: YOUR_MEMORYOPS_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "Recent decisions about the auth service?",
-    "workspace_id": "018f...",
+    "workspace_id": "YOUR_WORKSPACE_ID",
     "token_budget": 4096,
     "agent_id": "coding-agent"
   }'
@@ -471,7 +472,7 @@ Response includes scored, token-packed memories and a retrieval trace showing **
 
 ```bash
 curl -X POST http://localhost:8080/v1/memory/019a.../feedback \
-  -H 'X-API-Key: mops_acme_3xK9m...' \
+  -H 'X-API-Key: YOUR_MEMORYOPS_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
     "query_id": "trace-uuid-from-retrieve",
@@ -487,11 +488,11 @@ Ratings (`-1`, `0`, `1`) roll into a `relevance_score` that nudges future hybrid
 
 ```bash
 curl -X POST http://localhost:8080/v1/retrieve \
-  -H 'X-API-Key: mops_acme_3xK9m...' \
+  -H 'X-API-Key: YOUR_MEMORYOPS_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "auth service decisions",
-    "workspace_id": "018f...",
+    "workspace_id": "YOUR_WORKSPACE_ID",
     "as_of": "2026-04-15T00:00:00Z"
   }'
 ```
@@ -598,7 +599,7 @@ memoryops/
 
 ## Status
 
-MemoryOps is in **alpha**. Core ingestion, processing, retrieval, and MCP transport are functional. The API surface may change before v1.0. Not recommended for production use without review of the security considerations in [SECURITY.md](SECURITY.md).
+MemoryOps is in **alpha**. Core ingestion, processing, retrieval, and MCP transport are functional. The API surface may change before v1.0. Not recommended for production use without review of the security considerations in [SECURITY.md](SECURITY.md) and the production checklist in [docs/security-production.md](docs/security-production.md).
 
 ---
 

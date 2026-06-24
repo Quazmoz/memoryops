@@ -1,8 +1,15 @@
 use std::path::Path;
 
 use axum::{extract::Path as AxumPath, extract::State, Extension, Json};
-use common::{auth::AuthContext, error::AppResult, AppError, AppState};
+use common::{
+    audit::{write_audit, AuditEvent, RequestContext},
+    auth::AuthContext,
+    error::AppResult,
+    models::AuditAction,
+    AppError, AppState,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 const MAX_SKILL_NAME_LEN: usize = 64;
 const MAX_SKILL_TITLE_LEN: usize = 120;
@@ -80,47 +87,6 @@ struct ParsedAgentSkillMarkdown {
     instructions: String,
 }
 
-async fn insert_agent_skill_version_snapshot(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    agent_skill_id: uuid::Uuid,
-    workspace_id: uuid::Uuid,
-    name: &str,
-    version: i32,
-    assistant: &str,
-    title: &str,
-    description: &str,
-    instructions: &str,
-    content: &str,
-    change_note: Option<&str>,
-    created_by: Option<&str>,
-) -> AppResult<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO agent_skill_versions (
-            agent_skill_id, workspace_id, name, version, assistant, title,
-            description, instructions, content, change_note, created_by
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        "#,
-    )
-    .bind(agent_skill_id)
-    .bind(workspace_id)
-    .bind(name)
-    .bind(version)
-    .bind(assistant)
-    .bind(title)
-    .bind(description)
-    .bind(instructions)
-    .bind(content)
-    .bind(change_note)
-    .bind(created_by)
-    .execute(&mut **tx)
-    .await
-    .map_err(AppError::Database)?;
-
-    Ok(())
-}
-
 pub async fn seed_default_skills(
     db: &sqlx::PgPool,
     workspace_id: uuid::Uuid,
@@ -166,14 +132,11 @@ pub async fn seed_default_skills(
         let parsed = parse_markdown_metadata(&content, &name);
         let filename = format!("{name}.md");
 
-        let mut tx = db.begin().await.map_err(AppError::Database)?;
-
-        let skill_opt = sqlx::query_as::<_, AgentSkillContent>(
+        sqlx::query(
             r#"
-            INSERT INTO agent_skills (workspace_id, name, filename, assistant, title, description, instructions, content, version)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1)
+            INSERT INTO agent_skills (workspace_id, name, filename, assistant, title, description, instructions, content)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (workspace_id, assistant, name) DO NOTHING
-            RETURNING id, name, filename, assistant, title, description, instructions, content, version
             "#
         )
         .bind(workspace_id)
@@ -184,29 +147,24 @@ pub async fn seed_default_skills(
         .bind(&parsed.description)
         .bind(&parsed.instructions)
         .bind(&content)
-        .fetch_optional(&mut *tx)
+        .execute(db)
         .await
         .map_err(AppError::Database)?;
 
-        if let Some(skill) = skill_opt {
-            insert_agent_skill_version_snapshot(
-                &mut tx,
-                skill.id,
-                workspace_id,
-                &skill.name,
-                skill.version,
-                &skill.assistant,
-                &skill.title,
-                &skill.description,
-                &skill.instructions,
-                &skill.content,
-                Some("initial seeded version"),
-                None,
-            )
-            .await?;
-        }
-
-        tx.commit().await.map_err(AppError::Database)?;
+        super::agent_resources::seed_skill_resource(
+            db,
+            workspace_id,
+            super::agent_resources::SkillResourceInput {
+                assistant: &assistant,
+                name: &name,
+                filename: &filename,
+                title: &parsed.title,
+                description: &parsed.description,
+                instructions: &parsed.instructions,
+                content: &content,
+            },
+        )
+        .await?;
     }
 
     Ok(())
@@ -221,8 +179,8 @@ pub async fn list_agent_skills(
     let mut skills = sqlx::query_as::<_, AgentSkill>(
         r#"
         SELECT id, name, filename, assistant, title, description, version
-        FROM agent_skills
-        WHERE workspace_id = $1
+        FROM agent_resources
+        WHERE workspace_id = $1 AND kind = 'skill' AND assistant IN ('claude', 'gemini')
         ORDER BY assistant ASC, LOWER(title) ASC, name ASC
         "#,
     )
@@ -238,8 +196,8 @@ pub async fn list_agent_skills(
         skills = sqlx::query_as::<_, AgentSkill>(
             r#"
             SELECT id, name, filename, assistant, title, description, version
-            FROM agent_skills
-            WHERE workspace_id = $1
+            FROM agent_resources
+            WHERE workspace_id = $1 AND kind = 'skill' AND assistant IN ('claude', 'gemini')
             ORDER BY assistant ASC, LOWER(title) ASC, name ASC
             "#,
         )
@@ -264,9 +222,9 @@ pub async fn get_agent_skill(
 
     let skill = sqlx::query_as::<_, AgentSkillContent>(
         r#"
-        SELECT id, name, filename, assistant, title, description, instructions, content, version
-        FROM agent_skills
-        WHERE workspace_id = $1 AND assistant = $2 AND name = $3
+        SELECT id, name, filename, assistant, title, description, body AS instructions, content, version
+        FROM agent_resources
+        WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
         "#,
     )
     .bind(workspace_id)
@@ -280,7 +238,7 @@ pub async fn get_agent_skill(
         Ok(Json(skill))
     } else {
         let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM agent_skills WHERE workspace_id = $1",
+            "SELECT COUNT(*) FROM agent_resources WHERE workspace_id = $1 AND kind = 'skill'",
         )
         .bind(workspace_id)
         .fetch_one(&state.db)
@@ -293,9 +251,9 @@ pub async fn get_agent_skill(
             }
             let skill = sqlx::query_as::<_, AgentSkillContent>(
                 r#"
-                SELECT id, name, filename, assistant, title, description, instructions, content, version
-                FROM agent_skills
-                WHERE workspace_id = $1 AND assistant = $2 AND name = $3
+                SELECT id, name, filename, assistant, title, description, body AS instructions, content, version
+                FROM agent_resources
+                WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
                 "#,
             )
             .bind(workspace_id)
@@ -320,6 +278,7 @@ pub async fn get_agent_skill(
 pub async fn create_agent_skill(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Json(request): Json<CreateAgentSkillRequest>,
 ) -> AppResult<Json<AgentSkillContent>> {
     let workspace_id = auth.workspace_id;
@@ -331,71 +290,56 @@ pub async fn create_agent_skill(
 
     let filename = format!("{name}.md");
     let content = compose_skill_markdown(title, description, instructions);
+    let actor = auth.actor();
+    let change_note = request.change_note.as_deref().unwrap_or("created via legacy agent-skills API");
 
-    let mut tx = state.db.begin().await.map_err(AppError::Database)?;
-
-    let exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM agent_skills WHERE workspace_id = $1 AND assistant = $2 AND name = $3)"
-    )
-    .bind(workspace_id)
-    .bind(assistant)
-    .bind(name)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(AppError::Database)?;
-
-    if exists {
-        return Err(AppError::Conflict(format!(
-            "Agent skill '{assistant}/{name}' already exists"
-        )));
-    }
-
-    let skill = sqlx::query_as::<_, AgentSkillContent>(
-        r#"
-        INSERT INTO agent_skills (workspace_id, name, filename, assistant, title, description, instructions, content, version)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1)
-        RETURNING id, name, filename, assistant, title, description, instructions, content, version
-        "#
-    )
-    .bind(workspace_id)
-    .bind(name)
-    .bind(filename)
-    .bind(assistant)
-    .bind(title)
-    .bind(description)
-    .bind(instructions)
-    .bind(content)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(AppError::Database)?;
-
-    let note = request.change_note.as_deref().unwrap_or("initial version");
-
-    insert_agent_skill_version_snapshot(
-        &mut tx,
-        skill.id,
+    let resource = super::agent_resources::create_skill_resource_versioned(
+        &state.db,
         workspace_id,
-        &skill.name,
-        skill.version,
-        &skill.assistant,
-        &skill.title,
-        &skill.description,
-        &skill.instructions,
-        &skill.content,
-        Some(note),
-        Some(auth.actor().as_str()),
+        super::agent_resources::SkillResourceInput {
+            assistant,
+            name,
+            filename: &filename,
+            title,
+            description,
+            instructions,
+            content: &content,
+        },
+        Some(change_note),
+        Some(actor.as_str()),
     )
     .await?;
 
-    tx.commit().await.map_err(AppError::Database)?;
+    // AgentResourceCreated is a security/compliance-required action
+    let event = AuditEvent::new(
+        workspace_id,
+        AuditAction::AgentResourceCreated,
+        resource.id,
+        "agent_resource",
+    )
+    .actor_api_key(&auth)
+    .target_name(resource.name.clone())
+    .target_version(resource.version)
+    .metadata(json!({
+        "kind": resource.kind,
+        "assistant": resource.assistant,
+        "name": resource.name,
+        "version": resource.version,
+        "source": "legacy-agent-skills-api",
+    }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
-    Ok(Json(skill))
+    Ok(Json(skill_content_from_resource(resource)))
 }
 
 #[axum::debug_handler]
 pub async fn update_agent_skill(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     AxumPath((assistant, name)): AxumPath<(String, String)>,
     Json(request): Json<UpdateAgentSkillRequest>,
 ) -> AppResult<Json<AgentSkillContent>> {
@@ -406,58 +350,67 @@ pub async fn update_agent_skill(
     let description = validate_description(&request.description)?;
     let instructions = validate_instructions(&request.instructions)?;
 
-    let content = compose_skill_markdown(title, description, instructions);
-
-    let mut tx = state.db.begin().await.map_err(AppError::Database)?;
-
-    let skill = sqlx::query_as::<_, AgentSkillContent>(
-        r#"
-        UPDATE agent_skills
-        SET title = $4,
-            description = $5,
-            instructions = $6,
-            content = $7,
-            version = version + 1,
-            updated_at = NOW()
-        WHERE workspace_id = $1 AND assistant = $2 AND name = $3
-        RETURNING id, name, filename, assistant, title, description, instructions, content, version
-        "#,
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM agent_resources WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3)"
     )
     .bind(workspace_id)
     .bind(assistant)
     .bind(name)
-    .bind(title)
-    .bind(description)
-    .bind(instructions)
-    .bind(content)
-    .fetch_optional(&mut *tx)
+    .fetch_one(&state.db)
     .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("agent_skill:{assistant}/{name}"),
-    })?;
+    .map_err(AppError::Database)?;
 
-    let note = request.change_note.as_deref().unwrap_or("updated skill");
+    if !exists {
+        return Err(AppError::NotFound {
+            resource: format!("agent_skill:{assistant}/{name}"),
+        });
+    }
 
-    insert_agent_skill_version_snapshot(
-        &mut tx,
-        skill.id,
+    let filename = format!("{name}.md");
+    let content = compose_skill_markdown(title, description, instructions);
+    let actor = auth.actor();
+    let change_note = request.change_note.as_deref().unwrap_or("updated via legacy agent-skills API");
+
+    let resource = super::agent_resources::upsert_skill_resource_versioned(
+        &state.db,
         workspace_id,
-        &skill.name,
-        skill.version,
-        &skill.assistant,
-        &skill.title,
-        &skill.description,
-        &skill.instructions,
-        &skill.content,
-        Some(note),
-        Some(auth.actor().as_str()),
+        super::agent_resources::SkillResourceInput {
+            assistant,
+            name,
+            filename: &filename,
+            title,
+            description,
+            instructions,
+            content: &content,
+        },
+        Some(change_note),
+        Some(actor.as_str()),
     )
     .await?;
 
-    tx.commit().await.map_err(AppError::Database)?;
+    // AgentResourceUpdated is a security/compliance-required action
+    let event = AuditEvent::new(
+        workspace_id,
+        AuditAction::AgentResourceUpdated,
+        resource.id,
+        "agent_resource",
+    )
+    .actor_api_key(&auth)
+    .target_name(resource.name.clone())
+    .target_version(resource.version)
+    .metadata(json!({
+        "kind": resource.kind,
+        "assistant": resource.assistant,
+        "name": resource.name,
+        "version": resource.version,
+        "source": "legacy-agent-skills-api",
+    }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
-    Ok(Json(skill))
+    Ok(Json(skill_content_from_resource(resource)))
 }
 
 #[axum::debug_handler]
@@ -470,30 +423,18 @@ pub async fn list_agent_skill_versions(
     let assistant = validate_assistant(&assistant)?;
     let name = validate_skill_name(&name)?;
 
-    let skill_id = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT id FROM agent_skills WHERE workspace_id = $1 AND assistant = $2 AND name = $3"
-    )
-    .bind(workspace_id)
-    .bind(assistant)
-    .bind(name)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(AppError::Database)?
-    .ok_or_else(|| AppError::NotFound {
-        resource: format!("agent_skill:{assistant}/{name}"),
-    })?;
-
     let versions = sqlx::query_as::<_, AgentSkillVersion>(
         r#"
-        SELECT id, agent_skill_id, workspace_id, name, version, assistant, title,
-               description, instructions, content, change_note, created_by, created_at
-        FROM agent_skill_versions
-        WHERE workspace_id = $1 AND agent_skill_id = $2
+        SELECT id, resource_id AS agent_skill_id, workspace_id, name, version, assistant, title,
+               description, body AS instructions, content, change_note, created_by, created_at
+        FROM agent_resource_versions
+        WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
         ORDER BY version DESC
         "#,
     )
     .bind(workspace_id)
-    .bind(skill_id)
+    .bind(assistant)
+    .bind(name)
     .fetch_all(&state.db)
     .await
     .map_err(AppError::Database)?;
@@ -513,10 +454,10 @@ pub async fn get_agent_skill_version(
 
     let version_snapshot = sqlx::query_as::<_, AgentSkillVersion>(
         r#"
-        SELECT id, agent_skill_id, workspace_id, name, version, assistant, title,
-               description, instructions, content, change_note, created_by, created_at
-        FROM agent_skill_versions
-        WHERE workspace_id = $1 AND assistant = $2 AND name = $3 AND version = $4
+        SELECT id, resource_id AS agent_skill_id, workspace_id, name, version, assistant, title,
+               description, body AS instructions, content, change_note, created_by, created_at
+        FROM agent_resource_versions
+        WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3 AND version = $4
         "#,
     )
     .bind(workspace_id)
@@ -537,21 +478,23 @@ pub async fn get_agent_skill_version(
 pub async fn rollback_agent_skill_version(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     AxumPath((assistant, name, version)): AxumPath<(String, String, i32)>,
     Json(request): Json<RollbackAgentSkillRequest>,
 ) -> AppResult<Json<AgentSkillContent>> {
     let workspace_id = auth.workspace_id;
     let assistant = validate_assistant(&assistant)?;
     let name = validate_skill_name(&name)?;
+    let change_note = request.change_note.as_deref().unwrap_or("rollback");
 
     let mut tx = state.db.begin().await.map_err(AppError::Database)?;
 
-    let snapshot = sqlx::query_as::<_, AgentSkillVersion>(
+    let snapshot = sqlx::query_as::<_, super::agent_resources::AgentResourceVersion>(
         r#"
-        SELECT id, agent_skill_id, workspace_id, name, version, assistant, title,
-               description, instructions, content, change_note, created_by, created_at
-        FROM agent_skill_versions
-        WHERE workspace_id = $1 AND assistant = $2 AND name = $3 AND version = $4
+        SELECT id, resource_id, workspace_id, kind, assistant, name, filename, title,
+               description, body, content, metadata, version, change_note, created_by, created_at
+        FROM agent_resource_versions
+        WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3 AND version = $4
         "#,
     )
     .bind(workspace_id)
@@ -565,26 +508,30 @@ pub async fn rollback_agent_skill_version(
         resource: format!("agent_skill_version:{assistant}/{name}@{version}"),
     })?;
 
-    let updated_skill = sqlx::query_as::<_, AgentSkillContent>(
+    let resource = sqlx::query_as::<_, super::agent_resources::AgentResource>(
         r#"
-        UPDATE agent_skills
-        SET title = $4,
-            description = $5,
-            instructions = $6,
-            content = $7,
+        UPDATE agent_resources
+        SET filename = $5,
+            title = $6,
+            description = $7,
+            body = $8,
+            content = $9,
+            metadata = $10,
             version = version + 1,
             updated_at = NOW()
-        WHERE workspace_id = $1 AND assistant = $2 AND name = $3
-        RETURNING id, name, filename, assistant, title, description, instructions, content, version
+        WHERE workspace_id = $1 AND kind = 'skill' AND assistant = $2 AND name = $3
+        RETURNING id, workspace_id, kind, assistant, name, filename, title, description, body, content, metadata, version, created_at, updated_at
         "#,
     )
     .bind(workspace_id)
     .bind(assistant)
     .bind(name)
+    .bind(&snapshot.filename)
     .bind(&snapshot.title)
     .bind(&snapshot.description)
-    .bind(&snapshot.instructions)
+    .bind(&snapshot.body)
     .bind(&snapshot.content)
+    .bind(&snapshot.metadata)
     .fetch_optional(&mut *tx)
     .await
     .map_err(AppError::Database)?
@@ -592,28 +539,102 @@ pub async fn rollback_agent_skill_version(
         resource: format!("agent_skill:{assistant}/{name}"),
     })?;
 
-    let note = request.change_note.as_deref().unwrap_or("rollback");
-    let rollback_note = format!("{note} (rolled back to v{version})");
-
-    insert_agent_skill_version_snapshot(
-        &mut tx,
-        snapshot.agent_skill_id,
-        workspace_id,
-        &updated_skill.name,
-        updated_skill.version,
-        &updated_skill.assistant,
-        &updated_skill.title,
-        &updated_skill.description,
-        &updated_skill.instructions,
-        &updated_skill.content,
-        Some(&rollback_note),
-        Some(auth.actor().as_str()),
+    // sync legacy agent_skills table
+    sqlx::query(
+        r#"
+        INSERT INTO agent_skills (workspace_id, name, filename, assistant, title, description, instructions, content)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (workspace_id, assistant, name) DO UPDATE
+        SET filename = EXCLUDED.filename,
+            title = EXCLUDED.title,
+            description = EXCLUDED.description,
+            instructions = EXCLUDED.instructions,
+            content = EXCLUDED.content,
+            updated_at = NOW()
+        "#,
     )
-    .await?;
+    .bind(workspace_id)
+    .bind(&resource.name)
+    .bind(&resource.filename)
+    .bind(&resource.assistant)
+    .bind(&resource.title)
+    .bind(&resource.description)
+    .bind(&resource.body)
+    .bind(&resource.content)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::Database)?;
+
+    // insert new version snapshot
+    let rollback_note = format!("{change_note} (rolled back to v{version})");
+    sqlx::query(
+        r#"
+        INSERT INTO agent_resource_versions (
+            resource_id, workspace_id, kind, assistant, name, filename, title,
+            description, body, content, metadata, version, change_note, created_by, created_at
+        )
+        VALUES ($1, $2, 'skill', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+        "#,
+    )
+    .bind(resource.id)
+    .bind(workspace_id)
+    .bind(&resource.assistant)
+    .bind(&resource.name)
+    .bind(&resource.filename)
+    .bind(&resource.title)
+    .bind(&resource.description)
+    .bind(&resource.body)
+    .bind(&resource.content)
+    .bind(&resource.metadata)
+    .bind(resource.version)
+    .bind(Some(&rollback_note))
+    .bind(Some(auth.actor().as_str()))
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::Database)?;
 
     tx.commit().await.map_err(AppError::Database)?;
 
-    Ok(Json(updated_skill))
+    // Write audit event
+    let event = AuditEvent::new(
+        workspace_id,
+        AuditAction::AgentResourceRolledBack,
+        resource.id,
+        "agent_resource",
+    )
+    .actor_api_key(&auth)
+    .target_name(resource.name.clone())
+    .target_version(resource.version)
+    .metadata(json!({
+        "kind": resource.kind,
+        "assistant": resource.assistant,
+        "name": resource.name,
+        "version": resource.version,
+        "source": "legacy-agent-skills-api",
+        "rolled_back_to": version,
+    }))
+    .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
+
+    Ok(Json(skill_content_from_resource(resource)))
+}
+
+fn skill_content_from_resource(
+    resource: super::agent_resources::AgentResource,
+) -> AgentSkillContent {
+    AgentSkillContent {
+        id: resource.id,
+        name: resource.name,
+        filename: resource.filename,
+        assistant: resource.assistant,
+        title: resource.title,
+        description: resource.description,
+        instructions: resource.body,
+        content: resource.content,
+        version: resource.version,
+    }
 }
 
 fn validate_assistant(assistant: &str) -> AppResult<&str> {
@@ -844,6 +865,7 @@ mod tests {
         let created = create_agent_skill(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Json(create_req),
         )
         .await
@@ -875,6 +897,7 @@ mod tests {
         let updated = update_agent_skill(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             AxumPath(("claude".to_owned(), "release_notes".to_owned())),
             Json(update_req),
         )
@@ -975,6 +998,7 @@ mod tests {
         let _ = create_agent_skill(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Json(create_req),
         )
         .await
@@ -992,6 +1016,7 @@ mod tests {
         let error = create_agent_skill(
             State(state.clone()),
             Extension(auth.clone()),
+            None,
             Json(create_req_dup),
         )
         .await

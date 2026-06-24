@@ -6,6 +6,14 @@ Use this flow to create your first workspace and obtain the initial API key in o
 
 `POST /v1/workspaces` requires the `x-admin-token` header set to `WORKSPACE_CREATION_SECRET`. It creates the workspace and provisions one initial API key in the same response.
 
+For production, enable this endpoint only during initial setup:
+
+```bash
+WORKSPACE_CREATION_ENABLED=true
+```
+
+After the initial workspace exists, set `WORKSPACE_CREATION_ENABLED=false`, rotate or remove `WORKSPACE_CREATION_SECRET`, and restrict `POST /v1/workspaces` at the reverse proxy or firewall.
+
 ```bash
 curl -sS -X POST http://localhost:8080/v1/workspaces \
   -H 'Content-Type: application/json' \
@@ -18,7 +26,7 @@ Example response:
 ```json
 {
   "workspace_id": "0196f6c1-7e42-7f4f-8a6b-2945ea7f1e9a",
-  "api_key": "mops_0196f6c1_xxxxxxxxxxxxxxxxxxxxxxxxx"
+  "api_key": "YOUR_MEMORYOPS_API_KEY"
 }
 ```
 
@@ -35,7 +43,7 @@ Send the returned key as either `Authorization: Bearer <api_key>` or `X-API-Key:
 
 ```bash
 curl -sS http://localhost:8080/v1/memory?workspace_id=0196f6c1-7e42-7f4f-8a6b-2945ea7f1e9a \
-  -H 'Authorization: Bearer mops_0196f6c1_xxxxxxxxxxxxxxxxxxxxxxxxx'
+  -H 'Authorization: Bearer YOUR_MEMORYOPS_API_KEY'
 ```
 
 ## Important
@@ -58,4 +66,3 @@ API_KEY=<your-returned-api-key> WORKSPACE_ID=<your-returned-workspace-id> node s
 - Create additional keys as needed with `POST /v1/workspaces/{id}/keys`.
 - Configure workspace promotion, lifecycle, and memory-sharing settings through the workspace endpoints.
 - See [docs/mcp-transport.md](mcp-transport.md) for the full MCP transport reference.
-

@@ -32,6 +32,9 @@ test('DLQ entry can be retried from Integration view', async ({ page }) => {
   // Navigate to the Integrations view
   await page.getByTestId('nav-integrations').click();
 
+  // Switch to the Dead Letter Queue tab
+  await page.getByRole('tab', { name: /Dead Letter Queue/ }).click();
+
   // DLQ panel must render (empty or with entries)
   await expect(page.getByTestId('dlq-panel')).toBeVisible({ timeout: 10_000 });
 

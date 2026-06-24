@@ -2,7 +2,10 @@ use std::collections::HashSet;
 
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Timelike, Utc, Weekday};
 use common::{
-    audit::spawn_audit_log,
+    audit::{
+        drain_audit_outbox, parse_audit_retention_days, prune_audit_log, spawn_audit_log,
+        write_audit_in_conn, AuditEvent, AuditRetentionPolicy,
+    },
     build_embedding_provider_for_workspace, build_llm_provider_for_workspace,
     error::AppResult,
     models::{
@@ -28,6 +31,10 @@ const MAX_PRUNING_THRESHOLD: f32 = 0.50;
 const MIN_SKILL_VERSION_RETENTION_DAYS: u32 = 1;
 const MAX_SKILL_VERSION_RETENTION_DAYS: u32 = 3650;
 const SECONDS_PER_DAY: f64 = 86_400.0;
+/// How often the durable audit outbox is drained into `audit_log`.
+const AUDIT_OUTBOX_DRAIN_INTERVAL_SECS: u64 = 60;
+/// Max outbox rows processed per drain tick.
+const AUDIT_OUTBOX_DRAIN_BATCH: i64 = 500;
 
 #[derive(Debug, Clone, Copy, FromRow)]
 struct MemoryIdentity {
@@ -84,6 +91,7 @@ pub async fn run_scheduler(state: AppState) {
             if let Err(error) = run_compliance_retention_purge(&state).await {
                 tracing::error!(error = ?error, "compliance retention purge failed");
             }
+            run_audit_retention_pass(&state).await;
         }
 
         let is_sunday_promotion = now.weekday() == Weekday::Sun && now.hour() == decay_hour;
@@ -92,6 +100,53 @@ pub async fn run_scheduler(state: AppState) {
                 tracing::error!(error = ?error, "promotion pass failed");
             }
         }
+    }
+}
+
+/// Background loop that drains the durable audit outbox into `audit_log`.
+///
+/// Best-effort audit writes that failed their direct insert are parked in
+/// `audit_outbox`; this loop retries them on a short interval so operational
+/// audit events are eventually persisted without ever being silently dropped.
+/// It runs independently of the daily maintenance window.
+pub async fn run_audit_outbox_drainer(state: AppState) {
+    let interval = std::time::Duration::from_secs(AUDIT_OUTBOX_DRAIN_INTERVAL_SECS);
+    loop {
+        tokio::time::sleep(interval).await;
+        match drain_audit_outbox(&state.db, AUDIT_OUTBOX_DRAIN_BATCH).await {
+            Ok(0) => {}
+            Ok(written) => tracing::info!(written, "drained audit outbox"),
+            Err(error) => tracing::warn!(error = ?error, "audit outbox drain failed"),
+        }
+    }
+}
+
+/// Read `AUDIT_RETENTION_DAYS` from the environment. Returns `None` (no pruning)
+/// when unset, empty, zero, or invalid — pruning is never destructive by default.
+/// Validation is shared with startup diagnostics via [`parse_audit_retention_days`].
+fn audit_retention_days() -> Option<i32> {
+    match parse_audit_retention_days(std::env::var("AUDIT_RETENTION_DAYS").ok().as_deref()) {
+        AuditRetentionPolicy::Days(days) => Some(days),
+        AuditRetentionPolicy::Disabled | AuditRetentionPolicy::Invalid(_) => None,
+    }
+}
+
+/// Daily audit retention pass. No-op unless `AUDIT_RETENTION_DAYS` is set, so the
+/// default behaviour never deletes audit history.
+async fn run_audit_retention_pass(state: &AppState) {
+    let Some(retention_days) = audit_retention_days() else {
+        return;
+    };
+    match prune_audit_log(&state.db, retention_days).await {
+        Ok(0) => {}
+        Ok(deleted) => {
+            tracing::info!(
+                deleted,
+                retention_days,
+                "pruned audit_log past retention window"
+            )
+        }
+        Err(error) => tracing::error!(error = ?error, "audit retention prune failed"),
     }
 }
 
@@ -357,26 +412,39 @@ pub async fn run_hard_delete_pass(state: &AppState) -> AppResult<u64> {
 
         let ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
         delete_vectors_best_effort(state, &ids, "hard delete pass").await;
+
+        // Hard deletion of user data is a compliance-required audit event, so the
+        // DELETE and its audit rows commit atomically: if any audit write fails the
+        // deletion rolls back and the batch is retried, leaving no un-audited hard
+        // delete. (No request context exists for this background retention job.)
+        let mut tx = state.db.begin().await.map_err(AppError::Database)?;
         let deleted = sqlx::query_scalar::<_, Uuid>(
             "DELETE FROM memory_units WHERE id = ANY($1) RETURNING id",
         )
         .bind(&ids)
-        .fetch_all(&state.db)
+        .fetch_all(&mut *tx)
         .await
         .map_err(AppError::Database)?;
+        let deleted_set: HashSet<Uuid> = deleted.iter().copied().collect();
         let deleted_count = deleted.len();
 
-        for memory in &memories {
-            spawn_audit_log(
-                state.db.clone(),
+        for memory in memories
+            .iter()
+            .filter(|memory| deleted_set.contains(&memory.id))
+        {
+            let event = AuditEvent::new(
                 memory.workspace_id,
-                "scheduler".to_owned(),
                 AuditAction::MemoryHardDeleted,
                 memory.id,
                 "memory",
-                Some(serde_json::json!({ "reason": "retention_expired" })),
-            );
+            )
+            .actor_string("scheduler")
+            .metadata(serde_json::json!({ "reason": "retention_expired" }));
+            write_audit_in_conn(&mut tx, &event)
+                .await
+                .map_err(AppError::Database)?;
         }
+        tx.commit().await.map_err(AppError::Database)?;
 
         total = total.saturating_add(len_to_u64(deleted_count)?);
     }
@@ -907,9 +975,7 @@ fn valid_pruning_threshold(threshold: f32, workspace_id: Uuid) -> f32 {
 }
 
 fn valid_skill_version_retention_days(days: Option<u32>, workspace_id: Uuid) -> Option<u32> {
-    let Some(days) = days else {
-        return None;
-    };
+    let days = days?;
 
     if (MIN_SKILL_VERSION_RETENTION_DAYS..=MAX_SKILL_VERSION_RETENTION_DAYS).contains(&days) {
         Some(days)

@@ -372,7 +372,7 @@ pub struct ApiKey {
 ```
 
 **Key format:** `mops_<workspace_prefix>_<32 random bytes as base58>`  
-**Example:** `mops_acme_3xK9mPqRvZ...`
+**Example:** `YOUR_MEMORYOPS_API_KEY`
 
 **Hashing:** Argon2id with params: `m=65536, t=2, p=1` (OWASP recommended)
 
@@ -1339,7 +1339,7 @@ M11 introduces a dedicated `crates/mcp/` server crate that exposes MemoryOps ret
 |---------|----------|
 | Default port | `3003` |
 | Port env var | `MCP_PORT` |
-| Transport env var | `MCP_TRANSPORT=stdio\|sse`, default `sse` |
+| Transport env var | `MCP_TRANSPORT=stdio\|http\|sse`, default `stdio`; compose sets `http` for local clients |
 | Dependency boundary | `mcp` depends on `common`, `retrieval`, and `processor`; it must not depend on the `api` crate |
 
 ### 24.2 Transports
@@ -1347,7 +1347,7 @@ M11 introduces a dedicated `crates/mcp/` server crate that exposes MemoryOps ret
 | Transport | Use Case | Contract |
 |-----------|----------|----------|
 | stdio | Local agents and editor-launched processes | Newline-delimited JSON-RPC 2.0 over stdin/stdout; stdout is flushed after every response |
-| HTTP SSE | Remote or hosted MCP clients | `POST /mcp` accepts JSON-RPC requests and returns JSON responses; `GET /mcp/sse` opens an SSE event stream for server-initiated messages |
+| HTTP/SSE | Local, private-network, or tunnelled MCP clients | HTTP Streamable uses `/mcp`; legacy SSE uses `/mcp/sse`. Do not expose MCP publicly without explicit auth and network controls. |
 
 ### 24.3 Auth
 
@@ -1362,7 +1362,7 @@ MCP clients authenticate during the `initialize` request by passing a workspace 
     "protocolVersion": "2025-06-18",
     "_meta": {
       "auth": {
-        "token": "Bearer mops_workspace_example"
+        "token": "Bearer YOUR_MEMORYOPS_API_KEY"
       }
     }
   }

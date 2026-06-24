@@ -31,9 +31,9 @@ describe("CodeBlock", () => {
   });
 
   it("substitutes {{API_KEY}} with store value", () => {
-    setupStore("", "sk-live-xyz");
+    setupStore("", "test-api-key");
     render(<CodeBlock code="key: {{API_KEY}}" />);
-    expect(screen.getByText(/key: sk-live-xyz/i)).toBeTruthy();
+    expect(screen.getByText(/key: test-api-key/i)).toBeTruthy();
   });
 
   it("shows placeholder when workspace ID is empty", () => {

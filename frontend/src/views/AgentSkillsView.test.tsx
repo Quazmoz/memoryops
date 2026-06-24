@@ -4,69 +4,54 @@ import type { ReactElement } from "react";
 import { vi } from "vitest";
 
 import {
-  createAgentSkill,
-  getAgentSkill,
-  listAgentSkills,
-  updateAgentSkill,
-  listAgentSkillVersions,
-  rollbackAgentSkillVersion,
-} from "../api/agentSkills";
+  createAgentResource,
+  deleteAgentResource,
+  getAgentResource,
+  listAgentResources,
+  listAgentResourceVersions,
+  rollbackAgentResource,
+  updateAgentResource,
+} from "../api/agentResources";
 import { AgentSkillsView } from "./AgentSkillsView";
 
-vi.mock("../api/agentSkills", () => ({
-  createAgentSkill: vi.fn(),
-  getAgentSkill: vi.fn(),
-  listAgentSkills: vi.fn(),
-  updateAgentSkill: vi.fn(),
-  listAgentSkillVersions: vi.fn(),
-  rollbackAgentSkillVersion: vi.fn(),
+vi.mock("../api/agentResources", () => ({
+  createAgentResource: vi.fn(),
+  deleteAgentResource: vi.fn(),
+  getAgentResource: vi.fn(),
+  listAgentResources: vi.fn(),
+  listAgentResourceVersions: vi.fn(),
+  rollbackAgentResource: vi.fn(),
+  updateAgentResource: vi.fn(),
 }));
 
-const mockCreateAgentSkill = vi.mocked(createAgentSkill);
-const mockGetAgentSkill = vi.mocked(getAgentSkill);
-const mockListAgentSkills = vi.mocked(listAgentSkills);
-const mockUpdateAgentSkill = vi.mocked(updateAgentSkill);
-const mockListAgentSkillVersions = vi.mocked(listAgentSkillVersions);
-const mockRollbackAgentSkillVersion = vi.mocked(rollbackAgentSkillVersion);
+const mockCreateAgentResource = vi.mocked(createAgentResource);
+const mockDeleteAgentResource = vi.mocked(deleteAgentResource);
+const mockGetAgentResource = vi.mocked(getAgentResource);
+const mockListAgentResources = vi.mocked(listAgentResources);
+const mockListAgentResourceVersions = vi.mocked(listAgentResourceVersions);
+const mockRollbackAgentResource = vi.mocked(rollbackAgentResource);
+const mockUpdateAgentResource = vi.mocked(updateAgentResource);
 
 describe("AgentSkillsView", () => {
   beforeEach(() => {
-    mockListAgentSkills.mockReset();
-    mockGetAgentSkill.mockReset();
-    mockCreateAgentSkill.mockReset();
-    mockUpdateAgentSkill.mockReset();
-    mockListAgentSkillVersions.mockReset();
-    mockRollbackAgentSkillVersion.mockReset();
+    mockCreateAgentResource.mockReset();
+    mockDeleteAgentResource.mockReset();
+    mockGetAgentResource.mockReset();
+    mockListAgentResources.mockReset();
+    mockListAgentResourceVersions.mockReset();
+    mockRollbackAgentResource.mockReset();
+    mockUpdateAgentResource.mockReset();
   });
 
-  it("submits a new agent skill from the drawer", async () => {
-    mockListAgentSkills.mockResolvedValue([]);
-    mockCreateAgentSkill.mockResolvedValue({
-      id: "some-uuid",
-      assistant: "claude",
-      name: "release_notes",
-      filename: "release_notes.md",
-      title: "Release Notes",
-      description: "Summarises release changes",
-      instructions: "## Trigger\n- Before deploy",
-      content: "# Skill: Release Notes\n\n**Description:** Summarises release changes\n\n## Trigger\n- Before deploy\n",
-      version: 1,
-    });
-    mockGetAgentSkill.mockResolvedValue({
-      id: "some-uuid",
-      assistant: "claude",
-      name: "release_notes",
-      filename: "release_notes.md",
-      title: "Release Notes",
-      description: "Summarises release changes",
-      instructions: "## Trigger\n- Before deploy",
-      content: "# Skill: Release Notes\n\n**Description:** Summarises release changes\n\n## Trigger\n- Before deploy\n",
-      version: 1,
-    });
+  it("submits a new skill resource from the drawer", async () => {
+    mockListAgentResources.mockResolvedValue([]);
+    mockListAgentResourceVersions.mockResolvedValue([]);
+    mockCreateAgentResource.mockResolvedValue(releaseNotesResource());
+    mockGetAgentResource.mockResolvedValue(releaseNotesResource());
 
     renderWithQueryClient(<AgentSkillsView />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /add skill/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /add resource/i }));
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByPlaceholderText("release_notes"), {
       target: { value: "release_notes" },
@@ -80,55 +65,92 @@ describe("AgentSkillsView", () => {
         target: { value: "Summarises release changes" },
       },
     );
-    fireEvent.change(within(dialog).getByRole("textbox", { name: /instructions/i }), {
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /body/i }), {
       target: { value: "## Trigger\n- Before deploy" },
     });
 
-    fireEvent.click(within(dialog).getByRole("button", { name: /create skill/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /create resource/i }));
 
     await waitFor(() => {
-      expect(mockCreateAgentSkill).toHaveBeenCalledWith({
+      expect(mockCreateAgentResource).toHaveBeenCalledWith(expect.objectContaining({
         assistant: "claude",
+        body: "## Trigger\n- Before deploy",
+        description: "Summarises release changes",
+        kind: "skill",
         name: "release_notes",
         title: "Release Notes",
-        description: "Summarises release changes",
-        instructions: "## Trigger\n- Before deploy",
-        change_note: undefined,
-      });
+      }));
     });
   });
 
-  it("loads an existing skill and submits edits", async () => {
-    mockListAgentSkills.mockResolvedValue([
+  it("submits metadata for a prompt resource from the drawer", async () => {
+    mockListAgentResources.mockResolvedValue([]);
+    mockListAgentResourceVersions.mockResolvedValue([]);
+    mockCreateAgentResource.mockResolvedValue({
+      ...releaseNotesResource(),
+      kind: "prompt",
+      assistant: "generic",
+      name: "release_brief",
+      title: "Release Brief",
+      description: "Drafts release notes",
+      metadata: { owner: "release" },
+      content: "# Prompt: Release Brief\n\n**Description:** Drafts release notes\n\n## Prompt\nSummarize changes.\n",
+    });
+    mockGetAgentResource.mockResolvedValue(releaseNotesResource());
+
+    renderWithQueryClient(<AgentSkillsView />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /add resource/i }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/type/i), {
+      target: { value: "prompt" },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText("release_notes"), {
+      target: { value: "release_brief" },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText("Release Brief Prompt"), {
+      target: { value: "Release Brief" },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText("Drafts concise release notes from merged changes."), {
+      target: { value: "Drafts release notes" },
+    });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /body/i }), {
+      target: { value: "## Prompt\nSummarize changes." },
+    });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /metadata/i }), {
+      target: { value: '{ "owner": "release", "default": false }' },
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /create resource/i }));
+
+    await waitFor(() => {
+      expect(mockCreateAgentResource).toHaveBeenCalledWith(expect.objectContaining({
+        assistant: "generic",
+        kind: "prompt",
+        metadata: { owner: "release", default: false },
+        name: "release_brief",
+      }));
+    });
+  });
+
+  it("loads an existing resource and submits edits", async () => {
+    mockListAgentResources.mockResolvedValue([releaseNotesSummary()]);
+    mockGetAgentResource.mockResolvedValue(releaseNotesResource());
+    mockListAgentResourceVersions.mockResolvedValue([
       {
-        id: "some-uuid",
-        assistant: "claude",
-        name: "release_notes",
-        filename: "release_notes.md",
-        title: "Release Notes",
-        description: "Summarises release changes",
+        ...releaseNotesResource(),
+        id: "version-1",
+        resource_id: "resource-1",
         version: 1,
+        change_note: "Initial version",
+        created_by: "api_key:test",
+        created_at: "2026-06-18T10:00:00Z",
       },
     ]);
-    mockGetAgentSkill.mockResolvedValue({
-      id: "some-uuid",
-      assistant: "claude",
-      name: "release_notes",
-      filename: "release_notes.md",
-      title: "Release Notes",
-      description: "Summarises release changes",
-      instructions: "## Trigger\n- Before deploy",
-      content: "# Skill: Release Notes\n\n**Description:** Summarises release changes\n\n## Trigger\n- Before deploy\n",
-      version: 1,
-    });
-    mockUpdateAgentSkill.mockResolvedValue({
-      id: "some-uuid",
-      assistant: "claude",
-      name: "release_notes",
-      filename: "release_notes.md",
-      title: "Release Notes",
+    mockUpdateAgentResource.mockResolvedValue({
+      ...releaseNotesResource(),
       description: "Updated release summary",
-      instructions: "## Trigger\n- Before and after deploy",
+      body: "## Trigger\n- Before and after deploy",
       content: "# Skill: Release Notes\n\n**Description:** Updated release summary\n\n## Trigger\n- Before and after deploy\n",
       version: 2,
     });
@@ -137,108 +159,106 @@ describe("AgentSkillsView", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /release notes/i }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /edit skill/i })).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: /^edit$/i })).not.toBeDisabled();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /edit skill/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByDisplayValue("Summarises release changes"), {
       target: { value: "Updated release summary" },
     });
-    fireEvent.change(within(dialog).getByRole("textbox", { name: /instructions/i }), {
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /body/i }), {
       target: { value: "## Trigger\n- Before and after deploy" },
     });
 
-    fireEvent.click(within(dialog).getByRole("button", { name: /^save skill$/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save resource$/i }));
 
     await waitFor(() => {
-      expect(mockUpdateAgentSkill).toHaveBeenCalledWith("claude", "release_notes", {
-        title: "Release Notes",
+      expect(mockUpdateAgentResource).toHaveBeenCalledWith("skill", "claude", "release_notes", expect.objectContaining({
+        body: "## Trigger\n- Before and after deploy",
         description: "Updated release summary",
-        instructions: "## Trigger\n- Before and after deploy",
-        change_note: undefined,
-      });
+        title: "Release Notes",
+      }));
     });
   });
 
-  it("displays version history and triggers rollback", async () => {
-    const dummySkill = {
-      id: "some-uuid",
-      assistant: "claude" as const,
-      name: "release_notes",
-      filename: "release_notes.md",
-      title: "Release Notes",
-      description: "Summarises release changes",
-      version: 2,
-    };
-    mockListAgentSkills.mockResolvedValue([dummySkill]);
-    mockGetAgentSkill.mockResolvedValue({
-      ...dummySkill,
-      instructions: "## Trigger\n- Before deploy",
-      content: "# Skill: Release Notes\n\n**Description:** Summarises release changes\n\n## Trigger\n- Before deploy\n",
-    });
-    mockListAgentSkillVersions.mockResolvedValue([
+  it("allows selecting versions to compare and renders diff side-by-side", async () => {
+    mockListAgentResources.mockResolvedValue([releaseNotesSummary()]);
+    mockGetAgentResource.mockResolvedValue(releaseNotesResource());
+    mockListAgentResourceVersions.mockResolvedValue([
       {
-        id: "v2-uuid",
-        agent_skill_id: "some-uuid",
-        workspace_id: "ws-uuid",
-        name: "release_notes",
+        ...releaseNotesResource(),
+        id: "version-2",
+        resource_id: "resource-1",
         version: 2,
-        assistant: "claude",
-        title: "Release Notes",
-        description: "Summarises release changes",
-        instructions: "## Trigger\n- Before deploy",
-        content: "# Skill: Release Notes\n\n**Description:** Summarises release changes\n\n## Trigger\n- Before deploy\n",
-        change_note: "second version",
-        created_by: "api_key:key1",
-        created_at: "2026-06-09T18:00:00Z",
+        title: "Release Notes v2",
+        change_note: "Updated version",
+        created_by: "api_key:test",
+        created_at: "2026-06-18T11:00:00Z",
       },
       {
-        id: "v1-uuid",
-        agent_skill_id: "some-uuid",
-        workspace_id: "ws-uuid",
-        name: "release_notes",
+        ...releaseNotesResource(),
+        id: "version-1",
+        resource_id: "resource-1",
         version: 1,
-        assistant: "claude",
-        title: "Release Notes",
-        description: "Initial release changes",
-        instructions: "## Trigger\n- Before and after deploy",
-        content: "# Skill: Release Notes\n\n**Description:** Initial release changes\n\n## Trigger\n- Before and after deploy\n",
-        change_note: "initial commit",
-        created_by: "api_key:key1",
-        created_at: "2026-06-09T17:00:00Z",
+        title: "Release Notes v1",
+        change_note: "Initial version",
+        created_by: "api_key:test",
+        created_at: "2026-06-18T10:00:00Z",
       },
     ]);
-    mockRollbackAgentSkillVersion.mockResolvedValue({
-      ...dummySkill,
-      version: 3,
-      instructions: "## Trigger\n- Before and after deploy",
-      content: "# Skill: Release Notes\n\n**Description:** Summarises release changes\n\n## Trigger\n- Before and after deploy\n",
-    });
 
     renderWithQueryClient(<AgentSkillsView />);
 
+    // Click on the resource to select it
     fireEvent.click(await screen.findByRole("button", { name: /release notes/i }));
 
-    // Verify version badges are rendered in the sidebar list and detail header
-    expect(await screen.findByTestId("skill-version-release_notes")).toHaveTextContent("v2");
-    expect(await screen.findByTestId("skill-detail-version-release_notes")).toHaveTextContent("v2");
-
-    // Switch to Version History tab
-    fireEvent.click(await screen.findByRole("button", { name: /version history/i }));
-
-    expect(await screen.findByText("second version")).toBeInTheDocument();
-    expect(await screen.findByText("initial commit")).toBeInTheDocument();
-
-    // Click rollback button for v1
-    fireEvent.click(screen.getByRole("button", { name: /roll back/i }));
-    fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
-
+    // Wait for the version list to load
     await waitFor(() => {
-      expect(mockRollbackAgentSkillVersion).toHaveBeenCalledWith("claude", "release_notes", 1, undefined);
+      expect(screen.queryAllByRole("button", { name: /compare/i })).toHaveLength(2);
     });
+
+    const compareButtons = screen.getAllByRole("button", { name: /compare/i });
+    
+    // Select version 2
+    fireEvent.click(compareButtons[0]!);
+    // Select version 1
+    fireEvent.click(compareButtons[1]!);
+
+    // Check if the comparison header is shown in the main view
+    expect(await screen.findByText("Version Comparison")).toBeInTheDocument();
+    expect(screen.getByText("Comparing v2 to v1")).toBeInTheDocument();
+    
+    // Check if the diff card displays values for both versions
+    expect(screen.getByText("Release Notes v2")).toBeInTheDocument();
+    expect(screen.getByText("Release Notes v1")).toBeInTheDocument();
   });
 });
+
+function releaseNotesSummary() {
+  return {
+    id: "resource-1",
+    workspace_id: "workspace-1",
+    kind: "skill" as const,
+    assistant: "claude" as const,
+    name: "release_notes",
+    filename: "release_notes.md",
+    title: "Release Notes",
+    description: "Summarises release changes",
+    metadata: {},
+    version: 1,
+    created_at: "2026-06-18T10:00:00Z",
+    updated_at: "2026-06-18T10:00:00Z",
+  };
+}
+
+function releaseNotesResource() {
+  return {
+    ...releaseNotesSummary(),
+    body: "## Trigger\n- Before deploy",
+    content: "# Skill: Release Notes\n\n**Description:** Summarises release changes\n\n## Trigger\n- Before deploy\n",
+  };
+}
 
 function renderWithQueryClient(ui: ReactElement) {
   const queryClient = new QueryClient({

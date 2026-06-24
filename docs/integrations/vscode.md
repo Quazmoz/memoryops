@@ -26,7 +26,7 @@ Use this server definition:
       "type": "http",
       "url": "http://localhost:3003/mcp",
       "headers": {
-        "Authorization": "Bearer YOUR_API_KEY"
+        "Authorization": "Bearer YOUR_MEMORYOPS_API_KEY"
       }
     }
   }
@@ -99,7 +99,7 @@ Add MemoryOps under `mcpServers` in `~/.continue/config.json`:
         "url": "http://localhost:3003/mcp",
         "requestInit": {
           "headers": {
-            "Authorization": "Bearer YOUR_API_KEY"
+            "Authorization": "Bearer YOUR_MEMORYOPS_API_KEY"
           }
         }
       }

@@ -2,6 +2,7 @@ use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use common::{auth::AuthContext, error::AppResult, AppError, AppState};
 use uuid::Uuid;
 
+pub mod agent_resources;
 pub mod agent_skills;
 pub mod audit;
 pub mod compliance;
@@ -63,6 +64,19 @@ pub fn protected_router() -> Router<AppState> {
             axum::routing::delete(keys::revoke_key),
         )
         .route("/v1/workspaces/{id}/audit", get(audit::list_audit))
+        .route(
+            "/v1/workspaces/{id}/audit/actions",
+            get(audit::list_audit_actions),
+        )
+        .route("/v1/workspaces/{id}/audit/export", get(audit::export_audit))
+        .route(
+            "/v1/workspaces/{id}/audit/verify",
+            axum::routing::post(audit::verify_audit),
+        )
+        .route(
+            "/v1/workspaces/{id}/audit/{audit_id}",
+            get(audit::get_audit_entry),
+        )
         .route(
             "/v1/workspaces/{workspace_id}/forget/user/{user_id}",
             axum::routing::delete(compliance::forget_user_data),
@@ -129,6 +143,28 @@ pub fn protected_router() -> Router<AppState> {
         .route(
             "/v1/workspaces/{id}/tools/import",
             axum::routing::post(tools::import_tools),
+        )
+        .route(
+            "/v1/agent-resources",
+            get(agent_resources::list_agent_resources).post(agent_resources::create_agent_resource),
+        )
+        .route(
+            "/v1/agent-resources/{kind}/{assistant}/{name}",
+            get(agent_resources::get_agent_resource)
+                .put(agent_resources::update_agent_resource)
+                .delete(agent_resources::delete_agent_resource),
+        )
+        .route(
+            "/v1/agent-resources/{kind}/{assistant}/{name}/versions",
+            get(agent_resources::list_agent_resource_versions),
+        )
+        .route(
+            "/v1/agent-resources/{kind}/{assistant}/{name}/versions/{version}",
+            get(agent_resources::get_agent_resource_version),
+        )
+        .route(
+            "/v1/agent-resources/{kind}/{assistant}/{name}/versions/{version}/rollback",
+            axum::routing::post(agent_resources::rollback_agent_resource),
         )
         .route(
             "/v1/agent-skills",

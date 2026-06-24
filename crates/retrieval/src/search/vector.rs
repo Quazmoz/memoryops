@@ -140,7 +140,7 @@ pub(crate) async fn vector_search_results_with_offset_and_config(
     let scope = req.resolved_scope_filter();
     let workspace_pool = req.workspace_pool_access();
     let embedding_provider =
-        build_embedding_provider_for_workspace(&state.config, &workspace_config);
+        build_embedding_provider_for_workspace(&state.config, workspace_config);
     let Some(embedding) = query_embedding(&embedding_provider, &req.query).await? else {
         return Ok(Vec::new());
     };
@@ -190,6 +190,10 @@ pub(crate) async fn vector_search_results_with_offset_and_config(
     }
 }
 
+// Internal hydration helper with a cohesive argument list (query context +
+// already-resolved candidates + pagination). Grouping these into a struct would
+// add indirection without changing behavior, so the lint is allowed locally.
+#[allow(clippy::too_many_arguments)]
 async fn materialize_vector_results(
     db: &sqlx::PgPool,
     req: &SearchRequest,

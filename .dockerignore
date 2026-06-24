@@ -1,5 +1,8 @@
 .git
 .github
+.env
+.env.*
+!.env.example
 target
 tmp
 frontend/node_modules
@@ -10,3 +13,12 @@ frontend/out.txt
 frontend/e2e
 docs/assets
 _reference
+.memoryops
+.memoryops.local.json
+.vscode/mcp.json
+mcp.json
+mcp.*.json
+claude_desktop_config.json
+secrets
+*.secret
+*.secrets

@@ -5,7 +5,7 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, SaltString},
     Argon2, PasswordHasher, PasswordVerifier,
 };
-use rand::TryRngCore;
+use rand::TryRng;
 use redis::aio::ConnectionLike;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -47,7 +47,7 @@ pub fn generate_api_key(workspace_id: Uuid) -> AppResult<(String, String)> {
     let workspace_simple = workspace_id.simple().to_string();
     let workspace_prefix = &workspace_simple[..WORKSPACE_PREFIX_LEN];
     let mut random_bytes = [0_u8; RANDOM_BYTES_LEN];
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut random_bytes)
         .map_err(|error| {
             AppError::Internal(anyhow!("OS random number generator failed: {error}"))
@@ -305,8 +305,23 @@ fn is_valid_api_key_format(secret: &str) -> bool {
 
     prefix == API_KEY_PREFIX
         && workspace_prefix.len() == WORKSPACE_PREFIX_LEN
+        && workspace_prefix.chars().all(|ch| ch.is_ascii_hexdigit())
+        && random_part.len() >= 6
+        && random_part.bytes().all(is_base58_byte)
         && !random_part.is_empty()
         && parts.next().is_none()
+}
+
+fn is_base58_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'1'..=b'9'
+            | b'A'..=b'H'
+            | b'J'..=b'N'
+            | b'P'..=b'Z'
+            | b'a'..=b'k'
+            | b'm'..=b'z'
+    )
 }
 
 #[cfg(test)]
@@ -358,5 +373,21 @@ mod tests {
                 legacy_key[..LEGACY_PREFIX_LEN_V1].to_owned(),
             ])
         );
+    }
+
+    #[test]
+    fn malformed_api_keys_are_rejected_before_lookup() {
+        for secret in [
+            "",
+            "mops_0123456_abcdef",
+            "mops_nothexzz_abcdef",
+            "mops_01234567_abc",
+            "mops_01234567_abc def",
+            "mops_01234567_abc0ef",
+            "mops_01234567_abcdef_extra",
+            "notmops_01234567_abcdef",
+        ] {
+            assert!(api_key_prefixes(secret).is_none(), "{secret}");
+        }
     }
 }

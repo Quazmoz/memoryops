@@ -167,7 +167,10 @@ mod tests {
     #[test]
     fn definition_exposes_scope_properties() {
         let schema = definition().input_schema;
-        let Some(properties) = schema.get("properties").and_then(serde_json::Value::as_object) else {
+        let Some(properties) = schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+        else {
             panic!("properties should exist");
         };
 

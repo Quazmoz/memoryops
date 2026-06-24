@@ -12,7 +12,7 @@ use axum::{
 };
 use chrono::{DateTime, NaiveDate, Utc};
 use common::{
-    audit::spawn_audit_log,
+    audit::{spawn_audit_event, write_audit, AuditEvent, RequestContext},
     auth::AuthContext,
     build_embedding_provider_for_workspace, build_llm_provider_for_workspace,
     error::AppResult,
@@ -168,6 +168,10 @@ pub async fn create_workspace(
     headers: HeaderMap,
     Json(request): Json<CreateWorkspaceRequest>,
 ) -> AppResult<Json<CreateWorkspaceResponse>> {
+    if !workspace_creation_enabled_from_env() {
+        tracing::warn!("rejected workspace creation because WORKSPACE_CREATION_ENABLED=false");
+        return Err(AppError::Forbidden);
+    }
     authorize_workspace_creation(&headers)?;
     // Build a minimal Request so we can reuse the shared IP resolver.
     let created_from_ip = {
@@ -227,6 +231,30 @@ pub async fn create_workspace(
     let (api_key, _record) = keys::insert_key(&state.db, workspace_id, "bootstrap").await?;
 
     super::agent_skills::seed_default_skills(&state.db, workspace_id).await?;
+
+    // WorkspaceCreated is a required, security-sensitive audit event. It is
+    // authorized by the admin token rather than an API key, so the actor is
+    // recorded as the admin principal with the resolved source IP.
+    let event = AuditEvent::new(
+        workspace_id,
+        AuditAction::WorkspaceCreated,
+        workspace_id,
+        "workspace",
+    )
+    .actor_string("admin")
+    .actor_type("admin")
+    .target_name(request.name.trim().to_owned())
+    .metadata(
+        json!({ "name": request.name.trim(), "created_from_ip": created_from_ip.to_string() }),
+    )
+    .severity("notice");
+    let event = AuditEvent {
+        source_ip: Some(created_from_ip.to_string()),
+        ..event
+    };
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(CreateWorkspaceResponse {
         workspace_id,
@@ -398,6 +426,7 @@ pub async fn get_stats_history(
 pub async fn update_workspace_config(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path(id): Path<Uuid>,
     Json(config): Json<UpdateWorkspaceConfigRequest>,
 ) -> AppResult<Json<Workspace>> {
@@ -456,15 +485,17 @@ pub async fn update_workspace_config(
         resource: format!("workspace:{id}"),
     })?;
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::ConfigUpdated,
-        id,
-        "workspace",
-        Some(json!({ "before": before.config, "after": updated.config })),
-    );
+    // Workspace config changes are required audit events. before/after are
+    // recursively redacted (any key-like field is masked) before persistence.
+    let event = AuditEvent::new(id, AuditAction::ConfigUpdated, id, "workspace")
+        .actor_api_key(&auth)
+        .target_name(updated.name.clone())
+        .before(before.config.clone())
+        .after(updated.config.clone())
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(Json(updated))
 }
@@ -473,6 +504,7 @@ pub async fn update_workspace_config(
 pub async fn delete_workspace(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     require_workspace(&auth, id)?;
@@ -496,15 +528,14 @@ pub async fn delete_workspace(
         });
     }
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::WorkspaceDeleted,
-        id,
-        "workspace",
-        None,
-    );
+    // WorkspaceDeleted is a required audit event.
+    let event = AuditEvent::new(id, AuditAction::WorkspaceDeleted, id, "workspace")
+        .actor_api_key(&auth)
+        .reason("workspace soft-deleted")
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     enqueue_workspace_purge_job(state.clone(), id);
 
@@ -515,6 +546,7 @@ pub async fn delete_workspace(
 pub async fn promote(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PromotionReport>> {
     require_workspace(&auth, id)?;
@@ -549,19 +581,15 @@ pub async fn promote(
         Err(error) => return Err(AppError::Internal(anyhow!(error))),
     };
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::WorkspacePromote,
-        id,
-        "workspace",
-        Some(json!({
+    let event = AuditEvent::new(id, AuditAction::WorkspacePromote, id, "workspace")
+        .actor_api_key(&auth)
+        .metadata(json!({
             "clusters_found": report.clusters_found,
             "units_promoted": report.units_promoted,
             "units_skipped": report.units_skipped
-        })),
-    );
+        }))
+        .maybe_request_context(ctx.as_deref());
+    spawn_audit_event(state.db.clone(), event);
 
     Ok(Json(report))
 }
@@ -801,7 +829,32 @@ fn authorize_workspace_creation(headers: &HeaderMap) -> AppResult<()> {
     }
 }
 
+pub(crate) fn workspace_creation_enabled_from_env() -> bool {
+    workspace_creation_enabled_from_value(
+        std::env::var("WORKSPACE_CREATION_ENABLED").ok().as_deref(),
+    )
+}
+
+fn workspace_creation_enabled_from_value(value: Option<&str>) -> bool {
+    let Some(value) = value else {
+        return true;
+    };
+    let normalized = value.trim().to_ascii_lowercase();
+    !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+}
+
 async fn enforce_workspace_creation_rate_limit(state: &AppState, ip: IpAddr) -> AppResult<()> {
+    if std::env::var("BYPASS_RATE_LIMITS").is_ok()
+        || std::env::var("APP_ENV")
+            .map(|v| {
+                let v = v.to_ascii_lowercase();
+                v == "test" || v == "development"
+            })
+            .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
     let key = format!("workspace:create:ratelimit:{ip}");
     let now = unix_timestamp_secs()?;
 
@@ -1154,6 +1207,7 @@ struct MemoryIdRow {
 pub async fn reindex_workspace(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path(id): Path<Uuid>,
     Query(query): Query<ReindexQuery>,
 ) -> AppResult<Json<ReindexResponse>> {
@@ -1189,17 +1243,11 @@ pub async fn reindex_workspace(
 
     let enqueued = enqueue_reindex_rows(&state, &rows, force).await?;
 
-    // FIX: was `format!("user:{}", auth.key_id)` — use auth.actor() for
-    // consistent audit record format across all handlers.
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::WorkspaceReindexed,
-        id,
-        "workspace",
-        Some(json!({ "enqueued": enqueued, "force": force })),
-    );
+    let event = AuditEvent::new(id, AuditAction::WorkspaceReindexed, id, "workspace")
+        .actor_api_key(&auth)
+        .metadata(json!({ "enqueued": enqueued, "force": force }))
+        .maybe_request_context(ctx.as_deref());
+    spawn_audit_event(state.db.clone(), event);
 
     Ok(Json(ReindexResponse {
         enqueued,
@@ -1595,6 +1643,17 @@ mod tests {
         let mut request = update_request(None, None);
         request.extra.insert(key.to_owned(), value);
         request
+    }
+
+    #[test]
+    fn workspace_creation_enabled_parser_defaults_on_and_accepts_false_values() {
+        assert!(workspace_creation_enabled_from_value(None));
+        assert!(workspace_creation_enabled_from_value(Some("true")));
+        assert!(workspace_creation_enabled_from_value(Some("1")));
+        assert!(!workspace_creation_enabled_from_value(Some("false")));
+        assert!(!workspace_creation_enabled_from_value(Some("0")));
+        assert!(!workspace_creation_enabled_from_value(Some(" off ")));
+        assert!(!workspace_creation_enabled_from_value(Some("NO")));
     }
 
     fn stats_row() -> WorkspaceStatsRow {

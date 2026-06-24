@@ -25,7 +25,7 @@ const SECTIONS = [
   { id: "ingest", label: "Ingest Memories", keywords: "manual create webhook github slack jira linear observation processor queue" },
   { id: "integrations", label: "Integrations", keywords: "webhook secret hmac dead letter queue dlq observation retry discard health" },
   { id: "tools", label: "Tools", keywords: "tool registry http endpoint schema secret invocation versions rollback test" },
-  { id: "agent-skills", label: "Agent Skills", keywords: "claude gemini instructions prompts skills markdown agent behavior" },
+  { id: "agent-skills", label: "Agent Library", keywords: "claude gemini instructions prompts skills markdown agent behavior" },
   { id: "contradictions", label: "Contradictions", keywords: "conflict review accept both dismiss keep a keep b resolution quarantine" },
   { id: "lifecycle", label: "Lifecycle & Decay", keywords: "decay half life pruning promotion semantic archive restore publish merge" },
   { id: "audit", label: "Audit", keywords: "operator history change log compliance key lifecycle events" },
@@ -264,12 +264,12 @@ export function GuideView() {
               how="The backend stores schemas and encrypted auth material, validates inputs, calls the external endpoint, and records invocations."
             />
             <PageWalkthrough
-              title="Agent Skills"
+              title="Agent Library"
               href="/agent-skills"
-              purpose="Manage reusable markdown instructions for agent clients."
-              reads="Agent skill definitions by assistant and skill name."
-              actions="Create or update skills that teach agents when and how to use MemoryOps."
-              how="Skills are plain-text operational instructions that can be copied into Claude, Gemini, or repo-local agent folders."
+              purpose="Manage versioned skills, agent profiles, prompts, and reusable instructions."
+              reads="Agent resources by type, target, name, and version."
+              actions="Create, update, delete, copy, download, and restore prior resource versions."
+              how="Resources are markdown-backed operating contracts that can be copied into agent runtimes or repo-local folders."
             />
             <PageWalkthrough
               title="Contradictions"
@@ -536,24 +536,41 @@ curl -X POST {{API_URL}}/v1/workspaces/{{WORKSPACE_ID}}/tools/deployment_status/
   -d '{"service": "api"}'`} />
           </Section>
 
-          <Section id="agent-skills" title="Agent Skills" tooltip="Reusable instructions that teach agents how to use MemoryOps safely.">
+          <Section id="agent-skills" title="Agent Library" tooltip="Versioned skills, prompts, agent profiles, and instructions for agent clients.">
             <p>
-              Agent Skills are not memories themselves. They are markdown instructions that tell an assistant when to store
-              memory, when to retrieve memory, which scopes to include, and how to avoid polluting the workspace with noisy
-              or short-lived facts.
+              Agent Library resources are not memories themselves. They are markdown instructions and prompt assets that
+              tell an assistant when to store memory, when to retrieve memory, which scopes to include, and how to avoid
+              polluting the workspace with noisy or short-lived facts.
             </p>
             <DefinitionGrid
               items={[
-                ["Assistant", "The target agent family or client, such as Claude, Gemini, or a custom internal agent."],
-                ["Skill name", "The reusable instruction name that can map to a file like use_memoryops.md."],
-                ["Content", "The actual markdown behavior contract for the agent."],
-                ["Best use", "Store stable user/project preferences, architectural decisions, repeated incident learnings, and durable workflow rules."],
+                ["Canonical API", "`/v1/agent-resources` manages skills, agents, prompts, and instructions with metadata and version history."],
+                ["Legacy API", "`/v1/agent-skills` remains for Claude/Gemini skill sync and is backed by canonical skill resources."],
+                ["Target", "Skills target Claude or Gemini. Agents, prompts, and instructions can target generic, OpenAI, Claude, or Gemini runtimes."],
+                ["Version", "Each save and rollback creates an immutable snapshot that can be restored later."],
+                ["Export", "Copy or download the rendered markdown content for agent runtimes and keep metadata as sidecar context when supported."],
               ]}
             />
             <Callout>
-              Good skills should be opinionated. They should tell the agent to retrieve before answering project-specific
+              Good resources should be opinionated. They should tell the agent to retrieve before answering project-specific
               questions and to store only durable knowledge, not every intermediate thought or temporary task.
             </Callout>
+            <CodeBlock code={`# List canonical Agent Library resources
+curl "{{API_URL}}/v1/agent-resources" \\
+  -H "x-api-key: {{API_KEY}}"
+
+# Create a reusable prompt
+curl -X POST "{{API_URL}}/v1/agent-resources" \\
+  -H "x-api-key: {{API_KEY}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "kind": "prompt",
+    "assistant": "generic",
+    "name": "memory_retrieval_prompt",
+    "title": "Memory Retrieval Prompt",
+    "description": "Retrieves relevant workspace context before an agent acts.",
+    "body": "## Prompt\\nRetrieve durable MemoryOps context for {{task}}."
+  }'`} />
           </Section>
 
           <Section id="contradictions" title="Contradictions" tooltip="Review queue for memories that may disagree and need operator resolution.">

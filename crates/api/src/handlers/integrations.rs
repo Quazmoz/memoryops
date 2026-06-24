@@ -1,7 +1,7 @@
 use axum::{extract::Path, extract::State, http::StatusCode, Extension, Json};
 use chrono::{DateTime, Utc};
 use common::{
-    audit::spawn_audit_log,
+    audit::{write_audit, AuditEvent, RequestContext},
     auth::AuthContext,
     error::AppResult,
     models::{AuditAction, IntegrationStatus, Source},
@@ -49,6 +49,7 @@ pub struct IntegrationResponse {
 pub async fn create_integration(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path(id): Path<Uuid>,
     Json(request): Json<CreateIntegrationRequest>,
 ) -> AppResult<Json<IntegrationResponse>> {
@@ -62,6 +63,7 @@ pub async fn create_integration(
         ));
     }
 
+    let already_exists = integration_exists(&state, id, request.source).await?;
     let webhook_secret_enc = encrypted_optional(&state, webhook_secret.as_deref())?;
     let api_token_enc = encrypted_optional(&state, api_token.as_deref())?;
     let api_sync_enabled = request
@@ -81,20 +83,49 @@ pub async fn create_integration(
     .await?;
     ensure_integration_health(&state, id, request.source).await?;
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::IntegrationAdded,
-        id,
-        "integration",
-        Some(json!({
+    // Required audit events. Metadata only ever records presence booleans,
+    // never the secret/token values themselves.
+    let action = if already_exists {
+        AuditAction::IntegrationUpdated
+    } else {
+        AuditAction::IntegrationAdded
+    };
+    let event = AuditEvent::new(id, action, id, "integration")
+        .actor_api_key(&auth)
+        .target_name(format!("{:?}", request.source))
+        .metadata(json!({
             "source": request.source,
             "has_webhook_secret": webhook_secret_enc.is_some(),
             "has_api_credential": api_token_enc.is_some(),
             "api_sync_enabled": api_sync_enabled,
-        })),
-    );
+        }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
+
+    // A provided webhook secret means the secret was set or rotated -- record it
+    // explicitly as a critical, secret-free event.
+    if webhook_secret_enc.is_some() {
+        let secret_event = AuditEvent::new(
+            id,
+            AuditAction::IntegrationWebhookSecretChanged,
+            id,
+            "integration",
+        )
+        .actor_api_key(&auth)
+        .target_name(format!("{:?}", request.source))
+        .reason(if already_exists {
+            "webhook secret rotated"
+        } else {
+            "webhook secret set"
+        })
+        .metadata(json!({ "source": request.source }))
+        .maybe_request_context(ctx.as_deref());
+        write_audit(&state.db, &secret_event)
+            .await
+            .map_err(AppError::Database)?;
+    }
 
     let integration = get_integration(&state, id, request.source)
         .await?
@@ -132,6 +163,7 @@ pub async fn list_integrations(
 pub async fn delete_integration(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    ctx: Option<Extension<RequestContext>>,
     Path((id, source)): Path<(Uuid, Source)>,
 ) -> AppResult<StatusCode> {
     require_workspace(&auth, id)?;
@@ -155,17 +187,36 @@ pub async fn delete_integration(
         });
     }
 
-    spawn_audit_log(
-        state.db.clone(),
-        id,
-        auth.actor(),
-        AuditAction::IntegrationRemoved,
-        id,
-        "integration",
-        Some(json!({ "source": source })),
-    );
+    let event = AuditEvent::new(id, AuditAction::IntegrationRemoved, id, "integration")
+        .actor_api_key(&auth)
+        .target_name(format!("{source:?}"))
+        .metadata(json!({ "source": source }))
+        .maybe_request_context(ctx.as_deref());
+    write_audit(&state.db, &event)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn integration_exists(
+    state: &AppState,
+    workspace_id: Uuid,
+    source: Source,
+) -> AppResult<bool> {
+    sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM integrations
+            WHERE workspace_id = $1 AND source = $2 AND deleted_at IS NULL
+        )
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(source)
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)
 }
 
 async fn upsert_integration(

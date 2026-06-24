@@ -87,7 +87,7 @@ spec:
 ```
 
 ### 2. Horizontally Scaling Stateless API Replicas
-Since the Agent Skills registry is **database-backed** (stored in the `agent_skills` table), individual API replicas do not require local persistent volumes (PVs) or directory mounts for `.gemini/skills` or `.claude/skills`.
+Since the Agent Library is **database-backed** (stored in the versioned `agent_resources` tables, with `agent_skills` retained for compatibility), individual API replicas do not require local persistent volumes (PVs) or directory mounts for `.gemini/skills` or `.claude/skills`.
 You can safely set the `replicas` count to `2+` in your Deployment manifest.
 
 **Example API Deployment Spec (`memoryops-api-deployment.yaml`):**
@@ -150,8 +150,10 @@ spec:
                   key: workspace-creation-secret
             - name: APP_ENV
               value: "production"
+            - name: WORKSPACE_CREATION_ENABLED
+              value: "false"
             - name: TRUSTED_PROXY_CIDRS
-              value: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16" # Align with your VPC/Ingress subnet
+              value: "10.0.10.0/24" # Use only ingress/reverse-proxy CIDRs, not the whole VPC
 ```
 
 ---
@@ -160,7 +162,8 @@ spec:
 
 ### 1. Enforcing Production Mode (`APP_ENV=production`)
 When the environment variable `APP_ENV` is set to `production`, the backend enforces strict validation on startup:
-* **Secret Key Validation**: The API will crash on boot if `APP_SECRET_KEY` or `WORKSPACE_CREATION_SECRET` is set to the development fallback value `dev-placeholder`.
+* **Secret Key Validation**: The API will crash on boot if `APP_SECRET_KEY` is set to the development fallback value `dev-placeholder`. If workspace creation is enabled, `WORKSPACE_CREATION_SECRET` must also be a real value.
+* **Workspace Creation Switch**: Set `WORKSPACE_CREATION_ENABLED=false` after initial bootstrap so `POST /v1/workspaces` is rejected even if the admin token leaks.
 * **Database & Encryption**: These values must be long, randomly generated secrets securely stored in a KMS (Key Management Service) or Kubernetes Secret and injected at runtime.
 
 ### 2. SSRF & Private IP Whitelisting (`allow_private_ips`)
@@ -227,16 +230,16 @@ If you choose to use the local `fastembed` provider (`provider = "fastembed"`), 
 
 ---
 
-## Managing Agent Skills on Remote Servers
+## Managing Agent Library Resources on Remote Servers
 
-Agent Skills are stored directly in the PostgreSQL database (`agent_skills` table) scoped by `workspace_id`. This guarantees database consistency and removes file synchronization issues across stateless API replicas.
+Agent skills, agent profiles, prompts, and reusable instructions are stored directly in PostgreSQL (`agent_resources` and `agent_resource_versions`) scoped by `workspace_id`. This guarantees database consistency, preserves immutable version history, and removes file synchronization issues across stateless API replicas. The legacy `agent_skills` API remains available for Claude/Gemini skill sync workflows.
 
 ### 1. Workspace Skill Seeding
-When a workspace is created, or when listing/retrieving skills for a workspace if it has `0` skills, the server automatically seeds default skills from the server filesystem's `.gemini/skills/` and `.claude/skills/` directories.
-These default markdown files are packed into the production Docker image during the build stage (`COPY .gemini /app/.gemini` and `COPY .claude /app/.claude`).
+When a workspace is created, or when listing/retrieving an Agent Library kind that has `0` resources, the server seeds safe starter resources without overwriting existing rows. Skill defaults come from the server filesystem's `.gemini/skills/` and `.claude/skills/` directories; prompts, agent profiles, and reusable instructions are seeded from built-in MemoryOps defaults with version history.
+The default skill markdown files are packed into the production Docker image during the build stage (`COPY .gemini /app/.gemini` and `COPY .claude /app/.claude`).
 
 ### 2. Synchronizing Local Code Changes to Production Databases
-Because skills are in the Postgres database, modifying files inside your local workspace's `.gemini/skills` or `.claude/skills` directory will not automatically update a remote server. You can synchronize changes bidirectionally:
+Because resources are in the Postgres database, modifying files inside your local workspace's `.gemini/skills` or `.claude/skills` directory will not automatically update a remote server. You can synchronize skill changes bidirectionally:
 
 #### CLI Client Synchronizer
 From your workstation or a deploy script, run the Node.js helper to sync local skills to/from the remote server:
@@ -267,9 +270,12 @@ These environment variables configure MemoryOps. They can be placed in a `.env` 
 | `APP_PORT` | No | `8080` | Port the API server listens on. |
 | `APP_ENV` | No | `development` | Setting to `production` enforces strict secret key validation. |
 | `APP_SECRET_KEY` | **Yes** (in production) | — | Cryptographic key used to encrypt skill credentials. Must be stable across restarts. |
-| `WORKSPACE_CREATION_SECRET` | **Yes** (in production) | — | Secret token required to authenticate workspace creation requests (`x-admin-token`). |
+| `WORKSPACE_CREATION_SECRET` | Required only when workspace creation is enabled | — | Secret token required to authenticate workspace creation requests (`x-admin-token`). Rotate or remove after bootstrap. |
+| `WORKSPACE_CREATION_ENABLED` | No | `true` in local compose, `false` in production overlay | Set to `false` after initial bootstrap to disable `POST /v1/workspaces`. |
 | `SKIP_MIGRATIONS` | No | `false` | When set to `true`, bypasses database migrations on API server startup. |
 | `TRUSTED_PROXY_CIDRS` | No | `127.0.0.1/32` | Comma-separated CIDR blocks representing trusted reverse proxies. |
+
+For the complete production hardening checklist, see [security-production.md](security-production.md).
 | `MEMORYOPS_ALLOW_PRIVATE_IPS` | No | `false` | Set to `true` to allow skills to target internal/loopback IP addresses. |
 | `QDRANT_CHECK_COMPATIBILITY` | No | `false` | Bypasses major/minor version verification between client library and Qdrant database. |
 | `MCP_TRANSPORT` | No | `stdio` | Transport type for the MCP server (`stdio` or `http`). |

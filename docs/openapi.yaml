@@ -23,6 +23,7 @@ tags:
   - name: Export
   - name: Tags
   - name: Tools
+  - name: Agent Resources
   - name: Agent Skills
   - name: Contradictions
   - name: Health
@@ -542,7 +543,7 @@ paths:
       tags: [Workspaces]
       operationId: createWorkspace
       summary: Create a workspace
-      description: Creates a tenant workspace that owns memory, keys, integrations, and configuration. Requires the workspace creation secret in the x-admin-token header.
+      description: Creates a tenant workspace that owns memory, keys, integrations, and configuration. Requires the workspace creation secret in the x-admin-token header and is rejected when WORKSPACE_CREATION_ENABLED=false.
       security:
         - AdminTokenAuth: []
       requestBody:
@@ -552,7 +553,7 @@ paths:
             schema:
               $ref: '#/components/schemas/WorkspaceCreateRequest'
       responses:
-        '201':
+        '200':
           description: Workspace created
           content:
             application/json:
@@ -562,6 +563,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/workspaces/me:
     get:
       tags: [Workspaces]
@@ -1165,12 +1168,212 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/agent-resources:
+    get:
+      tags: [Agent Resources]
+      operationId: listAgentResources
+      summary: List versioned agent resources
+      description: Returns canonical Agent Library resources for the authenticated workspace. Resources include skills, agent profiles, prompts, and reusable instructions. Skill resources are limited to Claude and Gemini targets; other resource kinds may target generic, OpenAI, Claude, or Gemini agents.
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [skill, agent, prompt, instruction]
+        - name: assistant
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [generic, openai, claude, gemini]
+      responses:
+        '200':
+          description: Agent resource library
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentResourceSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Agent Resources]
+      operationId: createAgentResource
+      summary: Create a versioned agent resource
+      description: Creates v1 of a canonical Agent Library resource. The `(workspace_id, kind, assistant, name)` tuple must be unique. If `content` is omitted, markdown is rendered from `kind`, `title`, `description`, and `body`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentResourceRequest'
+      responses:
+        '200':
+          description: Agent resource created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/agent-resources/{kind}/{assistant}/{name}:
+    get:
+      tags: [Agent Resources]
+      operationId: getAgentResource
+      summary: Read one versioned agent resource
+      description: Reads the latest canonical Agent Library resource by kind, assistant target, and stable resource name.
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+      responses:
+        '200':
+          description: Agent resource
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Agent Resources]
+      operationId: updateAgentResource
+      summary: Update one agent resource and create a new version
+      description: Updates metadata, body, rendered content, title, or description and creates a new immutable version snapshot. Metadata-only updates preserve existing rendered content.
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAgentResourceRequest'
+      responses:
+        '200':
+          description: Agent resource updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Agent Resources]
+      operationId: deleteAgentResource
+      summary: Delete one agent resource
+      description: Deletes the current resource and its version history. Deleting a skill also removes the compatibility row from legacy `agent_skills`.
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+      responses:
+        '200':
+          description: Agent resource deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/agent-resources/{kind}/{assistant}/{name}/versions:
+    get:
+      tags: [Agent Resources]
+      operationId: listAgentResourceVersions
+      summary: List immutable versions for an agent resource
+      description: Returns immutable version snapshots newest first.
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+      responses:
+        '200':
+          description: Agent resource versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentResourceVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/agent-resources/{kind}/{assistant}/{name}/versions/{version}:
+    get:
+      tags: [Agent Resources]
+      operationId: getAgentResourceVersion
+      summary: Read one immutable agent resource version
+      description: Reads a single immutable version snapshot for a canonical Agent Library resource.
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+        - $ref: '#/components/parameters/AgentResourceVersionNumber'
+      responses:
+        '200':
+          description: Agent resource version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResourceVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/agent-resources/{kind}/{assistant}/{name}/versions/{version}/rollback:
+    post:
+      tags: [Agent Resources]
+      operationId: rollbackAgentResource
+      summary: Restore a prior agent resource version as a new version
+      description: Restores the selected version into the current resource and records the restoration as a new version. Existing version history is retained.
+      parameters:
+        - $ref: '#/components/parameters/AgentResourceKind'
+        - $ref: '#/components/parameters/AgentResourceAssistant'
+        - $ref: '#/components/parameters/AgentResourceName'
+        - $ref: '#/components/parameters/AgentResourceVersionNumber'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                change_note:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Agent resource restored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/agent-skills:
     get:
       tags: [Agent Skills]
       operationId: listAgentSkills
-      summary: List bundled agent skill files
-      description: Returns markdown-based agent skills discovered under `.claude/skills` and `.gemini/skills`.
+      summary: List legacy Claude/Gemini agent skills
+      description: Legacy compatibility endpoint backed by canonical `agent_resources` rows where `kind = skill` and `assistant` is `claude` or `gemini`. New integrations should prefer `/v1/agent-resources`.
       responses:
         '200':
           description: Agent skill library
@@ -1186,8 +1389,8 @@ paths:
     get:
       tags: [Agent Skills]
       operationId: getAgentSkill
-      summary: Read one bundled agent skill file
-      description: Returns the markdown contents for a single bundled agent skill file.
+      summary: Read one legacy Claude/Gemini agent skill
+      description: Legacy compatibility endpoint that returns the markdown contents of a canonical skill resource.
       parameters:
         - name: assistant
           in: path
@@ -1355,6 +1558,38 @@ paths:
                       $ref: '#/components/schemas/IntegrationHealth'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/integrations/{source}/sync:
+    post:
+      tags: [Workspaces]
+      operationId: startConnectorSync
+      summary: Start a connector sync
+      description: Triggers an API-based connector sync/backfill for the given integration source.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: source
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Source'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '202':
+          description: Sync started
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v1/workspaces/{id}/integrations/{source}:
     delete:
       tags: [Workspaces]
@@ -1449,11 +1684,31 @@ paths:
       tags: [Audit]
       operationId: listAuditLog
       summary: List audit entries
-      description: Returns cursor-paginated audit entries for workspace state changes.
+      description: >-
+        Returns cursor-paginated audit entries for workspace state changes.
+        Supports stable ordering by (occurred_at, id) and a rich set of
+        investigation filters. Payloads are redacted on read.
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
         - $ref: '#/components/parameters/After'
         - $ref: '#/components/parameters/Limit'
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 }, description: Legacy offset pagination; prefer cursor (after). }
+        - { name: actor, in: query, schema: { type: string } }
+        - { name: action, in: query, schema: { type: string }, description: Single action filter (back-compatible). }
+        - { name: actions, in: query, schema: { type: string }, description: Comma-separated list of actions. }
+        - { name: target_type, in: query, schema: { type: string } }
+        - { name: target_id, in: query, schema: { type: string, format: uuid } }
+        - { name: target_name, in: query, schema: { type: string } }
+        - { name: request_id, in: query, schema: { type: string } }
+        - { name: correlation_id, in: query, schema: { type: string } }
+        - { name: source_ip, in: query, schema: { type: string } }
+        - { name: severity, in: query, schema: { type: string }, description: Comma-separated severities. }
+        - { name: category, in: query, schema: { type: string }, description: Comma-separated categories. }
+        - { name: success, in: query, schema: { type: boolean } }
+        - { name: since, in: query, schema: { type: string, format: date-time }, description: Inclusive lower bound (alias of from). }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: q, in: query, schema: { type: string }, description: Free-text search across actor/target/request id/reason. }
       responses:
         '200':
           description: Audit entries
@@ -1463,6 +1718,91 @@ paths:
                 $ref: '#/components/schemas/AuditListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/audit/actions:
+    get:
+      tags: [Audit]
+      operationId: listAuditActions
+      summary: List known audit actions
+      description: Returns the catalog of audit actions, their categories, default severities, and whether each is a required (reliable) event.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Audit action catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditActionsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/audit/export:
+    get:
+      tags: [Audit]
+      operationId: exportAuditLog
+      summary: Export audit entries
+      description: >-
+        Exports filtered, redacted audit entries as JSONL (default) or CSV. The
+        same filters as the list endpoint apply. Results are bounded; if the cap
+        is hit the response carries `x-audit-export-truncated: true` and the
+        caller should narrow the date range. Exporting is itself audited.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - { name: format, in: query, schema: { type: string, enum: [jsonl, csv], default: jsonl } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: actions, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: severity, in: query, schema: { type: string } }
+        - { name: actor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Exported audit data
+          content:
+            application/x-ndjson:
+              schema: { type: string }
+            text/csv:
+              schema: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/audit/verify:
+    post:
+      tags: [Audit]
+      operationId: verifyAuditLog
+      summary: Verify audit hash chain
+      description: Recomputes and verifies the per-workspace tamper-evident HMAC hash chain.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditChainVerification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/workspaces/{id}/audit/{audit_id}:
+    get:
+      tags: [Audit]
+      operationId: getAuditEntry
+      summary: Get a single audit entry
+      description: Returns one redacted audit entry by id within the workspace.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - { name: audit_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Audit entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/workspaces/{id}/dlq:
     get:
       tags: [DLQ]
@@ -1751,6 +2091,37 @@ components:
       schema:
         type: integer
         minimum: 1
+    AgentResourceKind:
+      name: kind
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [skill, agent, prompt, instruction]
+    AgentResourceAssistant:
+      name: assistant
+      in: path
+      required: true
+      description: Target assistant runtime. Skill resources only allow `claude` or `gemini`; agents, prompts, and instructions allow all listed values.
+      schema:
+        type: string
+        enum: [generic, openai, claude, gemini]
+    AgentResourceName:
+      name: name
+      in: path
+      required: true
+      description: Stable lowercase resource identifier.
+      schema:
+        type: string
+        pattern: '^[a-z][a-z0-9_-]{0,63}$'
+        maxLength: 64
+    AgentResourceVersionNumber:
+      name: version
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
     FlagId:
       name: flag_id
       in: path
@@ -1899,8 +2270,13 @@ components:
           type: string
           enum: [message, app_mention]
         subtype:
-          type: [string, 'null']
-          enum: [message_changed, null]
+          # Expressed as oneOf rather than `enum: [message_changed, null]`: a
+          # literal null inside an enum is valid OpenAPI 3.1 but crashes some
+          # JSONPath-based linters. This form is semantically identical.
+          oneOf:
+            - type: string
+              enum: [message_changed]
+            - type: 'null'
         channel:
           type: string
         user:
@@ -1975,13 +2351,42 @@ components:
         - memory_unpinned
         - memory_promoted
         - memory_merged
+        - memory_embedded
+        - memory_hard_deleted
+        - memory_imported
+        - memory_exported
         - importance_overridden
         - key_created
         - key_revoked
+        - config_updated
         - workspace_config_updated
         - publish
+        - workspace.promote
+        - workspace_created
+        - workspace_bootstrap
+        - workspace_deleted
+        - workspace_reindexed
         - integration_added
+        - integration_updated
         - integration_removed
+        - integration_webhook_secret_changed
+        - contradiction_resolved
+        - contradiction_dismissed
+        - retrieval_feedback
+        - observation_ingested
+        - user_erasure
+        - tool_created
+        - tool_updated
+        - tool_deleted
+        - tool_rolled_back
+        - tool_invoked
+        - tool_secret_revealed
+        - agent_resource_created
+        - agent_resource_updated
+        - agent_resource_deleted
+        - agent_resource_rolled_back
+        - auth_failed
+        - audit_exported
     IntegrationStatus:
       type: string
       enum: [active, degraded, failing]
@@ -2577,8 +2982,7 @@ components:
         embedding_model:
           type: [string, 'null']
         decay_half_life_days:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
           minimum: 1
           maximum: 3650
           description: >
@@ -2586,9 +2990,8 @@ components:
             Defaults to 30 when null. Lower values cause faster decay.
           example: 30
         pruning_threshold:
-          type: number
+          type: [number, 'null']
           format: float
-          nullable: true
           minimum: 0.01
           maximum: 0.50
           description: >
@@ -2596,8 +2999,7 @@ components:
             Defaults to 0.10 when null.
           example: 0.10
         retention_max_age_days:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
           minimum: 1
           maximum: 3650
           description: >
@@ -2605,8 +3007,7 @@ components:
             Leave null to disable automatic retention purging.
           example: 365
         skill_version_retention_days:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
           minimum: 1
           maximum: 3650
           description: >
@@ -3012,6 +3413,171 @@ components:
                 type: string
               error:
                 type: string
+    AgentResourceSummary:
+      type: object
+      required: [id, workspace_id, kind, assistant, name, filename, title, description, metadata, version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [skill, agent, prompt, instruction]
+        assistant:
+          type: string
+          enum: [generic, openai, claude, gemini]
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          maxLength: 64
+        filename:
+          type: string
+        title:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        metadata:
+          type: object
+          additionalProperties: true
+          description: JSON object for source, ownership, seeded/default markers, tags, or runtime compatibility hints.
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AgentResource:
+      allOf:
+        - $ref: '#/components/schemas/AgentResourceSummary'
+        - type: object
+          required: [body, content]
+          properties:
+            body:
+              type: string
+              minLength: 1
+              maxLength: 100000
+            content:
+              type: string
+              minLength: 1
+              maxLength: 120000
+    AgentResourceVersion:
+      type: object
+      required: [id, resource_id, workspace_id, kind, assistant, name, filename, title, description, body, content, metadata, version, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        resource_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [skill, agent, prompt, instruction]
+        assistant:
+          type: string
+          enum: [generic, openai, claude, gemini]
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          maxLength: 64
+        filename:
+          type: string
+        title:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        body:
+          type: string
+          minLength: 1
+          maxLength: 100000
+        content:
+          type: string
+          minLength: 1
+          maxLength: 120000
+        metadata:
+          type: object
+          additionalProperties: true
+        version:
+          type: integer
+        change_note:
+          type: [string, 'null']
+        created_by:
+          type: [string, 'null']
+        created_at:
+          type: string
+          format: date-time
+    CreateAgentResourceRequest:
+      type: object
+      required: [kind, name, title, description, body]
+      properties:
+        kind:
+          type: string
+          enum: [skill, agent, prompt, instruction]
+        assistant:
+          type: string
+          enum: [generic, openai, claude, gemini]
+          description: Defaults to `claude` for skills and `generic` for agents, prompts, and instructions. Skills must target `claude` or `gemini`.
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          maxLength: 64
+        title:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        body:
+          type: string
+          minLength: 1
+          maxLength: 100000
+        content:
+          type: string
+          minLength: 1
+          maxLength: 120000
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Must be a JSON object.
+        change_note:
+          type: string
+          maxLength: 500
+    UpdateAgentResourceRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        body:
+          type: string
+          minLength: 1
+          maxLength: 100000
+        content:
+          type: string
+          minLength: 1
+          maxLength: 120000
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Must be a JSON object. Metadata-only updates preserve existing rendered content.
+        change_note:
+          type: string
+          maxLength: 500
     AgentSkill:
       type: object
       required: [name, filename, assistant, title, description]
@@ -3278,7 +3844,11 @@ components:
           format: date-time
     AuditEntry:
       type: object
-      required: [id, workspace_id, actor, action, target_id, target_type, occurred_at]
+      required: [id, workspace_id, actor, action, target_id, target_type, occurred_at, severity, success]
+      description: >-
+        A single audit record. All JSON payload fields (diff/before/after/metadata)
+        are recursively redacted and size-bounded before persistence and again on
+        read, so secret values are never present.
       properties:
         id:
           type: string
@@ -3295,22 +3865,131 @@ components:
           format: uuid
         target_type:
           type: string
-        diff:
-          type: [object, 'null']
-          additionalProperties: true
         occurred_at:
           type: string
           format: date-time
+        severity:
+          type: string
+          enum: [info, notice, warning, critical]
+        success:
+          type: boolean
+        category:
+          type: [string, 'null']
+        request_id:
+          type: [string, 'null']
+        correlation_id:
+          type: [string, 'null']
+        actor_type:
+          type: [string, 'null']
+        actor_id:
+          type: [string, 'null']
+        actor_display:
+          type: [string, 'null']
+        api_key_id:
+          type: [string, 'null']
+          format: uuid
+        api_key_prefix:
+          type: [string, 'null']
+        source_ip:
+          type: [string, 'null']
+        user_agent:
+          type: [string, 'null']
+        route:
+          type: [string, 'null']
+        method:
+          type: [string, 'null']
+        status_code:
+          type: [integer, 'null']
+        reason:
+          type: [string, 'null']
+        target_name:
+          type: [string, 'null']
+        target_version:
+          type: [integer, 'null']
+        error_code:
+          type: [string, 'null']
+        diff:
+          type: [object, 'null']
+          additionalProperties: true
+        before:
+          type: [object, 'null']
+          additionalProperties: true
+        after:
+          type: [object, 'null']
+          additionalProperties: true
+        metadata:
+          type: [object, 'null']
+          additionalProperties: true
+        seq:
+          type: [integer, 'null']
+          format: int64
+          description: Per-workspace hash-chain sequence number (null for legacy rows).
+        prev_hash:
+          type: [string, 'null']
+        hash:
+          type: [string, 'null']
+          description: HMAC-SHA256 over the canonical row + prev_hash (tamper-evidence).
     AuditListResponse:
       type: object
-      required: [items]
+      required: [items, limit, offset]
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/AuditEntry'
+        limit:
+          type: integer
+        offset:
+          type: integer
         next_cursor:
           type: [string, 'null']
+    AuditActionInfo:
+      type: object
+      required: [name, category, default_severity, required]
+      properties:
+        name:
+          type: string
+        category:
+          type: string
+        default_severity:
+          type: string
+          enum: [info, notice, warning, critical]
+        required:
+          type: boolean
+          description: Whether this action uses the reliable (synchronous) write path.
+    AuditActionsResponse:
+      type: object
+      required: [actions, severities, categories]
+      properties:
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditActionInfo'
+        severities:
+          type: array
+          items:
+            type: string
+        categories:
+          type: array
+          items:
+            type: string
+    AuditChainVerification:
+      type: object
+      required: [enabled, verified, checked, message]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the tamper-evident hash chain is active (signing key configured).
+        verified:
+          type: boolean
+        checked:
+          type: integer
+          format: int64
+        first_broken_seq:
+          type: [integer, 'null']
+          format: int64
+        message:
+          type: string
     DlqJob:
       type: object
       required: [job_id, payload_summary, error, retry_count, failed_at]

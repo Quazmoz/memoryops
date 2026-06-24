@@ -607,8 +607,8 @@ mod tests {
         std::env::remove_var("_TEST_OLLAMA_KEY_MEMORYOPS");
         assert!(cfg.resolve_api_key().is_none());
 
-        std::env::set_var("_TEST_OLLAMA_KEY_MEMORYOPS", "sk-test");
-        assert_eq!(cfg.resolve_api_key().as_deref(), Some("sk-test"));
+        std::env::set_var("_TEST_OLLAMA_KEY_MEMORYOPS", "test-provider-key");
+        assert_eq!(cfg.resolve_api_key().as_deref(), Some("test-provider-key"));
         std::env::remove_var("_TEST_OLLAMA_KEY_MEMORYOPS");
     }
 

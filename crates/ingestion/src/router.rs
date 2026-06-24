@@ -4,6 +4,8 @@ use tower_http::trace::TraceLayer;
 
 use crate::{github, jira, linear, observation, slack};
 
+pub const MAX_WEBHOOK_BODY_BYTES: usize = 1024 * 1024;
+
 pub fn ingestion_router() -> Router<AppState> {
     Router::new()
         .route(
@@ -22,6 +24,7 @@ pub fn ingestion_router() -> Router<AppState> {
             "/v1/ingest/jira/{workspace_id}",
             post(jira::handler::handle_jira_webhook),
         )
+        .layer(DefaultBodyLimit::max(MAX_WEBHOOK_BODY_BYTES))
         .layer(TraceLayer::new_for_http())
 }
 
@@ -43,5 +46,10 @@ mod tests {
     #[test]
     fn router_builds() {
         let _router = ingestion_router();
+    }
+
+    #[test]
+    fn webhook_body_limit_is_explicit() {
+        assert_eq!(MAX_WEBHOOK_BODY_BYTES, 1024 * 1024);
     }
 }

@@ -56,6 +56,7 @@ struct InvokeSkillRow {
     circuit_breaker_cooldown_seconds: i32,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn invoke_workspace_skill(
     state: &AppState,
     workspace_id: Uuid,
@@ -342,6 +343,8 @@ fn reject_forbidden_ip(ip: IpAddr) -> AppResult<()> {
                 || v4.is_link_local()
                 || v4.is_broadcast()
                 || v4.is_documentation()
+                || is_ipv4_shared_address(v4)
+                || is_ipv4_this_network(v4)
                 || v4.is_unspecified()
                 || v4.is_multicast()
             {
@@ -351,7 +354,13 @@ fn reject_forbidden_ip(ip: IpAddr) -> AppResult<()> {
             }
         }
         IpAddr::V6(v6) => {
-            if v6.is_loopback() || v6.is_multicast() || v6.is_unspecified() {
+            if v6.is_loopback()
+                || v6.is_multicast()
+                || v6.is_unspecified()
+                || is_ipv6_unique_local(v6)
+                || is_ipv6_unicast_link_local(v6)
+                || is_ipv6_documentation(v6)
+            {
                 return Err(AppError::Validation(
                     "tool endpoint_url resolves to a forbidden address".to_owned(),
                 ));
@@ -362,6 +371,27 @@ fn reject_forbidden_ip(ip: IpAddr) -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+fn is_ipv4_shared_address(ip: std::net::Ipv4Addr) -> bool {
+    let [first, second, _, _] = ip.octets();
+    first == 100 && (64..=127).contains(&second)
+}
+
+fn is_ipv4_this_network(ip: std::net::Ipv4Addr) -> bool {
+    ip.octets()[0] == 0
+}
+
+fn is_ipv6_unique_local(ip: std::net::Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xfe00) == 0xfc00
+}
+
+fn is_ipv6_unicast_link_local(ip: std::net::Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xffc0) == 0xfe80
+}
+
+fn is_ipv6_documentation(ip: std::net::Ipv6Addr) -> bool {
+    ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8
 }
 
 async fn read_skill_response_body(mut response: reqwest::Response) -> Value {
@@ -389,4 +419,41 @@ async fn read_skill_response_body(mut response: reqwest::Response) -> Value {
 
     serde_json::from_slice::<Value>(&bytes)
         .unwrap_or_else(|_| json!({ "error": "response was not JSON" }))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[tokio::test]
+    async fn validate_endpoint_url_dns_rejects_internal_ip_literals() {
+        for url in [
+            "https://127.0.0.1/api",
+            "https://10.0.0.1/api",
+            "https://172.17.0.1/api",
+            "https://192.168.1.1/api",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://100.64.0.1/api",
+            "https://0.1.2.3/api",
+            "https://[::1]/api",
+            "https://[fc00::1]/api",
+            "https://[fe80::1]/api",
+            "https://[2001:db8::1]/api",
+            "https://[::ffff:10.0.0.1]/api",
+        ] {
+            assert!(
+                validate_endpoint_url_dns(url, false).await.is_err(),
+                "{url}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_endpoint_url_dns_allows_private_ips_when_configured() {
+        assert!(validate_endpoint_url_dns("https://127.0.0.1/api", true)
+            .await
+            .is_ok());
+    }
 }

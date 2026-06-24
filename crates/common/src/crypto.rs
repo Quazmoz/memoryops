@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip() {
-        let plaintext = "sk-ant-api-test-secret";
+        let plaintext = "test-provider-secret";
         let encrypted = match encrypt_secret(TEST_KEY, plaintext) {
             Ok(encrypted) => encrypted,
             Err(error) => panic!("encrypt should succeed: {error}"),

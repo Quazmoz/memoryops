@@ -123,7 +123,8 @@ pub async fn run(
         .load(workspace_id)
         .await?;
     request.apply_workspace_config(&workspace_config);
-    let results = hybrid::hybrid_search_with_config(state, &request, limit, &workspace_config).await?;
+    let results =
+        hybrid::hybrid_search_with_config(state, &request, limit, &workspace_config).await?;
     let min_score = input.min_score.max(0.0);
     let token_budget = state.config.retrieval.default_token_budget;
 
@@ -301,7 +302,10 @@ mod tests {
 
     #[test]
     fn normalize_scope_value_trims_and_drops_empty_values() {
-        assert_eq!(normalize_scope_value(Some(" user-1 ".to_owned())).as_deref(), Some("user-1"));
+        assert_eq!(
+            normalize_scope_value(Some(" user-1 ".to_owned())).as_deref(),
+            Some("user-1")
+        );
         assert!(normalize_scope_value(Some("   ".to_owned())).is_none());
         assert!(normalize_scope_value(None).is_none());
     }

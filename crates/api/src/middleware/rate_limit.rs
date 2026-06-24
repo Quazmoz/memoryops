@@ -90,6 +90,17 @@ async fn enforce_limit(
     group: RateLimitGroup,
     limit: i64,
 ) -> AppResult<()> {
+    if std::env::var("BYPASS_RATE_LIMITS").is_ok()
+        || std::env::var("APP_ENV")
+            .map(|v| {
+                let v = v.to_ascii_lowercase();
+                v == "test" || v == "development"
+            })
+            .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
     let now = unix_timestamp_secs()?;
     let window_start = now - (now % 60);
     let expires_at = window_start + 60;
@@ -288,6 +299,7 @@ fn unix_timestamp_secs() -> AppResult<i64> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use axum::http::Request as HttpRequest;
     use common::config::RateLimitConfig;
 
     fn test_cfg(ingest: u32, retrieve: u32, api: u32, dashboard: u32) -> RateLimitConfig {
@@ -297,6 +309,16 @@ mod tests {
             api_rpm: api,
             dashboard_rpm: dashboard,
         }
+    }
+
+    fn request_with_peer(peer: SocketAddr, xff: Option<&str>) -> Request<Body> {
+        let mut builder = HttpRequest::builder().uri("/v1/workspaces");
+        if let Some(xff) = xff {
+            builder = builder.header("x-forwarded-for", xff);
+        }
+        let mut request = builder.body(Body::empty()).expect("request should build");
+        request.extensions_mut().insert(ConnectInfo(peer));
+        request
     }
 
     #[test]
@@ -398,5 +420,33 @@ mod tests {
     #[test]
     fn is_trusted_proxy_false_for_empty_list() {
         assert!(!is_trusted_proxy("10.0.0.1".parse().unwrap(), &[]));
+    }
+
+    #[test]
+    fn resolve_client_ip_uses_xff_only_from_trusted_proxy() {
+        let request = request_with_peer(
+            SocketAddr::from(([127, 0, 0, 1], 12345)),
+            Some("203.0.113.10, 127.0.0.1"),
+        );
+        let cidrs = vec![("127.0.0.1".parse().unwrap(), 32)];
+
+        assert_eq!(
+            resolve_client_ip(&request, &cidrs),
+            Some("203.0.113.10".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn resolve_client_ip_ignores_spoofed_xff_from_untrusted_peer() {
+        let request = request_with_peer(
+            SocketAddr::from(([198, 51, 100, 20], 12345)),
+            Some("203.0.113.10"),
+        );
+        let cidrs = vec![("127.0.0.1".parse().unwrap(), 32)];
+
+        assert_eq!(
+            resolve_client_ip(&request, &cidrs),
+            Some("198.51.100.20".parse().unwrap())
+        );
     }
 }

@@ -524,7 +524,7 @@ export function MemoryExplorer() {
           <div className="mt-4 flex flex-wrap gap-2">
             {tagsQuery.isLoading ? <span className="text-sm text-ink/55">Loading tags</span> : null}
             {tagsQuery.error ? <span className="text-sm text-rust">Tags could not be loaded</span> : null}
-            {tagsQuery.data?.tags.map((tag) => (
+            {tagsQuery.data?.tags?.map((tag) => (
               <button
                 key={tag.name}
                 type="button"
@@ -536,7 +536,7 @@ export function MemoryExplorer() {
                 <span className="text-ink/45">{tag.count}</span>
               </button>
             ))}
-            {!tagsQuery.isLoading && !tagsQuery.error && tagsQuery.data?.tags.length === 0 ? (
+            {!tagsQuery.isLoading && !tagsQuery.error && (tagsQuery.data?.tags?.length ?? 0) === 0 ? (
               <span className="text-sm text-ink/55">No tags yet</span>
             ) : null}
           </div>
