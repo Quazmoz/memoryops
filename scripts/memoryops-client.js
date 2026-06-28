@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 // Resolve configuration from environment or local config file
 let apiKey = process.env.MEMORYOPS_API_KEY;
@@ -21,7 +22,7 @@ function loadLocalCredentials() {
           apiUrl: content.api_url || content.apiUrl
         };
       } catch (err) {
-        // Ignore JSON parse errors and continue looking upward
+        // Ignore JSON parse errors and continue looking upward.
       }
     }
     const parent = path.dirname(dir);
@@ -31,7 +32,7 @@ function loadLocalCredentials() {
   return null;
 }
 
-// Fallback to local configuration file if env vars are not set
+// Fallback to local configuration file if env vars are not set.
 if (!apiKey || !workspaceId || !process.env.MEMORYOPS_API_URL) {
   const creds = loadLocalCredentials();
   if (creds) {
@@ -59,11 +60,13 @@ Commands:
 
 Context options:
   --out <file>             Write context to a file, for example .memoryops/context.md
+  --prompt-out <file>      Write a companion prompt for the selected client
   --format <markdown|json> Output format for context (default: markdown)
+  --client <name>          Target client: generic, aider, aider-desk, opencode (default: generic)
   --token-budget <tokens>  Retrieval packing budget (default: server config)
   --agent-id <id>          Scope retrieval to an agent id
   --user-id <id>           Scope retrieval to a user id
-  --repo <owner/name>      Scope retrieval to a repository
+  --repo <owner/name|auto> Scope retrieval to a repository; auto reads git origin
   --workspace-pool         Include shared workspace pool memories
   --no-master-memory       Exclude master memory inheritance
   --include-trace          Include retrieval trace when using --format json
@@ -150,6 +153,77 @@ function parseFlags(rawArgs) {
   return { positional, flags };
 }
 
+function inferGitHubRepo() {
+  try {
+    const remote = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim();
+
+    const patterns = [
+      /^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/,
+      /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?(?:\/)?$/
+    ];
+
+    for (const pattern of patterns) {
+      const match = remote.match(pattern);
+      if (match) return match[1];
+    }
+  } catch (err) {
+    // Git may not be installed or the current directory may not be a git repository.
+  }
+  return null;
+}
+
+function normalizeClient(client) {
+  const normalized = (client || 'generic').toLowerCase();
+  const aliases = {
+    aiderdesk: 'aider-desk',
+    aider: 'aider',
+    'aider-desk': 'aider-desk',
+    opencode: 'opencode',
+    generic: 'generic'
+  };
+  return aliases[normalized] || 'generic';
+}
+
+function safeFence(content) {
+  const text = content || '';
+  const matches = text.match(/`+/g) || [];
+  const longest = matches.reduce((max, value) => Math.max(max, value.length), 0);
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  return `${fence}text\n${text}\n${fence}`;
+}
+
+function clientInstructions(client, contextPath) {
+  const displayPath = contextPath || '.memoryops/context.md';
+  switch (client) {
+    case 'aider':
+    case 'aider-desk':
+      return [
+        `- Add ${displayPath} as read-only context, not as an editable file.`,
+        '- Terminal Aider: use `aider --read .memoryops/context.md <files-to-edit>` or `/read-only .memoryops/context.md` inside the session.',
+        '- AiderDesk: attach or add the context file as reference-only context if the UI supports it.',
+        '- Prefer current repository files over stale memories when they conflict.',
+        '- Store only durable follow-up decisions back into MemoryOps; never store secrets.'
+      ];
+    case 'opencode':
+      return [
+        '- Prefer the MemoryOps MCP tools when OpenCode MCP is configured.',
+        `- When MCP is unavailable, reference ${displayPath} as retrieved MemoryOps context.`,
+        '- Treat current repository files as source of truth when they conflict with memory.',
+        '- Store only durable follow-up decisions back into MemoryOps; never store secrets.'
+      ];
+    default:
+      return [
+        '- Treat this file as retrieved context, not as source code to edit.',
+        '- Prefer current repository files over stale memories when they conflict.',
+        '- Store only durable follow-up decisions back into MemoryOps; never store secrets.'
+      ];
+  }
+}
+
 function formatContextMarkdown(response, query, options = {}) {
   const memories = Array.isArray(response.memories) ? response.memories : [];
   const lines = [
@@ -157,7 +231,9 @@ function formatContextMarkdown(response, query, options = {}) {
     '',
     `Query: ${query}`,
     `Workspace: ${workspaceId}`,
+    `Client: ${options.client || 'generic'}`,
     `Generated: ${new Date().toISOString()}`,
+    `Memories: ${memories.length}`,
     `Total tokens: ${response.total_tokens ?? 'unknown'}`,
     ''
   ];
@@ -191,23 +267,46 @@ function formatContextMarkdown(response, query, options = {}) {
         .join(', ');
       if (entities) lines.push(`- Entities: ${entities}`);
     }
-    lines.push('', '```text', memory.content || '', '```', '');
+    lines.push('', safeFence(memory.content), '');
   });
 
   lines.push('## Agent Instructions', '');
-  lines.push('- Treat this file as retrieved context, not as source code to edit.');
-  lines.push('- Prefer current repository files over stale memories when they conflict.');
-  lines.push('- Store only durable follow-up decisions back into MemoryOps; never store secrets.');
+  lines.push(...clientInstructions(options.client, options.contextPath));
   lines.push('');
 
   return lines.join('\n');
+}
+
+function buildCompanionPrompt(client, contextPath) {
+  const displayPath = contextPath || '.memoryops/context.md';
+  switch (client) {
+    case 'aider':
+    case 'aider-desk':
+      return [
+        `/read-only ${displayPath}`,
+        '',
+        'Use the MemoryOps context file as reference-only memory. Treat current repository files as the source of truth when they conflict with memory. Make the requested code changes with minimal blast radius. After finishing, summarize only durable decisions, migrations, conventions, or root causes that should be stored back into MemoryOps. Do not store secrets or transient steps.',
+        ''
+      ].join('\n');
+    case 'opencode':
+      return [
+        `Use ${displayPath} as retrieved MemoryOps context if MCP tools are unavailable. If MemoryOps MCP tools are configured, query them before editing. Treat current repository files as the source of truth when they conflict with memory. After finishing, store only durable decisions, root causes, and reusable implementation notes. Never store secrets or transient scratch work.`,
+        ''
+      ].join('\n');
+    default:
+      return [
+        `Use ${displayPath} as retrieved MemoryOps context. Treat current repository files as source of truth when they conflict with memory. Store only durable decisions, root causes, and reusable implementation notes back into MemoryOps. Never store secrets or transient scratch work.`,
+        ''
+      ].join('\n');
+  }
 }
 
 function writeOutput(outputPath, content) {
   const fullPath = path.resolve(process.cwd(), outputPath);
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
   fs.writeFileSync(fullPath, content, 'utf8');
-  console.log(`Wrote MemoryOps context to ${path.relative(process.cwd(), fullPath) || fullPath}`);
+  console.log(`Wrote MemoryOps file to ${path.relative(process.cwd(), fullPath) || fullPath}`);
+  return fullPath;
 }
 
 async function run() {
@@ -216,7 +315,7 @@ async function run() {
       case 'retrieve': {
         const query = args[1];
         if (!query) {
-          console.error("Error: Please provide a search query.");
+          console.error('Error: Please provide a search query.');
           process.exit(1);
         }
         const endpoint = `/v1/memory?workspace_id=${workspaceId}&query=${encodeURIComponent(query)}`;
@@ -228,23 +327,39 @@ async function run() {
         const { positional, flags } = parseFlags(args.slice(1));
         const query = positional[0];
         if (!query) {
-          console.error("Error: Please provide a context query.");
+          console.error('Error: Please provide a context query.');
           process.exit(1);
         }
 
+        const format = flags.format || 'markdown';
+        if (!['markdown', 'json'].includes(format)) {
+          console.error('Error: --format must be markdown or json.');
+          process.exit(1);
+        }
+
+        const client = normalizeClient(flags.client);
         const tokenBudget = flags['token-budget'] ? Number.parseInt(flags['token-budget'], 10) : undefined;
         if (flags['token-budget'] && (!Number.isInteger(tokenBudget) || tokenBudget <= 0)) {
           console.error('Error: --token-budget must be a positive integer.');
           process.exit(1);
         }
 
+        let repo = flags.repo;
+        if (repo === 'auto') {
+          repo = inferGitHubRepo();
+          if (!repo) {
+            console.error('Error: --repo auto could not infer a GitHub owner/name from git remote origin.');
+            process.exit(1);
+          }
+        }
+
         const payload = {
           query,
           workspace_id: workspaceId,
           token_budget: tokenBudget,
-          agent_id: flags['agent-id'],
+          agent_id: flags['agent-id'] || (client !== 'generic' ? client : undefined),
           user_id: flags['user-id'],
-          repo: flags.repo,
+          repo,
           include_trace: Boolean(flags['include-trace']),
           include_workspace_pool: Boolean(flags['workspace-pool']),
           include_master_memory: !flags['no-master-memory']
@@ -255,31 +370,31 @@ async function run() {
         });
 
         const res = await apiRequest('POST', '/v1/retrieve', payload);
-        const format = flags.format || 'markdown';
         const output = format === 'json'
           ? `${JSON.stringify(res, null, 2)}\n`
           : formatContextMarkdown(res, query, {
-              agentId: flags['agent-id'],
+              agentId: payload.agent_id,
               userId: flags['user-id'],
-              repo: flags.repo
+              repo,
+              client,
+              contextPath: flags.out
             });
-
-        if (!['markdown', 'json'].includes(format)) {
-          console.error('Error: --format must be markdown or json.');
-          process.exit(1);
-        }
 
         if (flags.out) {
           writeOutput(flags.out, output);
         } else {
           console.log(output);
         }
+
+        if (flags['prompt-out']) {
+          writeOutput(flags['prompt-out'], buildCompanionPrompt(client, flags.out));
+        }
         break;
       }
       case 'store': {
         const content = args[1];
         if (!content) {
-          console.error("Error: Please provide the memory content.");
+          console.error('Error: Please provide the memory content.');
           process.exit(1);
         }
         const tags = args.slice(2);
@@ -298,7 +413,7 @@ async function run() {
       case 'observe': {
         const content = args[1];
         if (!content) {
-          console.error("Error: Please provide the observation content.");
+          console.error('Error: Please provide the observation content.');
           process.exit(1);
         }
         const tags = args.slice(2);
@@ -319,10 +434,10 @@ async function run() {
         break;
       }
       case 'sync-skills': {
-        console.log("Fetching agent skills from server...");
+        console.log('Fetching agent skills from server...');
         const skills = await apiRequest('GET', '/v1/agent-skills');
         if (!Array.isArray(skills)) {
-          console.error("Error: Server did not return an array of skills.");
+          console.error('Error: Server did not return an array of skills.');
           process.exit(1);
         }
         console.log(`Found ${skills.length} skills on server. Syncing to local folders...`);
@@ -335,7 +450,7 @@ async function run() {
           fs.writeFileSync(path.join(dir, filename), detail.content);
           console.log(`Successfully synced ${assistant} skill: ${name} to ${filename}`);
         }
-        console.log("Sync complete!");
+        console.log('Sync complete!');
         break;
       }
       default:
