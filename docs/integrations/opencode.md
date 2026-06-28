@@ -1,12 +1,15 @@
 # OpenCode Integration
 
-OpenCode can use MemoryOps through the MCP server when your OpenCode build supports MCP configuration. Use the REST context export workflow as the fallback for builds or environments where MCP is unavailable.
+OpenCode can use MemoryOps through MCP when your OpenCode build supports MCP configuration. OpenCode configuration uses the top-level `mcp` object, with MCP server entries configured as `type: "remote"` for HTTP servers or `type: "local"` for command-started stdio servers.
+
+Use the REST context export workflow as the fallback when MCP is unavailable or when you want a one-shot context file for a specific coding task.
 
 ## Prerequisites
 
 - MemoryOps API is running on `http://localhost:8080` or another reachable URL.
-- MemoryOps MCP server is running on `http://localhost:3003/mcp` when using HTTP transport.
+- MemoryOps MCP server is running on `http://localhost:3003/mcp` when using remote/HTTP MCP.
 - You have a MemoryOps workspace API key.
+- OpenCode can read either a project `opencode.json` / `opencode.jsonc` file or a global config under `~/.config/opencode/opencode.json`.
 
 Start the containerized MCP server:
 
@@ -14,71 +17,88 @@ Start the containerized MCP server:
 docker compose up -d mcp
 ```
 
-Or run it locally with stdio transport:
+Set your MemoryOps API key in the shell that starts OpenCode:
 
 ```bash
-MEMORYOPS_API_URL=http://localhost:8080 \
-MEMORYOPS_API_KEY=YOUR_MEMORYOPS_API_KEY \
-MEMORYOPS_WORKSPACE_ID=YOUR_WORKSPACE_ID \
-MCP_TRANSPORT=stdio \
-cargo run -p mcp
+export MEMORYOPS_API_KEY="YOUR_MEMORYOPS_API_KEY"
 ```
 
-## HTTP MCP configuration
+PowerShell:
 
-Use HTTP MCP when OpenCode accepts remote MCP server definitions:
+```powershell
+$env:MEMORYOPS_API_KEY = "YOUR_MEMORYOPS_API_KEY"
+```
 
-```json
+## Remote HTTP MCP configuration
+
+Use this when MemoryOps MCP is already running as an HTTP service, including the Docker Compose `mcp` service.
+
+Create or update `opencode.jsonc` in the project root:
+
+```jsonc
 {
-  "mcpServers": {
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
     "memoryops": {
-      "type": "http",
+      "type": "remote",
       "url": "http://localhost:3003/mcp",
+      "enabled": true,
+      "oauth": false,
       "headers": {
-        "Authorization": "Bearer YOUR_MEMORYOPS_API_KEY"
-      }
+        "Authorization": "Bearer {env:MEMORYOPS_API_KEY}"
+      },
+      "timeout": 10000
     }
   }
 }
 ```
 
-Keep this config local. Do not commit API keys.
+Why this shape:
 
-## Stdio MCP configuration
+- `type: "remote"` is the OpenCode config type for HTTP MCP servers.
+- `oauth: false` prevents OpenCode from trying an OAuth flow for a local API-key-protected server.
+- `{env:MEMORYOPS_API_KEY}` keeps secrets out of the repository config.
 
-Use stdio MCP when OpenCode starts MCP servers as local commands:
+Prompt OpenCode with an explicit tool hint when needed:
 
-```json
+```text
+Before editing, use memoryops to retrieve repo conventions, recent architectural decisions, and known failure modes.
+```
+
+## Local stdio MCP configuration
+
+Use this when you want OpenCode to start the MemoryOps MCP server as a local process.
+
+```jsonc
 {
-  "mcpServers": {
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
     "memoryops": {
-      "command": "memoryops-mcp",
-      "args": [],
-      "env": {
+      "type": "local",
+      "command": ["cargo", "run", "-p", "mcp"],
+      "cwd": "/absolute/path/to/memoryops",
+      "enabled": true,
+      "environment": {
         "MEMORYOPS_API_URL": "http://localhost:8080",
         "MEMORYOPS_WORKSPACE_ID": "YOUR_WORKSPACE_ID",
-        "MEMORYOPS_API_KEY": "YOUR_MEMORYOPS_API_KEY",
+        "MEMORYOPS_API_KEY": "{env:MEMORYOPS_API_KEY}",
         "MCP_TRANSPORT": "stdio"
-      }
+      },
+      "timeout": 10000
     }
   }
 }
 ```
 
-If `memoryops-mcp` is not on PATH, replace the command with `cargo` and use args similar to:
+If you install or build a `memoryops-mcp` binary and put it on PATH, replace the command with:
 
-```json
-{
-  "command": "cargo",
-  "args": ["run", "-p", "mcp"]
-}
+```jsonc
+"command": ["memoryops-mcp"]
 ```
-
-Run that from the MemoryOps repository root.
 
 ## Recommended OpenCode operating rule
 
-Add this to your OpenCode project instructions:
+Add this to your OpenCode project instructions or `AGENTS.md`:
 
 ```text
 Before project-specific code changes, query MemoryOps for repository conventions, recent architectural decisions, and known failure modes. Use returned memory as supporting context, not as a replacement for reading current files. After changes, store only durable decisions, root causes, and reusable implementation notes. Never store secrets, private reasoning, or transient task steps.
@@ -86,15 +106,16 @@ Before project-specific code changes, query MemoryOps for repository conventions
 
 ## Fallback: REST context export
 
-When MCP is not available, export a context file and attach or reference it in the OpenCode session:
+When MCP is not available, export a context file and reference it in the OpenCode session:
 
 ```bash
 node /path/to/memoryops/scripts/memoryops-client.js context \
   "What MemoryOps context matters for this OpenCode task?" \
-  --agent-id opencode \
-  --repo Quazmoz/memoryops \
+  --client opencode \
+  --repo auto \
   --token-budget 3000 \
-  --out .memoryops/context.md
+  --out .memoryops/context.md \
+  --prompt-out .memoryops/opencode-prompt.txt
 ```
 
 Then tell OpenCode:
@@ -119,4 +140,15 @@ curl -s http://localhost:8080/v1/retrieve \
   }' | jq
 ```
 
-If this works but OpenCode cannot connect, the issue is likely in the MCP client config path, JSON shape, or process environment rather than MemoryOps itself.
+If this works but OpenCode cannot connect, the issue is likely in the OpenCode config path, JSON shape, process environment, or MCP transport selection rather than MemoryOps itself.
+
+## Debugging OpenCode MCP
+
+Run:
+
+```bash
+opencode mcp list
+opencode mcp debug memoryops
+```
+
+For remote HTTP MCP, check that `MEMORYOPS_API_KEY` exists in the same shell/session that starts OpenCode. For local stdio MCP, check that `cwd` points to the MemoryOps repository and that `cargo run -p mcp` works from that directory.
