@@ -2,9 +2,9 @@
 
 This guide gets MemoryOps running on Windows for local testing and agent integrations such as AiderDesk, Aider, OpenCode, Claude Code, VS Code, and Open WebUI.
 
-The recommended Windows path is Docker Desktop + WSL 2. Native Windows development can work, but Docker avoids most Postgres, Redis, Qdrant, OpenSSL, and Rust linker friction.
+The recommended Windows path is Docker Desktop with the WSL 2 backend. Native Windows development can work, but Docker avoids most Postgres, Redis, Qdrant, OpenSSL, and Rust linker friction.
 
-## Recommended prerequisites
+## Prerequisites
 
 Install:
 
@@ -12,8 +12,8 @@ Install:
 - Docker Desktop with the WSL 2 backend.
 - Git for Windows.
 - Node.js 20+.
-- Rust stable only if you plan to run crates outside Docker.
 - PowerShell 7+ recommended.
+- Rust stable only if you plan to run crates outside Docker.
 
 Confirm the basics:
 
@@ -32,29 +32,24 @@ cd memoryops
 Copy-Item .env.example .env
 ```
 
-Edit `.env` and set at least:
+Edit `.env` and set:
 
 ```text
 APP_SECRET_KEY=replace-with-a-long-random-string
 WORKSPACE_CREATION_SECRET=replace-with-a-long-random-string
 ```
 
-Generate quick local secrets from PowerShell:
+Generate a quick local random value:
 
 ```powershell
 [guid]::NewGuid().ToString() + [guid]::NewGuid().ToString()
 ```
 
-## Start MemoryOps with Docker
+## Start MemoryOps
 
 ```powershell
 docker compose build --no-cache api mcp frontend
 docker compose up -d
-```
-
-Check containers:
-
-```powershell
 docker compose ps
 ```
 
@@ -84,13 +79,13 @@ Run bootstrap:
 node scripts/bootstrap.mjs
 ```
 
-Save the returned `workspace_id` and `api_key`. The API key is returned once.
+Save the returned workspace id and workspace key. The workspace key is returned once.
 
 ## Seed demo data
 
 ```powershell
 $env:WORKSPACE_ID = "YOUR_WORKSPACE_ID"
-$env:API_KEY = "YOUR_MEMORYOPS_API_KEY"
+$env:API_KEY = "YOUR_MEMORYOPS_WORKSPACE_KEY"
 node scripts/seed.mjs
 ```
 
@@ -100,7 +95,7 @@ Open the UI:
 Start-Process http://localhost:5173
 ```
 
-## Configure local agent credentials
+## Configure agent credentials locally
 
 For AiderDesk, Aider, OpenCode fallback mode, or CLI scripts, create a local-only config in the target repository:
 
@@ -109,12 +104,12 @@ For AiderDesk, Aider, OpenCode fallback mode, or CLI scripts, create a local-onl
 {
   "api_url": "http://localhost:8080",
   "workspace_id": "YOUR_WORKSPACE_ID",
-  "api_key": "YOUR_MEMORYOPS_API_KEY"
+  "api_key": "YOUR_MEMORYOPS_WORKSPACE_KEY"
 }
 '@ | Set-Content .memoryops.local.json
 ```
 
-Add it to `.gitignore`:
+Add local generated files to `.gitignore`:
 
 ```powershell
 Add-Content .gitignore "`n.memoryops.local.json`n.memoryops/"
@@ -124,32 +119,32 @@ Export context for a non-MCP coding agent:
 
 ```powershell
 New-Item -ItemType Directory -Force .memoryops | Out-Null
-node C:\path\to\memoryops\scripts\memoryops-client.js context `
+node ./scripts/memoryops-client.js context `
   "What repository context should the coding agent know before this task?" `
-  --agent-id aider `
+  --client aider `
+  --repo auto `
   --token-budget 3000 `
-  --out .memoryops/context.md
+  --out .memoryops/context.md `
+  --prompt-out .memoryops/aider-prompt.txt
 ```
 
-## OpenCode or other MCP client on Windows
+For terminal Aider, use the generated file as read-only context:
 
-For Docker-hosted MemoryOps, prefer HTTP MCP:
-
-```json
-{
-  "mcpServers": {
-    "memoryops": {
-      "type": "http",
-      "url": "http://localhost:3003/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_MEMORYOPS_API_KEY"
-      }
-    }
-  }
-}
+```powershell
+aider --read .memoryops/context.md --load .memoryops/aider-prompt.txt <files-to-edit>
 ```
 
-Use the client-specific config file path for your MCP client and keep credentials out of git.
+For AiderDesk, attach `.memoryops/context.md` as read-only or reference context when the UI supports it.
+
+## OpenCode on Windows
+
+For Docker-hosted MemoryOps, use the OpenCode remote MCP config from [docs/integrations/opencode.md](integrations/opencode.md). That guide has the canonical `opencode.jsonc` shape for OpenCode's `mcp` config object.
+
+Use the same workspace key in the shell that starts OpenCode:
+
+```powershell
+$env:MEMORYOPS_API_KEY = "YOUR_MEMORYOPS_WORKSPACE_KEY"
+```
 
 ## Troubleshooting
 
@@ -158,9 +153,10 @@ Use the client-specific config file path for your MCP client and keep credential
 | Docker says virtualization is disabled | Enable virtualization in BIOS/UEFI and ensure WSL 2 is installed. |
 | Ports already in use | Check `netstat -ano | findstr :8080`, `:5173`, `:3003`, `:5432`, `:6379`, or `:6334`, then stop the conflicting process or change compose ports. |
 | Containers build but frontend is stale | Run `docker compose build --no-cache frontend` then `docker compose up -d --force-recreate frontend`. |
-| API returns 401 | Verify the exact `X-API-Key` or `Authorization: Bearer` value and confirm you are using the workspace API key, not the workspace creation secret. |
-| MCP client cannot connect | Confirm `docker compose ps mcp` is healthy and open `http://localhost:3003/mcp` only through an MCP client; browser GETs may not be meaningful. |
+| API returns 401 | Verify the workspace key and confirm you are not using the workspace creation secret. |
+| MCP client cannot connect | Confirm `docker compose ps mcp` is healthy. Browser GET requests to the MCP endpoint may not be meaningful. |
 | Script cannot find credentials | Set `MEMORYOPS_API_KEY`, `MEMORYOPS_WORKSPACE_ID`, and `MEMORYOPS_API_URL`, or run it from a folder containing `.memoryops.local.json`. |
+| `--repo auto` fails | Run the context command from a git repository with a GitHub origin, or pass `--repo owner/name` explicitly. |
 
 ## Reset local data
 
