@@ -78,7 +78,7 @@ services:
     image: quazmoz/memoryops:api-latest
     build:
       context: .
-    command: ["api"]
+    command: ["/usr/local/bin/api"]
     ports:
       - "127.0.0.1:8080:8080"
     environment:
@@ -106,7 +106,7 @@ services:
       qdrant:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health/ready"]
+      test: ["CMD", "/usr/local/bin/memoryops-healthcheck", "8080", "/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -117,7 +117,7 @@ services:
     image: quazmoz/memoryops:mcp-latest
     build:
       context: .
-    command: ["mcp"]
+    command: ["/usr/local/bin/mcp"]
     ports:
       - "127.0.0.1:3003:3003"
     environment:
