@@ -2,24 +2,25 @@ FROM rust:1.96-bookworm AS builder
 
 WORKDIR /app
 COPY . .
-RUN cargo build --release -p api -p mcp
+RUN cargo build --release -p api -p mcp \
+    && rustc /app/docker/healthcheck.rs -O -o /app/target/release/memoryops-healthcheck
 
-FROM debian:bookworm-slim
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime-base
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd -r -g 1001 memoryops \
-    && useradd -r -u 1001 -g memoryops -d /app -s /sbin/nologin memoryops
+ENV PATH="/usr/local/bin:/usr/bin:/bin"
+
+COPY --from=builder --chown=nonroot:nonroot /app/target/release/api /usr/local/bin/api
+COPY --from=builder --chown=nonroot:nonroot /app/target/release/mcp /usr/local/bin/mcp
+COPY --from=builder --chown=nonroot:nonroot /app/target/release/memoryops-healthcheck /usr/local/bin/memoryops-healthcheck
+COPY --chown=nonroot:nonroot config.toml /app/config.toml
+COPY --chown=nonroot:nonroot .gemini /app/.gemini
+COPY --chown=nonroot:nonroot .claude /app/.claude
 
 WORKDIR /app
-COPY --from=builder /app/target/release/api /usr/local/bin/api
-COPY --from=builder /app/target/release/mcp /usr/local/bin/mcp
-COPY config.toml /app/config.toml
-COPY .gemini /app/.gemini
-COPY .claude /app/.claude
-RUN chown -R memoryops:memoryops /app
+USER nonroot:nonroot
 
-USER memoryops
+FROM runtime-base AS mcp-runtime
+CMD ["/usr/local/bin/mcp"]
 
-CMD ["api"]
+FROM runtime-base AS api-runtime
+CMD ["/usr/local/bin/api"]

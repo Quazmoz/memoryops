@@ -72,7 +72,7 @@ services:
     init: true
     pids_limit: 128
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3003/health"]
+      test: ["CMD", "/usr/local/bin/memoryops-healthcheck", "3003", "/health"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -81,10 +81,10 @@ services:
   frontend:
     ports:
       - "127.0.0.1:5173:8080"
-    # nginx listens on unprivileged port 8080 and does not require Linux capabilities.
+    # The scratch frontend image runs as a numeric non-root user and needs no Linux capabilities.
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    # Runtime /config.json and nginx temp files live under /tmp, so the image can be read-only.
+    # The frontend serves static files, runtime config, and /api proxying without writing to disk.
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
