@@ -8,17 +8,13 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS cacher
 COPY --from=planner /app/recipe.json recipe.json
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
-    cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
 FROM chef AS builder
 COPY . .
 COPY --from=cacher /app/target target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
-    cargo build --release -p api -p mcp \
+RUN cargo build --release -p api -p mcp \
     && rustc /app/docker/healthcheck.rs -O -o /app/target/release/memoryops-healthcheck
 
 FROM gcr.io/distroless/cc-debian12:nonroot AS runtime-base
