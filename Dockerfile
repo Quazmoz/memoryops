@@ -5,7 +5,7 @@ COPY . .
 RUN cargo build --release -p api -p mcp \
     && rustc /app/docker/healthcheck.rs -O -o /app/target/release/memoryops-healthcheck
 
-FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime-base
 
 ENV PATH="/usr/local/bin:/usr/bin:/bin"
 
@@ -19,4 +19,8 @@ COPY --chown=nonroot:nonroot .claude /app/.claude
 WORKDIR /app
 USER nonroot:nonroot
 
+FROM runtime-base AS mcp-runtime
+CMD ["/usr/local/bin/mcp"]
+
+FROM runtime-base AS api-runtime
 CMD ["/usr/local/bin/api"]
