@@ -72,7 +72,7 @@ services:
     init: true
     pids_limit: 128
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3003/health"]
+      test: ["CMD", "/usr/local/bin/memoryops-healthcheck", "3003", "/health"]
       interval: 10s
       timeout: 5s
       retries: 12
