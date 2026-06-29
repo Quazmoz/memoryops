@@ -78,6 +78,7 @@ services:
     image: quazmoz/memoryops:api-latest
     build:
       context: .
+      target: api-runtime
     command: ["/usr/local/bin/api"]
     ports:
       - "127.0.0.1:8080:8080"
@@ -117,6 +118,7 @@ services:
     image: quazmoz/memoryops:mcp-latest
     build:
       context: .
+      target: mcp-runtime
     command: ["/usr/local/bin/mcp"]
     ports:
       - "127.0.0.1:3003:3003"
