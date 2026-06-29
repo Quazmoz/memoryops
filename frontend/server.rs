@@ -298,9 +298,22 @@ fn serve_static(mut stream: TcpStream, request: Request) -> Result<(), Box<dyn E
     };
 
     let is_asset = decoded_path.starts_with("/assets/");
-    let candidate = safe_static_path(&root, &decoded_path);
-    let file_path = if let Some(path) = candidate.filter(|path| path.is_file()) {
-        path
+    let candidate = match safe_static_path(&root, &decoded_path) {
+        Some(path) => path,
+        None => {
+            return write_response(
+                &mut stream,
+                400,
+                "Bad Request",
+                "text/plain; charset=utf-8",
+                b"bad request\n",
+                CachePolicy::NoStore,
+                false,
+            )
+        }
+    };
+    let file_path = if candidate.is_file() {
+        candidate
     } else if is_asset {
         return write_response(
             &mut stream,
@@ -335,6 +348,9 @@ fn serve_static(mut stream: TcpStream, request: Request) -> Result<(), Box<dyn E
 }
 
 fn safe_static_path(root: &Path, decoded_path: &str) -> Option<PathBuf> {
+    if !decoded_path.starts_with('/') {
+        return None;
+    }
     let trimmed = decoded_path.trim_start_matches('/');
     if trimmed.is_empty() {
         return Some(root.join("index.html"));
