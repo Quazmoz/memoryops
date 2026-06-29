@@ -291,7 +291,10 @@ pub async fn create_agent_skill(
     let filename = format!("{name}.md");
     let content = compose_skill_markdown(title, description, instructions);
     let actor = auth.actor();
-    let change_note = request.change_note.as_deref().unwrap_or("created via legacy agent-skills API");
+    let change_note = request
+        .change_note
+        .as_deref()
+        .unwrap_or("created via legacy agent-skills API");
 
     let resource = super::agent_resources::create_skill_resource_versioned(
         &state.db,
@@ -369,7 +372,10 @@ pub async fn update_agent_skill(
     let filename = format!("{name}.md");
     let content = compose_skill_markdown(title, description, instructions);
     let actor = auth.actor();
-    let change_note = request.change_note.as_deref().unwrap_or("updated via legacy agent-skills API");
+    let change_note = request
+        .change_note
+        .as_deref()
+        .unwrap_or("updated via legacy agent-skills API");
 
     let resource = super::agent_resources::upsert_skill_resource_versioned(
         &state.db,
