@@ -28,15 +28,15 @@ jobs:
           - component: api
             context: .
             dockerfile: Dockerfile
-            target_cmd: api
+            target_stage: api-runtime
           - component: frontend
             context: ./frontend
             dockerfile: frontend/Dockerfile
-            target_cmd: ""
+            target_stage: ""
           - component: mcp
             context: .
             dockerfile: Dockerfile
-            target_cmd: mcp
+            target_stage: mcp-runtime
 
     steps:
       - name: Checkout
@@ -76,7 +76,21 @@ jobs:
           fi
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
+      - name: Build and push ${{ matrix.component }} target
+        if: ${{ matrix.target_stage != '' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target_stage }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
       - name: Build and push ${{ matrix.component }}
+        if: ${{ matrix.target_stage == '' }}
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
