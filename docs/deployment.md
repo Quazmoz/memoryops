@@ -2,6 +2,25 @@
 
 This guide details the deployment strategies, configuration options, and architectural practices for running MemoryOps in production environments, such as Docker, Kubernetes (K8s), or K3s.
 
+## Docker Hub Images
+
+Pre-built multi-platform images (`linux/amd64`, `linux/arm64`) are published to [Docker Hub](https://hub.docker.com/r/quazmoz/memoryops):
+
+| Image | Tag | Description |
+|-------|-----|-------------|
+| `quazmoz/memoryops` | `api-latest` | API server (Rust/axum) |
+| `quazmoz/memoryops` | `mcp-latest` | MCP gateway (Rust) |
+| `quazmoz/memoryops` | `frontend-latest` | Control UI (React/nginx) |
+
+Versioned tags follow the pattern `api-0.1.0`, `mcp-0.1.0`, `frontend-0.1.0`.
+
+```bash
+# Pull all images
+docker pull quazmoz/memoryops:api-latest
+docker pull quazmoz/memoryops:mcp-latest
+docker pull quazmoz/memoryops:frontend-latest
+```
+
 ---
 
 ## Deployment Architecture
@@ -60,7 +79,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: migrate
-          image: memoryops-api:latest
+          image: quazmoz/memoryops:api-latest
           command: ["/usr/local/bin/api"] # Triggers migrations when SKIP_MIGRATIONS is false
           env:
             - name: DATABASE_URL
@@ -109,7 +128,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: memoryops-api:latest
+          image: quazmoz/memoryops:api-latest
           ports:
             - containerPort: 8080
           readinessProbe:

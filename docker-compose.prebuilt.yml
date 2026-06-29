@@ -1,0 +1,26 @@
+# docker-compose.prebuilt.yml — Pre-built image overlay
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prebuilt.yml up -d
+#
+# What this file changes vs. docker-compose.yml:
+#  - Removes all `build:` directives so Compose pulls pre-built images from
+#    Docker Hub (quazmoz/memoryops) instead of building from source.
+#  - Use this when you don't have Rust / Node toolchains installed locally.
+#
+# To pin a specific release, override the image tag in your .env or shell:
+#   export MEMORYOPS_VERSION=0.1.0
+# Then reference it here via variable interpolation (see image: lines below).
+
+services:
+  api:
+    image: quazmoz/memoryops:${MEMORYOPS_TAG:-api-latest}
+    build: !reset null
+
+  mcp:
+    image: quazmoz/memoryops:${MEMORYOPS_MCP_TAG:-mcp-latest}
+    build: !reset null
+
+  frontend:
+    image: quazmoz/memoryops:${MEMORYOPS_FRONTEND_TAG:-frontend-latest}
+    build: !reset null

@@ -1,0 +1,91 @@
+name: Docker Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag override (e.g. 0.2.0). Defaults to 'latest' for manual runs."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: quazmoz/memoryops
+
+jobs:
+  build-and-push:
+    name: Build and push Docker images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - component: api
+            context: .
+            dockerfile: Dockerfile
+            target_cmd: api
+          - component: frontend
+            context: ./frontend
+            dockerfile: frontend/Dockerfile
+            target_cmd: ""
+          - component: mcp
+            context: .
+            dockerfile: Dockerfile
+            target_cmd: mcp
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            # Strip leading 'v' from tag: v0.1.0 → 0.1.0
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${{ github.event.inputs.tag }}" ]]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION=""
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Docker tags
+        id: tags
+        run: |
+          TAGS="${{ env.IMAGE_NAME }}:${{ matrix.component }}-latest"
+          if [[ -n "${{ steps.version.outputs.version }}" ]]; then
+            TAGS="${TAGS},${{ env.IMAGE_NAME }}:${{ matrix.component }}-${{ steps.version.outputs.version }}"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push ${{ matrix.component }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Verify pushed image
+        run: docker pull ${{ env.IMAGE_NAME }}:${{ matrix.component }}-latest

@@ -1,6 +1,7 @@
 # MemoryOps
 
 [![CI](https://github.com/Quazmoz/memoryops/actions/workflows/ci.yml/badge.svg)](https://github.com/Quazmoz/memoryops/actions/workflows/ci.yml)
+[![Docker Hub](https://img.shields.io/docker/v/quazmoz/memoryops?label=Docker%20Hub&sort=semver)](https://hub.docker.com/r/quazmoz/memoryops)
 [![Rust](https://img.shields.io/badge/rust-1.88-orange)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)](#status)
@@ -37,9 +38,53 @@ This is the **control plane for what AI agents remember**.
 
 ---
 
-## Quick Start
+## Quick Start (Pre-built Images)
 
-Get MemoryOps running with a pre-configured workspace.
+The fastest way to run MemoryOps — pull pre-built images from [Docker Hub](https://hub.docker.com/r/quazmoz/memoryops) with no Rust or Node.js toolchain required.
+
+```bash
+# 1. Clone and configure
+git clone https://github.com/Quazmoz/memoryops.git
+cd memoryops
+cp .env.example .env
+# Set these two required secrets in .env:
+#   APP_SECRET_KEY=<any-random-string>
+#   WORKSPACE_CREATION_SECRET=<any-random-string>
+
+# 2. Pull pre-built images and start everything
+docker compose -f docker-compose.yml -f docker-compose.prebuilt.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prebuilt.yml up -d
+
+# 3. Bootstrap a workspace
+WORKSPACE_CREATION_SECRET=<your-secret> node scripts/bootstrap.mjs
+# Save the returned workspace_id and api_key securely
+
+# 4. Populate demo data for testing
+API_KEY=<your-returned-api-key> WORKSPACE_ID=<your-returned-workspace-id> node scripts/seed.mjs
+
+# 5. Access the UI
+open http://localhost:5173
+```
+
+> [!TIP]
+> To pin a specific release instead of `latest`, set the tag in your environment:
+> ```bash
+> MEMORYOPS_TAG=api-0.1.0 MEMORYOPS_MCP_TAG=mcp-0.1.0 MEMORYOPS_FRONTEND_TAG=frontend-0.1.0 \
+>   docker compose -f docker-compose.yml -f docker-compose.prebuilt.yml up -d
+> ```
+
+You can also pull the images individually:
+```bash
+docker pull quazmoz/memoryops:api-latest
+docker pull quazmoz/memoryops:mcp-latest
+docker pull quazmoz/memoryops:frontend-latest
+```
+
+---
+
+## Quick Start (Build from Source)
+
+Get MemoryOps running by building from the current source. Requires Docker + Docker Compose.
 
 ```bash
 # 1. Clone and configure

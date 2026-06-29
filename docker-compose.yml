@@ -50,6 +50,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    image: quazmoz/memoryops:frontend-latest
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -74,6 +75,7 @@ services:
     restart: unless-stopped
 
   api:
+    image: quazmoz/memoryops:api-latest
     build:
       context: .
     command: ["api"]
@@ -112,6 +114,7 @@ services:
     restart: unless-stopped
 
   mcp:
+    image: quazmoz/memoryops:mcp-latest
     build:
       context: .
     command: ["mcp"]
