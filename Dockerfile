@@ -1,19 +1,7 @@
-FROM rust:1.96-bookworm AS chef
-RUN cargo install cargo-chef --locked
+FROM rust:1.96-bookworm AS builder
+
 WORKDIR /app
-
-FROM chef AS planner
 COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
-
-FROM chef AS cacher
-COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-
-FROM chef AS builder
-COPY . .
-COPY --from=cacher /app/target target
-COPY --from=cacher /usr/local/cargo /usr/local/cargo
 RUN cargo build --release -p api -p mcp \
     && rustc /app/docker/healthcheck.rs -O -o /app/target/release/memoryops-healthcheck
 

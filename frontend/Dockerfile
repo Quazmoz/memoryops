@@ -1,8 +1,7 @@
 FROM node:26-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --legacy-peer-deps
+RUN npm ci --legacy-peer-deps
 COPY . .
 ARG VITE_API_BASE_URL=/api
 ARG VITE_MEMORYOPS_WORKSPACE_ID
