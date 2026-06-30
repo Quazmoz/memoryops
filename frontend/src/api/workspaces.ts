@@ -1,4 +1,4 @@
-import { ApiError, apiRequest, apiUrl, extractDetail, parseResponse, queryString, requestHeaders } from "./client";
+import { ApiError, apiUrl, extractDetail, parseResponse, queryString, requestHeaders } from "./client";
 import { apiContractRequest, operationMethod, resolveOperationPath } from "./generated/contract";
 import type {
   ApiKeySummary,
@@ -49,7 +49,7 @@ export async function createWorkspace(name: string, adminToken: string): Promise
 }
 
 export async function getDefaultWorkspace(): Promise<WorkspaceSummary> {
-  const response = await apiRequest<CreateWorkspaceResponse>("/v1/default-workspace", {
+  const response = await apiContractRequest<CreateWorkspaceResponse>("getDefaultWorkspace", {
     auth: false,
   });
   const id = response.id ?? response.workspace_id;
@@ -71,8 +71,7 @@ export async function loginAdmin(password: string): Promise<boolean> {
     throw new Error("Root password is required");
   }
 
-  const response = await apiRequest<{ ok: boolean }>("/v1/admin/session", {
-    method: "POST",
+  const response = await apiContractRequest<{ ok: boolean }>("loginAdmin", {
     auth: false,
     body: { password: trimmedPassword },
   });

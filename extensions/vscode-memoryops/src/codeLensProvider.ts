@@ -43,7 +43,7 @@ export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
   public readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
 
   private readonly cache = new Map<string, CacheEntry>();
-  private inFlight = new Map<string, Promise<FileMemoryCount>>();
+  private inFlight = new Map<string, Promise<FileMemoryCount | undefined>>();
 
   constructor(private readonly getClient: GetClient) {}
 
@@ -101,19 +101,22 @@ export class MemoryCodeLensProvider implements vscode.CodeLensProvider {
       return undefined;
     }
 
-    const promise = (async () => {
-      const response = await client.listMemory({ sourceRef: fileName, limit: SAMPLE_LIMIT });
-      const value: FileMemoryCount = { total: response.total, items: response.items };
-      this.cache.set(fileName, { expiresAt: Date.now() + CACHE_TTL_MS, value });
-      this.inFlight.delete(fileName);
-      // Trigger a re-render now that the real count is known.
-      this._onDidChangeCodeLenses.fire();
-      return value;
-    })().catch((error) => {
-      this.inFlight.delete(fileName);
-    });
+    const promise = (async (): Promise<FileMemoryCount | undefined> => {
+      try {
+        const response = await client.listMemory({ sourceRef: fileName, limit: SAMPLE_LIMIT });
+        const value: FileMemoryCount = { total: response.total, items: response.items };
+        this.cache.set(fileName, { expiresAt: Date.now() + CACHE_TTL_MS, value });
+        // Trigger a re-render now that the real count is known.
+        this._onDidChangeCodeLenses.fire();
+        return value;
+      } catch {
+        return undefined;
+      } finally {
+        this.inFlight.delete(fileName);
+      }
+    })();
 
-    this.inFlight.set(fileName, promise as any);
+    this.inFlight.set(fileName, promise);
     return undefined;
   }
 

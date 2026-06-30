@@ -3,10 +3,11 @@ import { useState, useMemo, useEffect } from "react";
 
 import { CodeBlock } from "../components/CodeBlock";
 import type { SystemHealthResponse } from "../api/health";
+import type { IntegrationResponse } from "../api/types";
 import { HelpTooltip, Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { useSystemHealth, useWorkspaceIntegrations } from "../hooks/use-live-query";
 import { cn } from "../lib/utils";
-import { useAppStore } from "../store/app-store";
+import { type AppStore, useAppStore } from "../store/app-store";
 
 type GuideSection = {
   id: string;
@@ -42,8 +43,8 @@ const SECTIONS = [
 ] as const satisfies readonly GuideSection[];
 
 export function GuideView() {
-  const workspaceId = useAppStore((s: any) => s.workspaceId);
-  const apiKey = useAppStore((s: any) => s.apiKey);
+  const workspaceId = useAppStore((state: AppStore) => state.workspaceId);
+  const apiKey = useAppStore((state: AppStore) => state.apiKey);
   const hasAuth = workspaceId.trim().length > 0 && apiKey.trim().length > 0;
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<(typeof SECTIONS[number])[]>([]);
@@ -72,7 +73,7 @@ export function GuideView() {
 
   const getIntegrationStatus = (source: string) => {
     if (!integrationsQuery.data) return { status: "unknown", configured: false, integration: undefined as undefined };
-    const integration = integrationsQuery.data.find((i: any) => i.source === source);
+    const integration = integrationsQuery.data.find((item: IntegrationResponse) => item.source === source);
     if (!integration) return { status: "not-configured", configured: false, integration: undefined as undefined };
     if (integration.status === "active" && integration.errors_24h === 0) {
       return { status: "healthy", configured: true, integration };

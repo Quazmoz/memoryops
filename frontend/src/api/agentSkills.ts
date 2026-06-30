@@ -1,4 +1,4 @@
-import { apiRequest } from "./client";
+import { apiContractRequest, resolveOperationPath } from "./generated/contract";
 import type { JsonValue } from "./types";
 
 export interface AgentSkill {
@@ -56,16 +56,17 @@ export interface UpdateAgentSkillPayload {
 }
 
 export async function listAgentSkills(): Promise<AgentSkill[]> {
-  return apiRequest<AgentSkill[]>("/v1/agent-skills");
+  return apiContractRequest<AgentSkill[]>("listAgentSkills");
 }
 
 export async function getAgentSkill(assistant: "gemini" | "claude", name: string): Promise<AgentSkillContent> {
-  return apiRequest<AgentSkillContent>(`/v1/agent-skills/${assistant}/${name}`);
+  return apiContractRequest<AgentSkillContent>("getAgentSkill", {
+    path: resolveOperationPath("getAgentSkill", { assistant, name }),
+  });
 }
 
 export async function createAgentSkill(payload: CreateAgentSkillPayload): Promise<AgentSkillContent> {
-  return apiRequest<AgentSkillContent>("/v1/agent-skills", {
-    method: "POST",
+  return apiContractRequest<AgentSkillContent>("createAgentSkill", {
     body: payload as unknown as JsonValue,
   });
 }
@@ -75,14 +76,16 @@ export async function updateAgentSkill(
   name: string,
   payload: UpdateAgentSkillPayload,
 ): Promise<AgentSkillContent> {
-  return apiRequest<AgentSkillContent>(`/v1/agent-skills/${assistant}/${name}`, {
-    method: "PUT",
+  return apiContractRequest<AgentSkillContent>("updateAgentSkill", {
+    path: resolveOperationPath("updateAgentSkill", { assistant, name }),
     body: payload as unknown as JsonValue,
   });
 }
 
 export async function listAgentSkillVersions(assistant: "gemini" | "claude", name: string): Promise<AgentSkillVersion[]> {
-  return apiRequest<AgentSkillVersion[]>(`/v1/agent-skills/${assistant}/${name}/versions`);
+  return apiContractRequest<AgentSkillVersion[]>("listAgentSkillVersions", {
+    path: resolveOperationPath("listAgentSkillVersions", { assistant, name }),
+  });
 }
 
 export async function getAgentSkillVersion(
@@ -90,7 +93,9 @@ export async function getAgentSkillVersion(
   name: string,
   version: number,
 ): Promise<AgentSkillVersion> {
-  return apiRequest<AgentSkillVersion>(`/v1/agent-skills/${assistant}/${name}/versions/${version}`);
+  return apiContractRequest<AgentSkillVersion>("getAgentSkillVersion", {
+    path: resolveOperationPath("getAgentSkillVersion", { assistant, name, version }),
+  });
 }
 
 export async function rollbackAgentSkillVersion(
@@ -99,8 +104,8 @@ export async function rollbackAgentSkillVersion(
   version: number,
   changeNote?: string | undefined,
 ): Promise<AgentSkillContent> {
-  return apiRequest<AgentSkillContent>(`/v1/agent-skills/${assistant}/${name}/versions/${version}/rollback`, {
-    method: "POST",
+  return apiContractRequest<AgentSkillContent>("rollbackAgentSkillVersion", {
+    path: resolveOperationPath("rollbackAgentSkillVersion", { assistant, name, version }),
     body: changeNote ? { change_note: changeNote } : {},
   });
 }

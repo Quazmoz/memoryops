@@ -1,34 +1,31 @@
-// Shared E2E auth helper — authenticates via the FirstRunGate "Connect to existing" section
+// Shared E2E auth helper.
 import { expect, type Page } from '@playwright/test';
 
+const APP_STORE_STORAGE_KEY = 'memoryops-app-store';
+
 /**
- * Authenticates the app by filling the workspace-id and api-key inputs
- * in the FirstRunGate "Connect to existing" section, then clicking Connect.
+ * Authenticates the app by preloading the same persisted store state the
+ * production FirstRunGate writes after entering a workspace.
  */
 export async function authenticateApp(
   page: Page,
   workspaceId: string,
   apiKey: string,
 ): Promise<void> {
+  await page.addInitScript(
+    ({ storageKey, workspaceId: id, apiKey: key }) => {
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          state: { workspaceId: id, apiKey: key },
+          version: 0,
+        }),
+      );
+    },
+    { storageKey: APP_STORE_STORAGE_KEY, workspaceId, apiKey },
+  );
+
   await page.goto('/');
-  await page.getByRole('button', { name: 'Already have a workspace?' }).click();
-  await page.getByTestId('api-key-input').fill(apiKey);
-
-  const manualInput = page.getByTestId('workspace-id-input');
-  const wsButton = page.locator(`button:has-text("${workspaceId.slice(0, 8)}")`);
-
-  // Wait for the workspace selection button to appear. If it fails to load
-  // (e.g. no workspaces found), fall back to entering the ID manually.
-  try {
-    await wsButton.waitFor({ state: 'visible', timeout: 5000 });
-    await wsButton.click();
-  } catch {
-    await manualInput.fill(workspaceId);
-  }
-
-  const connectBtn = page.getByTestId('connect-button');
-  await expect(connectBtn).toBeEnabled({ timeout: 5000 });
-  await connectBtn.click();
 
   // Wait for the app shell to render (nav should appear)
   await page.getByTestId('nav-dashboard').waitFor({ state: 'visible', timeout: 15_000 });

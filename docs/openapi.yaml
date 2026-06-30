@@ -16,6 +16,7 @@ tags:
   - name: Observations
   - name: Memory
   - name: Retrieval
+  - name: Admin
   - name: Workspaces
   - name: API Keys
   - name: Audit
@@ -264,6 +265,40 @@ paths:
                 $ref: '#/components/schemas/MemoryListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [Memory]
+      operationId: createMemory
+      summary: Create a memory unit directly
+      description: Creates a memory unit and enqueues it for embedding. The workspace is resolved from the authenticated API key, or from `workspace_id` for compatibility callers.
+      parameters:
+        - name: workspace_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Optional compatibility workspace override. Must match the authenticated API key workspace when credentials are supplied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMemoryRequest'
+      responses:
+        '200':
+          description: Memory unit created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateMemoryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/RateLimited'
   /v1/memory/{id}:
@@ -524,6 +559,44 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/admin/session:
+    post:
+      tags: [Admin]
+      operationId: loginAdmin
+      summary: Verify the root admin password
+      description: Checks the configured MemoryOps root password and returns a short-lived UI success signal. This endpoint does not issue API keys.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+      responses:
+        '200':
+          description: Root password accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminLoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/default-workspace:
+    get:
+      tags: [Workspaces]
+      operationId: getDefaultWorkspace
+      summary: Ensure and return the public demo workspace
+      description: Creates or refreshes the bundled demo workspace, seeds default agent resources and memories, and returns its public API key for first-run local exploration.
+      security: []
+      responses:
+        '200':
+          description: Default workspace credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DefaultWorkspaceResponse'
+        '500':
+          description: Default workspace setup failed
   /v1/workspaces:
     get:
       tags: [Workspaces]
@@ -1385,6 +1458,30 @@ paths:
                   $ref: '#/components/schemas/AgentSkill'
         '401':
           $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Agent Skills]
+      operationId: createAgentSkill
+      summary: Create a legacy Claude/Gemini agent skill
+      description: Compatibility endpoint that creates a canonical `agent_resources` skill and syncs the legacy `agent_skills` row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentSkillRequest'
+      responses:
+        '200':
+          description: Agent skill created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSkillContent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/agent-skills/{assistant}/{name}:
     get:
       tags: [Agent Skills]
@@ -1392,20 +1489,112 @@ paths:
       summary: Read one legacy Claude/Gemini agent skill
       description: Legacy compatibility endpoint that returns the markdown contents of a canonical skill resource.
       parameters:
-        - name: assistant
-          in: path
-          required: true
-          schema:
-            type: string
-            enum: [claude, gemini]
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: '#/components/parameters/AgentSkillAssistant'
+        - $ref: '#/components/parameters/AgentSkillName'
       responses:
         '200':
           description: Agent skill content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSkillContent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Agent Skills]
+      operationId: updateAgentSkill
+      summary: Update a legacy Claude/Gemini agent skill
+      description: Compatibility endpoint that updates the canonical skill resource and syncs the legacy `agent_skills` row.
+      parameters:
+        - $ref: '#/components/parameters/AgentSkillAssistant'
+        - $ref: '#/components/parameters/AgentSkillName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAgentSkillRequest'
+      responses:
+        '200':
+          description: Agent skill updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSkillContent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/agent-skills/{assistant}/{name}/versions:
+    get:
+      tags: [Agent Skills]
+      operationId: listAgentSkillVersions
+      summary: List immutable versions for a legacy agent skill
+      description: Returns version snapshots for the canonical skill resource, newest first.
+      parameters:
+        - $ref: '#/components/parameters/AgentSkillAssistant'
+        - $ref: '#/components/parameters/AgentSkillName'
+      responses:
+        '200':
+          description: Agent skill versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentSkillVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/agent-skills/{assistant}/{name}/versions/{version}:
+    get:
+      tags: [Agent Skills]
+      operationId: getAgentSkillVersion
+      summary: Read one immutable legacy agent skill version
+      description: Reads a single version snapshot for the canonical skill resource.
+      parameters:
+        - $ref: '#/components/parameters/AgentSkillAssistant'
+        - $ref: '#/components/parameters/AgentSkillName'
+        - $ref: '#/components/parameters/AgentSkillVersionNumber'
+      responses:
+        '200':
+          description: Agent skill version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSkillVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/agent-skills/{assistant}/{name}/versions/{version}/rollback:
+    post:
+      tags: [Agent Skills]
+      operationId: rollbackAgentSkillVersion
+      summary: Restore a prior legacy agent skill version as a new version
+      description: Restores the selected version into the current canonical skill resource, syncs the legacy row, and records a new version snapshot.
+      parameters:
+        - $ref: '#/components/parameters/AgentSkillAssistant'
+        - $ref: '#/components/parameters/AgentSkillName'
+        - $ref: '#/components/parameters/AgentSkillVersionNumber'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackAgentSkillRequest'
+      responses:
+        '200':
+          description: Agent skill restored
           content:
             application/json:
               schema:
@@ -2122,6 +2311,28 @@ components:
       schema:
         type: integer
         minimum: 1
+    AgentSkillAssistant:
+      name: assistant
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [claude, gemini]
+    AgentSkillName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z][a-z0-9_-]{0,63}$'
+        maxLength: 64
+    AgentSkillVersionNumber:
+      name: version
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
     FlagId:
       name: flag_id
       in: path
@@ -2526,6 +2737,53 @@ components:
         created_at:
           type: string
           format: date-time
+    CreateMemoryRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+        workspace_id:
+          type: string
+          format: uuid
+          description: Optional compatibility workspace override. Prefer API-key workspace scoping for authenticated clients.
+        memory_type:
+          $ref: '#/components/schemas/MemoryType'
+        importance_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          default: 0.5
+        tags:
+          type: array
+          items:
+            type: string
+        agent_id:
+          type: [string, 'null']
+        user_id:
+          type: [string, 'null']
+        repo:
+          type: [string, 'null']
+        scope_visibility:
+          $ref: '#/components/schemas/ScopeVisibility'
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Accepted for seed-script compatibility; not persisted on the memory unit.
+    CreateMemoryResponse:
+      type: object
+      required: [memory_id, id, scope_visibility]
+      properties:
+        memory_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        scope_visibility:
+          $ref: '#/components/schemas/ScopeVisibility'
     MemoryPatchRequest:
       type: object
       additionalProperties: false
@@ -2849,6 +3107,19 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/RetrievalTraceEntry'
+    AdminLoginRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          minLength: 1
+    AdminLoginResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
     WorkspaceCreateRequest:
       type: object
       required: [name]
@@ -2865,6 +3136,17 @@ components:
         workspace_id:
           type: string
           format: uuid
+        api_key:
+          type: string
+    DefaultWorkspaceResponse:
+      type: object
+      required: [id, name, api_key]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
         api_key:
           type: string
     WorkspaceListResponse:
@@ -3580,10 +3862,15 @@ components:
           maxLength: 500
     AgentSkill:
       type: object
-      required: [name, filename, assistant, title, description]
+      required: [id, name, filename, assistant, title, description, version]
       properties:
+        id:
+          type: string
+          format: uuid
         name:
           type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          maxLength: 64
         filename:
           type: string
         assistant:
@@ -3591,21 +3878,120 @@ components:
           enum: [claude, gemini]
         title:
           type: string
+          maxLength: 120
         description:
           type: string
+          maxLength: 500
+        version:
+          type: integer
+          minimum: 1
     AgentSkillContent:
+      allOf:
+        - $ref: '#/components/schemas/AgentSkill'
+        - type: object
+          required: [instructions, content]
+          properties:
+            instructions:
+              type: string
+              minLength: 1
+              maxLength: 50000
+            content:
+              type: string
+              minLength: 1
+              maxLength: 120000
+    AgentSkillVersion:
       type: object
-      required: [name, filename, assistant, content]
+      required: [id, agent_skill_id, workspace_id, name, version, assistant, title, description, instructions, content, created_at]
       properties:
+        id:
+          type: string
+          format: uuid
+        agent_skill_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
         name:
           type: string
-        filename:
-          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          maxLength: 64
+        version:
+          type: integer
+          minimum: 1
         assistant:
           type: string
           enum: [claude, gemini]
+        title:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        instructions:
+          type: string
+          minLength: 1
+          maxLength: 50000
         content:
           type: string
+          minLength: 1
+          maxLength: 120000
+        change_note:
+          type: [string, 'null']
+        created_by:
+          type: [string, 'null']
+        created_at:
+          type: string
+          format: date-time
+    CreateAgentSkillRequest:
+      type: object
+      required: [assistant, name, title, description, instructions]
+      properties:
+        assistant:
+          type: string
+          enum: [claude, gemini]
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          maxLength: 64
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        instructions:
+          type: string
+          minLength: 1
+          maxLength: 50000
+        change_note:
+          type: string
+          maxLength: 500
+    UpdateAgentSkillRequest:
+      type: object
+      required: [title, description, instructions]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        instructions:
+          type: string
+          minLength: 1
+          maxLength: 50000
+        change_note:
+          type: string
+          maxLength: 500
+    RollbackAgentSkillRequest:
+      type: object
+      properties:
+        change_note:
+          type: string
+          maxLength: 500
     ContradictionListResponse:
       type: object
       required: [items]

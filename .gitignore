@@ -5,6 +5,9 @@
 !.env.example
 /coverage/
 /lcov.info
+*.log
+/frontend/out.txt
+/frontend/test-results/
 /frontend/node_modules/
 /frontend/dist/
 /.memoryops.local.json

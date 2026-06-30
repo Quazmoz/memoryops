@@ -1,23 +1,22 @@
-// Creates a test workspace + API key, returns { workspaceId, apiKey }
-// Calls POST /v1/workspaces directly via fetch (no UI needed for setup)
+// Returns a workspace + API key for full-stack E2E specs.
+// The current first-run product flow uses the built-in default workspace, so
+// E2E does the same and avoids exhausting workspace-creation rate limits.
 
 const API_BASE = process.env.E2E_API_BASE ?? 'http://localhost:5173';
 
+let workspacePromise: Promise<{ workspaceId: string; apiKey: string }> | undefined;
+
 export async function createTestWorkspace(): Promise<{ workspaceId: string; apiKey: string }> {
-  // 1. Create workspace
-  const adminToken = process.env.WORKSPACE_CREATION_SECRET ?? process.env.X_ADMIN_TOKEN;
-  const wsRes = await fetch(`${API_BASE}/v1/workspaces`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(adminToken ? { 'x-admin-token': adminToken } : {}),
-    },
-    body: JSON.stringify({ name: `e2e-test-${Date.now()}-${Math.floor(Math.random() * 10000)}` }),
-  });
+  workspacePromise ??= loadDefaultWorkspace();
+  return workspacePromise;
+}
+
+async function loadDefaultWorkspace(): Promise<{ workspaceId: string; apiKey: string }> {
+  const wsRes = await fetch(`${API_BASE}/v1/default-workspace`);
 
   if (!wsRes.ok) {
     const detail = await wsRes.text();
-    throw new Error(`Failed to create workspace: ${wsRes.status} — ${detail}`);
+    throw new Error(`Failed to load default workspace: ${wsRes.status} — ${detail}`);
   }
 
   const wsData = (await wsRes.json()) as { id?: string; workspace_id?: string; api_key?: string };
@@ -30,7 +29,8 @@ export async function createTestWorkspace(): Promise<{ workspaceId: string; apiK
     throw new Error('Workspace response did not include an api_key');
   }
 
-  // 2. Create github integration with dev-placeholder secret so webhooks succeed
+  // Ensure GitHub webhooks are accepted by ingest-focused specs. This endpoint
+  // upserts by workspace/source, so repeated calls across workers are harmless.
   const integrationRes = await fetch(`${API_BASE}/v1/workspaces/${workspaceId}/integrations`, {
     method: 'POST',
     headers: {

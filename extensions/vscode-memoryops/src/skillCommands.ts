@@ -58,6 +58,16 @@ function isSkill(value: unknown): value is Skill {
     && "name" in value && "endpoint_url" in value && "http_method" in value;
 }
 
+function hasName(value: unknown): value is { name: string } {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && "name" in value && typeof value.name === "string";
+}
+
+function hasVersion(value: unknown): value is { version: number } {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && "version" in value && typeof value.version === "number";
+}
+
 async function resolveSkillSelection(client: MemoryOpsClient, argument: unknown): Promise<Skill | undefined> {
   if (argument instanceof SkillItem) {
     return argument.skill;
@@ -69,21 +79,16 @@ async function resolveSkillSelection(client: MemoryOpsClient, argument: unknown)
     const skills = await client.listSkills();
     return skills.find((s) => s.name === argument);
   }
-  if (typeof argument === "object" && argument !== null) {
-    if ("name" in argument && typeof (argument as any).name === "string") {
-      const name = (argument as any).name;
-      const skills = await client.listSkills();
-      return skills.find((s) => s.name === name);
-    }
+  if (hasName(argument)) {
+    const skills = await client.listSkills();
+    return skills.find((s) => s.name === argument.name);
   }
   return pickSkill(client, "MemoryOps: Select Skill");
 }
 
 function extractVersion(argument: unknown): number | undefined {
-  if (typeof argument === "object" && argument !== null) {
-    if ("version" in argument && typeof (argument as any).version === "number") {
-      return (argument as any).version;
-    }
+  if (hasVersion(argument)) {
+    return argument.version;
   }
   return undefined;
 }
@@ -428,8 +433,8 @@ async function viewSkillInvocationsCommand(deps: SkillCommandDeps, item?: unknow
 }
 
 async function resolveAgentSkillSelection(client: MemoryOpsClient, argument: unknown): Promise<AgentSkill | undefined> {
-  if (argument && typeof argument === "object" && "agentSkill" in argument) {
-    return (argument as any).agentSkill;
+  if (isAgentSkillItem(argument)) {
+    return argument.agentSkill;
   }
   if (isAgentSkill(argument)) {
     return argument;
@@ -440,6 +445,11 @@ async function resolveAgentSkillSelection(client: MemoryOpsClient, argument: unk
 function isAgentSkill(value: unknown): value is AgentSkill {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     && "name" in value && "assistant" in value && "filename" in value;
+}
+
+function isAgentSkillItem(value: unknown): value is { agentSkill: AgentSkill } {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && "agentSkill" in value && isAgentSkill(value.agentSkill);
 }
 
 async function pickAgentSkill(client: MemoryOpsClient, title: string): Promise<AgentSkill | undefined> {

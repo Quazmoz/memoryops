@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { MemoryOpsClient, AgentSkillContent } from "./client";
+import { errorMessage } from "./markdown";
 
 interface ParsedAgentSkill {
   title: string;
@@ -207,8 +208,8 @@ export async function syncAgentSkills(
         } else if (interactive) {
           void vscode.window.showInformationMessage("MemoryOps agent skills sync complete!");
         }
-      } catch (err: any) {
-        void vscode.window.showErrorMessage(`Agent skills sync failed: ${err.message}`);
+      } catch (error) {
+        void vscode.window.showErrorMessage(`Agent skills sync failed: ${errorMessage(error)}`);
       }
     }
   );

@@ -1724,8 +1724,8 @@ async function configureFromLocalCommand(context: vscode.ExtensionContext): Prom
     void vscode.window.showInformationMessage(
       "MemoryOps extension configured successfully using .memoryops.local.json."
     );
-  } catch (err: any) {
-    void vscode.window.showErrorMessage(`Failed to configure MemoryOps from local file: ${err.message}`);
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Failed to configure MemoryOps from local file: ${errorMessage(error)}`);
   }
 }
 
@@ -1778,8 +1778,8 @@ async function autoConfigureFromLocal(context: vscode.ExtensionContext): Promise
         "MemoryOps extension auto-configured using .memoryops.local.json."
       );
     }
-  } catch (err: any) {
-    outputChannel.appendLine(`Auto-configuration failed: ${err.message}`);
+  } catch (error) {
+    outputChannel.appendLine(`Auto-configuration failed: ${errorMessage(error)}`);
   }
 }
 

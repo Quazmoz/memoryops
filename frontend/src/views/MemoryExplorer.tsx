@@ -507,19 +507,22 @@ export function MemoryExplorer() {
       </section>
 
       <section className="rounded-lg border border-line bg-white p-4">
-        <button
-          type="button"
-          data-testid="tags-panel-toggle"
-          onClick={toggleTagsPanel}
-          className="flex w-full items-center justify-between gap-3 text-left text-sm font-semibold text-ink"
-        >
-          <span className="inline-flex items-center gap-2">
-            <Tag className="h-4 w-4 text-accent-strong" aria-hidden="true" />
-            <span>Tags</span>
-            <HelpTooltip label="Tags panel">Browse known tags and add them as filters to narrow the explorer to specific topics or labels.</HelpTooltip>
-          </span>
-          {tagsCollapsed ? <ChevronRight className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
-        </button>
+        <div className="flex w-full items-center justify-between gap-3">
+          <button
+            type="button"
+            data-testid="tags-panel-toggle"
+            onClick={toggleTagsPanel}
+            aria-expanded={!tagsCollapsed}
+            className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left text-sm font-semibold text-ink"
+          >
+            <span className="inline-flex items-center gap-2">
+              <Tag className="h-4 w-4 text-accent-strong" aria-hidden="true" />
+              <span>Tags</span>
+            </span>
+            {tagsCollapsed ? <ChevronRight className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
+          </button>
+          <HelpTooltip label="Tags panel">Browse known tags and add them as filters to narrow the explorer to specific topics or labels.</HelpTooltip>
+        </div>
         {!tagsCollapsed ? (
           <div className="mt-4 flex flex-wrap gap-2">
             {tagsQuery.isLoading ? <span className="text-sm text-ink/55">Loading tags</span> : null}
