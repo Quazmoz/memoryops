@@ -38,7 +38,7 @@ async-trait = "0.1"
 
 # Axum is the required API runtime; tower-http supplies production middleware layers.
 axum = { version = "0.8", features = ["macros"] }
-tower-http = { version = "0.6", features = ["cors", "request-id", "set-header", "timeout", "trace"] }
+tower-http = { version = "0.7", features = ["cors", "request-id", "set-header", "timeout", "trace"] }
 
 # Tokio is the async runtime used by axum, sqlx, Redis, and service workers.
 tokio = { version = "1.52", features = ["macros", "net", "rt-multi-thread", "signal"] }
