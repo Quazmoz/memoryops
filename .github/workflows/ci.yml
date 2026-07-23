@@ -93,6 +93,7 @@ jobs:
         with:
           name: lcov
           path: lcov.info
+          retention-days: 1
 
       - name: E2E tests
         run: |
