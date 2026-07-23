@@ -78,7 +78,7 @@ jobs:
 
       - name: Build and push ${{ matrix.component }} target
         if: ${{ matrix.target_stage != '' }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
@@ -91,7 +91,7 @@ jobs:
 
       - name: Build and push ${{ matrix.component }}
         if: ${{ matrix.target_stage == '' }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
