@@ -9,7 +9,7 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_MEMORYOPS_WORKSPACE_ID=$VITE_MEMORYOPS_WORKSPACE_ID
 RUN npx tsc -b && npx vite build
 
-FROM rust:1.96-alpine AS server-builder
+FROM rust:1.98-alpine AS server-builder
 WORKDIR /src
 COPY server.rs .
 RUN rustc -C target-feature=+crt-static server.rs -O -o /memoryops-frontend
