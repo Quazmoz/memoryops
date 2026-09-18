@@ -22,6 +22,15 @@ This is the **control plane for what AI agents remember**.
 
 ---
 
+## Video walkthroughs
+
+| Deep dive | Architecture introduction |
+| :---: | :---: |
+| [![I Built a Self-Hosted Memory System for AI Agents](https://img.youtube.com/vi/0DDAngEOsJ4/0.jpg)](https://www.youtube.com/watch?v=0DDAngEOsJ4) | [![I Built an Open Source Memory Control Plane for AI Agents](https://img.youtube.com/vi/PAKDdQ7zODY/0.jpg)](https://www.youtube.com/watch?v=PAKDdQ7zODY) |
+| **[Self-Hosted Memory System for AI Agents](https://www.youtube.com/watch?v=0DDAngEOsJ4)** — persistence, retrieval, and production architecture | **[Open Source Memory Control Plane](https://www.youtube.com/watch?v=PAKDdQ7zODY)** — project architecture and core concepts |
+
+---
+
 ## Prerequisites
 
 **For the Quick Start (containerized):**
